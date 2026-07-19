@@ -267,8 +267,15 @@ func (m *SiteModel) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
-// BeforeSave 覆盖 Updates/Save 路径，避免 key 与 model_name 漂移。
+// BeforeSave 仅在已有 ModelName 时重算 key，避免 partial Save 把空名写坏 key。
+// 纯字段更新（如 disabled / route）应走 Updates(map)，不要依赖本钩子。
 func (m *SiteModel) BeforeSave(tx *gorm.DB) error {
+	if m == nil {
+		return nil
+	}
+	if strings.TrimSpace(m.ModelName) == "" {
+		return nil
+	}
 	m.EnsureModelNameKey()
 	return nil
 }

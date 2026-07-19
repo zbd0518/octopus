@@ -43,3 +43,25 @@ func TestSiteModelIdentityKeyDistinguishesCase(t *testing.T) {
 		t.Fatalf("identity keys should differ for case variants")
 	}
 }
+
+func TestSiteModelBeforeSaveSkipsEmptyModelName(t *testing.T) {
+	item := SiteModel{
+		ModelName:    "",
+		ModelNameKey: "keep-me",
+		GroupKey:     SiteDefaultGroupKey,
+	}
+	if err := item.BeforeSave(nil); err != nil {
+		t.Fatalf("BeforeSave: %v", err)
+	}
+	if item.ModelNameKey != "keep-me" {
+		t.Fatalf("empty ModelName should not rewrite key, got %q", item.ModelNameKey)
+	}
+
+	item.ModelName = "GLM-5.2"
+	if err := item.BeforeSave(nil); err != nil {
+		t.Fatalf("BeforeSave with name: %v", err)
+	}
+	if item.ModelNameKey != SiteModelNameKey("GLM-5.2") {
+		t.Fatalf("key = %q, want %q", item.ModelNameKey, SiteModelNameKey("GLM-5.2"))
+	}
+}
