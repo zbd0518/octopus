@@ -88,7 +88,8 @@ func persistSyncSnapshot(ctx context.Context, accountID int, snapshot *syncSnaps
 		}
 		existingModelMap := make(map[string]model.SiteModel, len(existingModels))
 		for _, item := range existingModels {
-			key := model.NormalizeSiteGroupKey(item.GroupKey) + "\x00" + strings.TrimSpace(item.ModelName)
+			item.EnsureModelNameKey()
+			key := model.SiteModelIdentityKey(item.GroupKey, item.ModelName)
 			existingModelMap[key] = item
 		}
 
@@ -156,8 +157,8 @@ func preparePersistedSyncModels(accountID int, incoming []model.SiteModel, exist
 	for i := range incoming {
 		item := incoming[i]
 		item.SiteAccountID = accountID
-		item.GroupKey = model.NormalizeSiteGroupKey(item.GroupKey)
-		key := item.GroupKey + "\x00" + strings.TrimSpace(item.ModelName)
+		item.EnsureModelNameKey()
+		key := model.SiteModelIdentityKey(item.GroupKey, item.ModelName)
 		if existing, ok := existingModelMap[key]; ok {
 			item.ID = existing.ID
 			item.Disabled = existing.Disabled
@@ -186,7 +187,7 @@ func mergePersistedSiteModelsByGroup(existing []model.SiteModel, incoming []mode
 			continue
 		}
 		item.GroupKey = groupKey
-		item.ModelName = strings.TrimSpace(item.ModelName)
+		item.EnsureModelNameKey()
 		if item.ModelName == "" {
 			continue
 		}
@@ -441,19 +442,20 @@ func sameComparableSiteTokenValue(left string, right string) bool {
 
 func compactPersistedSiteModels(items []model.SiteModel) []model.SiteModel {
 	if len(items) <= 1 {
+		for i := range items {
+			items[i].EnsureModelNameKey()
+		}
 		return items
 	}
 	seen := make(map[string]int, len(items))
 	result := make([]model.SiteModel, 0, len(items))
 	for _, item := range items {
-		groupKey := model.NormalizeSiteGroupKey(item.GroupKey)
-		modelName := strings.TrimSpace(item.ModelName)
-		if modelName == "" {
+		item.EnsureModelNameKey()
+		if item.ModelName == "" {
 			continue
 		}
-		item.GroupKey = groupKey
-		item.ModelName = modelName
-		key := groupKey + "\x00" + modelName
+		// 身份键使用 model_name_key（大小写敏感 MD5），允许 GLM-5.2 与 glm-5.2 并存。
+		key := model.SiteModelIdentityKey(item.GroupKey, item.ModelName)
 		if index, ok := seen[key]; ok {
 			// Keep the row with stronger persisted state if duplicates slip through.
 			if result[index].ManualOverride || result[index].RouteSource == model.SiteModelRouteSourceRuntimeLearned {

@@ -568,7 +568,9 @@ func buildSiteModels(names []string, groupKey string, source string) []model.Sit
 	models := make([]model.SiteModel, 0, len(names))
 	groupKey = model.NormalizeSiteGroupKey(groupKey)
 	for _, name := range names {
-		models = append(models, model.SiteModel{GroupKey: groupKey, ModelName: name, Source: source})
+		item := model.SiteModel{GroupKey: groupKey, ModelName: name, Source: source}
+		item.EnsureModelNameKey()
+		models = append(models, item)
 	}
 	return models
 }
@@ -582,7 +584,7 @@ func buildGlobalSiteModels(names []string, groups []model.SiteUserGroup, source 
 	for _, group := range groups {
 		groupKey := model.NormalizeSiteGroupKey(group.GroupKey)
 		for _, item := range buildSiteModels(names, groupKey, source) {
-			key := groupKey + "\x00" + item.ModelName
+			key := model.SiteModelIdentityKey(groupKey, item.ModelName)
 			if _, ok := seen[key]; ok {
 				continue
 			}
@@ -696,7 +698,8 @@ func syncSiteModelsByGroup(
 			groupModels = applyDetectedRoutesToSiteModels(ctx, siteRecord, account, accessToken, token, platformUserID, groupModels)
 		}
 		for _, item := range groupModels {
-			key := model.NormalizeSiteGroupKey(item.GroupKey) + "\x00" + strings.TrimSpace(item.ModelName)
+			item.EnsureModelNameKey()
+			key := model.SiteModelIdentityKey(item.GroupKey, item.ModelName)
 			if _, ok := seen[key]; ok {
 				continue
 			}

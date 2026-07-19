@@ -1,6 +1,8 @@
 package model
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -8,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
+	"gorm.io/gorm"
 )
 
 type SitePlatform string
@@ -216,11 +219,18 @@ type SiteUserGroup struct {
 	ProjectionDisabled bool   `json:"projection_disabled" gorm:"default:false"`
 }
 
+// SiteModel 站点账号同步得到的模型行。
+//
+// 唯一身份不再直接用 model_name（MySQL utf8mb4 默认 collation 对大小写不敏感，
+// 会导致 GLM-5.2 与 glm-5.2 在唯一索引上冲突）。改为对「原始大小写 model_name」
+// 计算 MD5 十六进制指纹写入 model_name_key，唯一索引为
+// (site_account_id, group_key, model_name_key)。model_name 仍保存原始展示值。
 type SiteModel struct {
 	ID              int                  `json:"id" gorm:"primaryKey"`
-	SiteAccountID   int                  `json:"site_account_id" gorm:"uniqueIndex:idx_site_account_group_model;not null"`
-	GroupKey        string               `json:"group_key" gorm:"size:128;uniqueIndex:idx_site_account_group_model;not null;default:'default'"`
-	ModelName       string               `json:"model_name" gorm:"size:191;uniqueIndex:idx_site_account_group_model;not null"`
+	SiteAccountID   int                  `json:"site_account_id" gorm:"uniqueIndex:idx_site_account_group_model_key;not null"`
+	GroupKey        string               `json:"group_key" gorm:"size:128;uniqueIndex:idx_site_account_group_model_key;not null;default:'default'"`
+	ModelName       string               `json:"model_name" gorm:"size:191;not null"`
+	ModelNameKey    string               `json:"model_name_key" gorm:"size:32;uniqueIndex:idx_site_account_group_model_key;not null;default:''"`
 	Source          string               `json:"source"`
 	RouteType       SiteModelRouteType   `json:"route_type" gorm:"type:varchar(32);not null;default:'openai_chat';index"`
 	RouteSource     SiteModelRouteSource `json:"route_source" gorm:"type:varchar(32);not null;default:'sync_inferred'"`
@@ -228,6 +238,44 @@ type SiteModel struct {
 	RouteRawPayload string               `json:"route_raw_payload"`
 	RouteUpdatedAt  *time.Time           `json:"route_updated_at"`
 	Disabled        bool                 `json:"disabled" gorm:"default:false;index"`
+}
+
+// SiteModelNameKey 计算站点模型唯一键：md5(TrimSpace(原始 model_name)) 的 hex。
+// 故意不 ToLower，以便仅大小写不同的名字得到不同键。
+func SiteModelNameKey(modelName string) string {
+	name := strings.TrimSpace(modelName)
+	if name == "" {
+		return ""
+	}
+	sum := md5.Sum([]byte(name))
+	return hex.EncodeToString(sum[:])
+}
+
+// EnsureModelNameKey 规范化 GroupKey / ModelName，并填充 ModelNameKey。
+func (m *SiteModel) EnsureModelNameKey() {
+	if m == nil {
+		return
+	}
+	m.GroupKey = NormalizeSiteGroupKey(m.GroupKey)
+	m.ModelName = strings.TrimSpace(m.ModelName)
+	m.ModelNameKey = SiteModelNameKey(m.ModelName)
+}
+
+// BeforeCreate 保证任意 Create 路径（同步、测试、备份恢复）都会写入 model_name_key。
+func (m *SiteModel) BeforeCreate(tx *gorm.DB) error {
+	m.EnsureModelNameKey()
+	return nil
+}
+
+// BeforeSave 覆盖 Updates/Save 路径，避免 key 与 model_name 漂移。
+func (m *SiteModel) BeforeSave(tx *gorm.DB) error {
+	m.EnsureModelNameKey()
+	return nil
+}
+
+// SiteModelIdentityKey 返回用于 map 去重的 (group, model_name_key) 复合键。
+func SiteModelIdentityKey(groupKey, modelName string) string {
+	return NormalizeSiteGroupKey(groupKey) + "\x00" + SiteModelNameKey(modelName)
 }
 
 type SiteChannelBinding struct {

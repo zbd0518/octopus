@@ -520,7 +520,9 @@ func compactSiteModels(items []model.SiteModel) []model.SiteModel {
 	seen := make(map[string]struct{}, len(items))
 	result := make([]model.SiteModel, 0, len(items))
 	for _, item := range items {
-		key := model.NormalizeSiteGroupKey(item.GroupKey) + "\x00" + strings.TrimSpace(item.ModelName)
+		item.EnsureModelNameKey()
+		// 投射侧与持久化侧一致：按 model_name_key 身份去重，保留大小写变体。
+		key := model.SiteModelIdentityKey(item.GroupKey, item.ModelName)
 		if _, ok := seen[key]; ok {
 			continue
 		}
