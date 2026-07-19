@@ -28,8 +28,13 @@ func init() {
 // 步骤（幂等）：
 // 1. 确保 model_name_key 列存在（AutoMigrate 通常已加；legacy 表再补）
 // 2. 回填空的 model_name_key
-// 3. 删除旧唯一索引 idx_site_account_group_model（若存在）
-// 4. 创建新唯一索引 idx_site_account_group_model_key（若不存在）
+// 3. 先创建新唯一索引 idx_site_account_group_model_key（若不存在）
+// 4. 再删除旧唯一索引 idx_site_account_group_model（若存在）
+//
+// 步骤 3 必须在 4 之前：MySQL 上 site_models.site_account_id 的外键依赖
+// 旧复合唯一索引作为引用列索引；若先删旧索引会报
+// Error 1553 (HY000): Cannot drop index ... needed in a foreign key constraint。
+// 新唯一索引同样以 site_account_id 为最左列，可承接外键索引需求。
 func migrateSiteModelNameKey(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("db is nil")
@@ -48,14 +53,14 @@ func migrateSiteModelNameKey(db *gorm.DB) error {
 		return err
 	}
 
-	if err := dropSiteModelOldUniqueIndexes(db); err != nil {
-		return err
-	}
-
 	if !db.Migrator().HasIndex(&model.SiteModel{}, "idx_site_account_group_model_key") {
 		if err := db.Migrator().CreateIndex(&model.SiteModel{}, "idx_site_account_group_model_key"); err != nil {
 			return fmt.Errorf("create site_models idx_site_account_group_model_key: %w", err)
 		}
+	}
+
+	if err := dropSiteModelOldUniqueIndexes(db); err != nil {
+		return err
 	}
 	return nil
 }
@@ -84,6 +89,12 @@ func backfillSiteModelNameKeys(db *gorm.DB) error {
 }
 
 func dropSiteModelOldUniqueIndexes(db *gorm.DB) error {
+	// 先保证 site_account_id 上仍有可用索引（新唯一索引已建时自然满足；
+	// 若 CreateIndex 因某种原因未建立，再补一个非唯一索引供 MySQL FK 使用）。
+	if err := ensureSiteModelAccountIDIndexForFK(db); err != nil {
+		return err
+	}
+
 	// GORM 旧标签名
 	oldNames := []string{
 		"idx_site_account_group_model",
@@ -108,6 +119,32 @@ func dropSiteModelOldUniqueIndexes(db *gorm.DB) error {
 	default:
 		return nil
 	}
+}
+
+// ensureSiteModelAccountIDIndexForFK 确保删除旧复合唯一索引后，
+// site_account_id 仍有索引可服务 site_models -> site_accounts 外键。
+// 新唯一索引 idx_site_account_group_model_key 已以 site_account_id 为最左列时无需额外操作。
+func ensureSiteModelAccountIDIndexForFK(db *gorm.DB) error {
+	if db.Migrator().HasIndex(&model.SiteModel{}, "idx_site_account_group_model_key") {
+		return nil
+	}
+	// 兜底：建独立非唯一索引（正常路径不应走到这里）
+	if db.Dialector.Name() == "mysql" {
+		var count int64
+		if err := db.Raw(`
+SELECT COUNT(1) FROM information_schema.STATISTICS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'site_models'
+  AND COLUMN_NAME = 'site_account_id' AND SEQ_IN_INDEX = 1`).Scan(&count).Error; err != nil {
+			return fmt.Errorf("check site_models site_account_id index: %w", err)
+		}
+		if count > 0 {
+			return nil
+		}
+		if err := db.Exec(`CREATE INDEX idx_site_models_site_account_id ON site_models (site_account_id)`).Error; err != nil {
+			return fmt.Errorf("create site_models site_account_id index for fk: %w", err)
+		}
+	}
+	return nil
 }
 
 func dropSQLiteSiteModelNameUniqueIndexes(db *gorm.DB) error {
