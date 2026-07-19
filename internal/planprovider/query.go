@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/lingyuins/octopus/internal/model"
 )
 
@@ -81,6 +83,8 @@ func QueryTokenPlan(ctx context.Context, category model.PlanProviderCategory, ap
 		return queryZhipuTokenPlan(ctx, apiKey)
 	case model.PlanProviderCodex:
 		return queryCodexTokenPlan(ctx, apiKey)
+	case model.PlanProviderBailianPlan:
+		return queryBailianPlanTokenPlan(ctx, apiKey)
 	default:
 		return nil, fmt.Errorf("unsupported tokenplan provider: %s", category)
 	}
@@ -1002,14 +1006,15 @@ func queryOpenAIBalance(ctx context.Context, apiKey string) (*BalanceResult, err
 //   - 用量按百分比返回（used_percent），非绝对值
 //
 // 响应结构：
-//   {
-//     "plan_type": "...",
-//     "rate_limit": {
-//       "primary_window":   { "used_percent": 42.5, "reset_at": 1234567890, "limit_window_seconds": 604800 },
-//       "secondary_window": { "used_percent": 10.0, "reset_at": 1234567890, "limit_window_seconds": 18000 }
-//     },
-//     "additional_rate_limits": [...]
-//   }
+//
+//	{
+//	  "plan_type": "...",
+//	  "rate_limit": {
+//	    "primary_window":   { "used_percent": 42.5, "reset_at": 1234567890, "limit_window_seconds": 604800 },
+//	    "secondary_window": { "used_percent": 10.0, "reset_at": 1234567890, "limit_window_seconds": 18000 }
+//	  },
+//	  "additional_rate_limits": [...]
+//	}
 //
 // primary_window = 周配额（limit_window_seconds ≈ 604800 = 7 天）
 // secondary_window = 5 小时配额（limit_window_seconds ≈ 18000 = 5h）
@@ -1124,6 +1129,160 @@ func parseCodexOAuthKey(raw string) (*codexOAuthKey, error) {
 		return nil, fmt.Errorf("invalid oauth key json: %w", err)
 	}
 	return &key, nil
+}
+
+// --- 百炼 Token Plan (阿里云百炼) ---
+//
+// 阿里云百炼 Token Plan 的套餐用量查询通过控制台网关 API：
+//   - 域名：bailian-cs.console.aliyun.com（控制台网关），非 API 端点
+//   - 凭据：浏览器 Cookie（阿里云控制台会话），非 sk- API key
+//   - 鉴权：Cookie 会话认证
+//   - 用量按百分比返回（per5HourPercentage / per1WeekPercentage），非绝对值
+//
+// 需要两个 API 调用：
+//   - subscription：查询订阅状态（status / remainingDays / endTime）
+//   - usage：查询用量百分比（5 小时窗口 / 1 周窗口）
+//
+// 转发渠道使用独立的 API 端点和 API Key：
+//   - 接入点：token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+//   - API Key：sk-sp-... 格式
+var bailianPlanGatewayURL = "https://bailian-cs.console.aliyun.com/data/api.json"
+
+func queryBailianPlanTokenPlan(ctx context.Context, cookie string) (*TokenPlanResult, error) {
+	// 1. 查询订阅状态
+	subData, err := bailianGatewayPost(ctx, cookie,
+		"zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/subscription",
+		`{"queryInstanceInfoRequest":{"commodityCode":"sfm_tokenplansolo_public_cn"}}`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query subscription: %w", err)
+	}
+
+	// 解析订阅状态
+	var subResp struct {
+		Code string `json:"code"`
+		Data struct {
+			DataV2 struct {
+				Data struct {
+					Code string `json:"code"`
+					Data struct {
+						Status        string `json:"status"`
+						RemainingDays int    `json:"remainingDays"`
+						EndTime       int64  `json:"endTime"`
+					} `json:"data"`
+				} `json:"data"`
+			} `json:"DataV2"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(subData, &subResp); err != nil {
+		return nil, fmt.Errorf("parse subscription response: %w", err)
+	}
+	if subResp.Data.DataV2.Data.Code != "SUCCESS" {
+		return nil, fmt.Errorf("subscription query failed: code=%s", subResp.Data.DataV2.Data.Code)
+	}
+	subInfo := subResp.Data.DataV2.Data.Data
+	if subInfo.Status != "VALID" {
+		return nil, fmt.Errorf("subscription status is %s (not VALID)", subInfo.Status)
+	}
+
+	// 2. 查询用量百分比
+	usageData, err := bailianGatewayPost(ctx, cookie,
+		"zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage",
+		`{}`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query usage: %w", err)
+	}
+
+	var usageResp struct {
+		Code string `json:"code"`
+		Data struct {
+			DataV2 struct {
+				Data struct {
+					Code string `json:"code"`
+					Data struct {
+						Per5HourPercentage float64 `json:"per5HourPercentage"`
+						Per1WeekPercentage float64 `json:"per1WeekPercentage"`
+						Per5HourResetTime  int64   `json:"per5HourResetTime"`
+						Per1WeekResetTime  int64   `json:"per1WeekResetTime"`
+					} `json:"data"`
+				} `json:"data"`
+			} `json:"DataV2"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(usageData, &usageResp); err != nil {
+		return nil, fmt.Errorf("parse usage response: %w", err)
+	}
+	if usageResp.Data.DataV2.Data.Code != "SUCCESS" {
+		return nil, fmt.Errorf("usage query failed: code=%s", usageResp.Data.DataV2.Data.Code)
+	}
+	usage := usageResp.Data.DataV2.Data.Data
+
+	// 3. 映射到 TokenPlanResult
+	// 百炼用量是百分比（0-1），转为 0-100 表示
+	result := &TokenPlanResult{
+		QuotaTotal:  100,
+		QuotaUsed:   usage.Per5HourPercentage * 100,
+		WeeklyTotal: 100,
+		WeeklyUsed:  usage.Per1WeekPercentage * 100,
+	}
+	if usage.Per5HourResetTime > 0 {
+		t := time.UnixMilli(usage.Per5HourResetTime)
+		result.QuotaResetAt = &t
+	}
+	if usage.Per1WeekResetTime > 0 {
+		t := time.UnixMilli(usage.Per1WeekResetTime)
+		result.WeeklyResetAt = &t
+	}
+
+	return result, nil
+}
+
+// bailianGatewayPost 向百炼控制台网关发送 POST 请求。
+// apiPath 是网关 API 路径（如 zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage），
+// dataJSON 是 Data 字段的 JSON 内容。
+func bailianGatewayPost(ctx context.Context, cookie, apiPath, dataJSON string) ([]byte, error) {
+	// 构造 cornerstoneParam
+	cornerstone := fmt.Sprintf(
+		`{"feTraceId":"%s","feURL":"https://bailian.console.aliyun.com/cn-beijing?tab=plan#/efm/subscription/token-plan/personal","protocol":"V2","console":"ONE_CONSOLE","productCode":"p_efm"}`,
+		uuid.NewString(),
+	)
+
+	// 构造完整 params JSON
+	paramsJSON := fmt.Sprintf(
+		`{"Api":"%s","V":"1.0","Data":%s,"cornerstoneParam":%s}`,
+		apiPath, dataJSON, cornerstone,
+	)
+
+	// URL 编码 params
+	body := "params=" + url.QueryEscape(paramsJSON)
+
+	reqURL := bailianPlanGatewayURL + "?action=BroadScopeAspnGateway&product=sfm_bailian&api=" + url.QueryEscape(apiPath) + "&_v=undefined"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, strings.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Cookie", strings.TrimSpace(cookie))
+	req.Header.Set("Referer", "https://bailian.console.aliyun.com/")
+	req.Header.Set("Origin", "https://bailian.console.aliyun.com")
+
+	client := &http.Client{Timeout: requestTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http post: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("http status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return respBody, nil
 }
 
 // --- Helpers ---

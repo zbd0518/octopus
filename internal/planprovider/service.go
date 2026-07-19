@@ -342,6 +342,9 @@ const stepFunPlanAPIBaseURL = "https://api.stepfun.com/step_plan/v1"
 // senseNovaPlanAPIBaseURL 是 SenseNova 套餐转发的 API 接入点。
 const senseNovaPlanAPIBaseURL = "https://token.sensenova.cn/v1"
 
+// bailianPlanAPIBaseURL 是百炼 Token Plan 转发的 API 接入点。
+const bailianPlanAPIBaseURL = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+
 func normalizePlanForwardAPIKey(category model.PlanProviderCategory, forwardAPIKey string) string {
 	if !isConsoleTokenPlanCategory(category) {
 		return ""
@@ -352,7 +355,7 @@ func normalizePlanForwardAPIKey(category model.PlanProviderCategory, forwardAPIK
 // isConsoleTokenPlanCategory 判断是否为"控制台 token plan"类厂商
 // （使用控制台会话 token 查套餐、可选 sk- key 创建转发渠道的厂商）。
 func isConsoleTokenPlanCategory(category model.PlanProviderCategory) bool {
-	return category == model.PlanProviderStepFunPlan || category == model.PlanProviderSenseNovaPlan
+	return category == model.PlanProviderStepFunPlan || category == model.PlanProviderSenseNovaPlan || category == model.PlanProviderBailianPlan
 }
 
 // planForwardAPIBaseURL 返回控制台 token plan 类厂商的转发 API 接入点。
@@ -362,6 +365,8 @@ func planForwardAPIBaseURL(category model.PlanProviderCategory) string {
 		return stepFunPlanAPIBaseURL
 	case model.PlanProviderSenseNovaPlan:
 		return senseNovaPlanAPIBaseURL
+	case model.PlanProviderBailianPlan:
+		return bailianPlanAPIBaseURL
 	default:
 		return ""
 	}
@@ -374,6 +379,8 @@ func planForwardLabel(category model.PlanProviderCategory) string {
 		return "StepFun Plan"
 	case model.PlanProviderSenseNovaPlan:
 		return "SenseNova Plan"
+	case model.PlanProviderBailianPlan:
+		return "Bailian Plan"
 	default:
 		return "Plan"
 	}

@@ -101,7 +101,7 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
     const [customName, setCustomName] = useState('');
     const [mimoAuthMode, setMimoAuthMode] = useState<'passToken' | 'serviceToken'>('serviceToken');
 
-    const isConsoleTokenPlan = selectedCategory === 'stepfun_plan' || selectedCategory === 'sensenova_plan' || selectedCategory === 'mimo_plan';
+    const isConsoleTokenPlan = selectedCategory === 'stepfun_plan' || selectedCategory === 'sensenova_plan' || selectedCategory === 'mimo_plan' || selectedCategory === 'bailian_plan';
     const isMiMoPlan = selectedCategory === 'mimo_plan';
     const isCodexPlan = selectedCategory === 'codex';
     const supportsForwardApiKey = isConsoleTokenPlan && !isMiMoPlan;

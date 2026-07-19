@@ -20,12 +20,14 @@
 - 🤖 **Auto Strategy** - Explore candidates first, then prefer higher in-window success rate automatically
 - 🧠 **AI Routing, Auto Grouping & Conditional Groups** - Generate the full routing table from the route page, fill a single group from the edit dialog, and gate groups with JSON conditions
 - 🔄 **Protocol Conversion** - Seamless conversion between OpenAI Chat / OpenAI Responses / OpenAI Embeddings / Anthropic API formats
-- 🌐 **Multi-Provider Support** - Built-in support for OpenAI-compatible, Anthropic, Cloudflare, Gemini, Volcengine, and MiMo channels
+- 🌐 **Multi-Provider Support** - Built-in support for OpenAI-compatible, Anthropic, Cloudflare, Gemini, Volcengine, MiMo, Codex, and passthrough channels
 - 🛰️ **Media & Utility Relay** - Relay OpenAI Images, audio, video, search, rerank, and moderation endpoints through the same group / retry / circuit-breaker infrastructure
 - 🧾 **API Key Governance** - Supported-model allowlists, expiry, max-cost caps, RPM / TPM limits, per-model quotas, and IP / CIDR allowlists
 - 🔐 **Role-Based Admin Access** - Built-in `admin`, `editor`, and `viewer` roles with server-side permission enforcement
 - 🔑 **WebAuthn / Passkey Login** — Passwordless login and registration via WebAuthn/Passkey with configurable RP settings
-- 🚨 **Alerts & Notifications** - Alert rules for error rate, cost threshold, quota exceeded, and channel down with webhook, Gotify, email, Telegram, Feishu, DingTalk, WeCom, and ntfy notification channels and history
+- 🚨 **Alerts & Notification Center** - Unified notification center aggregating system events, alert firings, and plan notifications with SSE streaming; alert rules for error rate (with scope + sliding window), cost threshold, quota exceeded, and channel down, delivered via webhook, Gotify, email, Telegram, Feishu, DingTalk, WeCom, and ntfy
+- 📦 **Plan Provider Monitoring** - Track upstream subscription quota/usage (Codex, MiMo, StepFun, SenseNova, and balance-type providers like DeepSeek / Kimi / OpenRouter) and auto-create dedicated forwarding channels under the "Plan" channel group
+- 📅 **Usage Reports** - Schedule daily / weekly / monthly usage reports delivered through notification channels
 - 💎 **Model Market** - Unified model catalog with pricing, channel coverage, enabled key counts, latency, and success metrics, plus create / edit / delete / refresh price workflows
 - 🔃 **Model Sync** - Automatic synchronization of available model lists with channels
 - 📊 **Analytics & Evaluation** - Overview, provider / model / API key utilization, route health, latency distribution, semantic-cache evaluation, provider prompt-cache analytics, and live entry points for group testing / AI routing
@@ -377,14 +379,14 @@ The embedded management UI currently ships with these top-level modules:
 | Module | What it covers |
 |--------|----------------|
 | Home | Version, runtime status, high-level summaries, trend chart, activity heatmap, and ranking panel |
-| Hub | Upstream relay platform management with 3 tabs: Sites (multi-account cards with inline balance / sync / check-in status, archive/restore, batch edit, and bulk import from AllAPIHub / MetAPI), Site Channels (projected channel bindings), and Automation (auto-sync and auto-checkin intervals) |
+| Hub | Upstream relay platform management with 5 tabs: Sites (multi-account cards with inline balance / sync / check-in status, archive/restore, batch edit, and bulk import from AllAPIHub / MetAPI), Site Channels (projected channel bindings), Automation (auto-sync and auto-checkin intervals), Balance (plan balance charts), and TokenPlan (token plan monitoring) |
 | Channel | Upstream provider configuration, keys, headers, sync, latency probing, proxy mode, and request rewrite profiles |
 | Group | Model routing, load-balancing strategies, sticky sessions, group test, AI route generation, endpoint provider, zashboard-style collapsible group list, and CC Switch deep link |
 | Model Market | Model catalog, custom pricing, channel coverage, enabled key counts, latency, success metrics, and capabilities dual-view |
-| Analytics | Cache overview, utilization, route health, latency distribution, evaluation, and share snapshot |
+| Analytics | Channel × Model (default), Usage Breakdown, Route Health, Latency distribution, Evaluation, Cache (semantic + provider prompt cache), and share snapshot |
 | Log | Relay request history, error details, token usage, and cost records |
-| Alert | Alert rules, notification channels (webhook, Gotify, email, Telegram, Feishu, DingTalk, WeCom, ntfy), state, and history |
-| Ops | Telemetry (hero metrics, P95 latency, provider health, prompt-cache analytics), quota, health, system, and audit trail |
+| Notification | Unified notification center with 4 groups: Messages (inbox / archived), Alerts (rules / history), Delivery (channels / policies / preferences), and Reports (schedules / history). Alert rules, notification channels (webhook, Gotify, email, Telegram, Feishu, DingTalk, WeCom, ntfy), and usage report scheduling all live here |
+| Ops | Telemetry (hero metrics, P95 latency, provider health, prompt-cache analytics), Quota, Health, Maintenance (retry / circuit breaker / response filter), System, and Audit trail |
 | APIKey | API key create, edit, delete, supported-model allowlists, expiry, max-cost caps, RPM / TPM quotas, IP allowlists, and per-model quotas |
 | Setting | Version/update info, appearance and nav preferences (order + visibility), runtime tuning, semantic cache, AI route services, API key defaults, WebAuthn/Passkey, database migration, WebDAV backup, site automation, backup/restore, model-name normalization rules, and dangerous operations |
 | User | Admin user management and roles |
@@ -458,6 +460,21 @@ Header and message strategies:
 **Skip Model Availability Test:**
 
 Each channel has a `skip_model_test` toggle (issue #98). When enabled, the channel is excluded from group/model availability probes — useful for upstreams that deduct quota or ban accounts on low-byte probe requests. Skipped channels are recorded as a non-passing attempt in the test log with a clear reason instead of sending a real request upstream.
+
+**Key Selection Strategy:**
+
+When a channel has multiple keys, the global `key_selection_strategy` setting controls which key is picked per request:
+
+| Strategy | Description |
+|----------|-------------|
+| `cost` | Default. Prefer the lowest-cost key |
+| `availability` | Prefer keys with a higher availability score (error-type weighted, time-based lazy recovery) |
+| `speed` | Prefer keys with higher recent TPS (tokens per second) throughput (issue #140) |
+| `priority` | Prefer keys with a higher per-key priority ordering |
+
+**Scheduled Key Availability Patrol:**
+
+A background job (issue #142) periodically probes all channel keys at the interval configured by `key_health_check_interval` (minutes). Failed keys trigger a notification and grey out the affected channel so degraded upstreams are visible at a glance.
 
 ### 🌐 Public Relay Endpoints
 
@@ -730,7 +747,7 @@ Since the program handles numerous statistics, writing to the database on every 
 - Both are saved periodically using the same interval as statistics persistence
 - Both are also saved during graceful shutdown
 
-**Key settings cards in the current UI (13 cards):**
+**Key settings cards in the current UI (14 cards):**
 
 | Card | Purpose |
 |------|---------|
@@ -744,6 +761,7 @@ Since the program handles numerous statistics, writing to the database on every 
 | System | Public API base URL, proxy URL, CORS allowlist (tag-style management), and stats persistence interval |
 | LLM Sync | Upstream model synchronization and price refresh cadence |
 | Backup | Database export, import, and live database migration between SQLite / MySQL / PostgreSQL with connection testing and per-table row count results |
+| Redis | Optional Redis cache backend configuration: connection settings, test connection, and save (restart to apply). Unloads stats, runtime state, rate-limit/cooldown, and channel-delay probing to Redis for low-memory hosts and multi-instance scaling |
 | WebDAV Backup | WebDAV cloud backup configuration: connection settings, auto-backup interval, max backups retention, manual trigger, remote file listing, restore, and delete |
 | WebAuthn / Passkey | RP ID, RP name, allowed origins configuration |
 | Normalize | Model-name normalization rules: router prefixes, functional suffixes, and explicit variant→canonical mappings (runtime-configurable, with an offline AI-assisted normalization workflow) |
@@ -780,7 +798,7 @@ The Backup settings card includes a live database migration feature beyond simpl
 
 **Settings Card Order:**
 
-The Settings page supports drag-and-drop reordering of its 13 card sections, with order persisted to local storage. A "Reset to Default" button restores the original order.
+The Settings page supports drag-and-drop reordering of its 14 card sections, with order persisted to local storage. A "Reset to Default" button restores the original order.
 
 > ⚠️ **Important**: When exiting the program, use proper shutdown methods (like `Ctrl+C` or sending `SIGTERM` signal) to ensure in-memory statistics are correctly written to the database. **Do NOT use `kill -9` or other forced termination methods**, as this may result in statistics data loss.
 
@@ -869,11 +887,11 @@ Generate ready-to-use configuration snippets for 5 client tools:
 
 ---
 
-### 🚨 Alerts & Notifications
+### 🚨 Notification Center & Alerts
 
-Alert rules monitor system health and trigger notifications:
+The Notification module is a unified center aggregating system events, alert firings, and plan-provider notifications with severity levels, read/archive state, filtering, and SSE streaming for real-time delivery. Alert rules monitor system health and trigger notifications:
 
-**Alert rule types:** Error rate, cost threshold, quota exceeded, and channel down.
+**Alert rule types:** Error rate (with configurable scope — per-channel / per-group / global — and sliding-window evaluation), cost threshold, quota exceeded, and channel down.
 
 **Notification channels:**
 
@@ -889,6 +907,8 @@ Alert rules monitor system health and trigger notifications:
 | ntfy | Topic URL, optional access token |
 
 Alert state and history are tracked per rule, with configurable evaluation intervals.
+
+**Usage Reports:** Schedule daily / weekly / monthly usage reports delivered through the configured notification channels, with report history tracking.
 
 ---
 
@@ -971,7 +991,7 @@ internal/
 ├── conf/               # Configuration loading & build metadata
 ├── client/             # HTTP client utilities
 ├── db/                 # Database connection & migrations (SQLite/MySQL/PostgreSQL)
-│   └── migrate/        # Versioned schema migrations (001-031)
+│   └── migrate/        # Versioned schema migrations (001-033)
 ├── model/              # Domain types (Channel, Group, APIKey, User, Site, ProxyConfiguration, ModelMapping, …)
 ├── op/                 # Business logic operations split by domain
 │   ├── airoute/        # AI route generation, progress tracking, service pool, and compatibility helpers
@@ -987,14 +1007,18 @@ internal/
 │   ├── group/          # Route-group CRUD, auto-grouping, group items, tests, and cache-backed lookups
 │   ├── llm/            # LLM price catalog operations
 │   ├── modelmapping/   # Model mapping rule management
+│   ├── modelnormalize/ # Model-name normalization rules
 │   ├── navorder/       # Navigation order and visibility persistence
+│   ├── notification/   # Notification center (messages, SSE stream, preferences)
 │   ├── ops/            # Ops dashboard data aggregation (telemetry, quota, health)
 │   ├── ratelimitstore/ # RPM/TPM rate limit state
 │   ├── relaylog/       # Relay log persistence with async flush worker
 │   ├── remotesite/     # Remote Hub site operations (balance, checkin, announcements, usage, tokens, redemption)
+│   ├── report/         # Usage report scheduling and delivery
 │   ├── setting/        # Settings CRUD and validation
 │   ├── stats/          # Request statistics aggregation, cache, and site-model backfill
-│   └── user/           # User management and authentication
+│   ├── user/           # User management and authentication
+│   └── webauthn/       # WebAuthn / Passkey registration and authentication
 ├── relay/              # Core relay pipeline
 │   ├── balancer/       # Load balancing strategies (RoundRobin, Random, Failover, Weighted, Auto)
 │   └── condition/      # Request condition evaluation
@@ -1007,14 +1031,17 @@ internal/
 ├── task/               # Background periodic jobs
 ├── transformer/        # Protocol adapters
 │   ├── inbound/        # Client→Internal (OpenAI, Anthropic)
-│   ├── outbound/       # Internal→Upstream (OpenAI, Anthropic, Cloudflare, Gemini, Volcengine, MiMo)
+│   ├── outbound/       # Internal→Upstream (OpenAI, Anthropic, Cloudflare, Gemini, Volcengine, MiMo, Codex, Passthrough)
 │   ├── rewrite/        # Request normalization with configurable profiles
 │   └── model/          # Shared transformer types & interfaces
 ├── hub/                # Remote site adapter interface, registry, HTTP client, and platform-specific adapters
+├── planprovider/       # Upstream subscription plan monitoring (Codex, MiMo, StepFun, SenseNova, balance-type providers)
+├── store/              # Optional cache/state backend (KVStore, RateLimitStore, StatsStore, RuntimeStateStore): memory + Redis
 ├── helper/             # Cross-cutting helpers (AI route, channel/group probes, price, notify)
 ├── price/              # LLM price catalog (models.dev sync)
 ├── update/             # Self-update mechanism
-└── utils/              # Utilities (cache, ratelimit, semantic_cache, tokenizer, crypto, …)
+├── utils/              # Utilities (cache, ratelimit, semantic_cache, tokenizer, crypto, …)
+└── sitesync/           # Site sync, projection, and check-in implementation
 ```
 
 **Relay data flow:**
@@ -1082,7 +1109,7 @@ Octopus involves three independent timezone layers:
 | Layer | Controlled By | Affects |
 |-------|--------------|---------|
 | **Container timezone** | `ENV TZ` / `-e TZ=` | Server log timestamps, `time.Now()` return value |
-| **Stats timezone** | Admin UI → `stats_timezone_offset` | Which date hourly/daily statistics roll into |
+| **Stats timezone** | Admin UI → `stats_timezone` (IANA name, e.g. `Asia/Shanghai`) | Which date hourly/daily statistics roll into |
 | **Frontend display timezone** | Admin UI → user preference (10 time zones) | How all timestamps appear on pages |
 
 The three layers are independent: the container timezone affects the server runtime, the stats timezone affects data aggregation, and the frontend timezone only changes how users see time text.

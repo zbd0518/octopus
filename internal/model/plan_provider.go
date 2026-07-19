@@ -31,6 +31,7 @@ const (
 	PlanProviderSenseNovaPlan PlanProviderCategory = "sensenova_plan"
 	PlanProviderMiMoPlan      PlanProviderCategory = "mimo_plan"
 	PlanProviderCodex         PlanProviderCategory = "codex"
+	PlanProviderBailianPlan   PlanProviderCategory = "bailian_plan"
 )
 
 // PlanProviderCategoryInfo 厂商元信息（非 DB 字段）
@@ -171,6 +172,15 @@ var PlanProviderCategories = []PlanProviderCategoryInfo{
 		Models:      "gpt-5,gpt-5-codex,gpt-5.1,gpt-5.1-codex,gpt-5.2,gpt-5.2-codex",
 		Description: "ChatGPT Codex 套餐用量查询（WHAM API）+ 自动创建 Codex 转发渠道。需填入 OAuth JSON 凭据（含 access_token 和 account_id），从 ChatGPT 订阅账号获取。系统将自动创建 Codex 类型渠道（接入点 chatgpt.com/backend-api/codex/responses）。access_token 有效期较短，过期后需重新获取。",
 		HelpURL:     "https://chatgpt.com",
+	},
+	{
+		Category:    PlanProviderBailianPlan,
+		Name:        "百炼 Token Plan (阿里云)",
+		Type:        PlanProviderTypeTokenPlan,
+		BaseURL:     "https://bailian.console.aliyun.com",
+		Models:      "qwen3.8-max-preview,qwen3.7-max,qwen3.7-plus,qwen3.6-flash,glm-5.2,deepseek-v4-pro",
+		Description: "阿里云百炼 Token Plan 套餐用量查询（控制台 Cookie 鉴权）。在浏览器登录 bailian.console.aliyun.com 后，按 F12 → Application → Cookies 复制完整 Cookie。可选填 API Key（sk-sp-...）自动创建转发渠道（接入点 token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1）",
+		HelpURL:     "https://bailian.console.aliyun.com/cn-beijing?tab=plan#/efm/subscription/token-plan/personal",
 	},
 }
 

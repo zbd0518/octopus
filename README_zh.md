@@ -20,12 +20,14 @@
 - 🤖 **Auto 智能策略** - 先探索样本不足的候选，再优先选择窗口内成功率更高的渠道
 - 🧠 **AI 路由、自动分组与条件分组** - 支持在路由页生成整张路由表，在分组编辑弹窗中补全单个分组，并用 JSON 条件控制分组命中
 - 🔄 **协议互转** - 支持 OpenAI Chat / OpenAI Responses / OpenAI Embeddings / Anthropic 四种 API 格式互相转换
-- 🌐 **多供应商支持** - 内置支持 OpenAI 兼容、Anthropic、Cloudflare、Gemini、Volcengine、MiMo 渠道
+- 🌐 **多供应商支持** - 内置支持 OpenAI 兼容、Anthropic、Cloudflare、Gemini、Volcengine、MiMo、Codex 以及 Passthrough 透传渠道
 - 🛰️ **媒体与工具类中继** - 支持通过同一套分组 / 重试 / 熔断基础设施转发 OpenAI Images、音频、视频、搜索、重排和审核类端点
 - 🧾 **API Key 治理** - 支持模型白名单、过期时间、费用上限、RPM / TPM 限额、按模型配额，以及 IP / CIDR 白名单
 - 🔐 **角色化管理权限** - 内置 `admin`、`editor`、`viewer` 三种角色，并由服务端强制执行权限控制
 - 🔑 **WebAuthn / Passkey 登录** — 通过 WebAuthn/Passkey 实现无密码登录和注册，支持可配置 RP 设置
-- 🚨 **告警与通知** - 支持错误率、费用阈值、额度超限、渠道下线等告警规则，支持 Webhook、Gotify、Email、Telegram、飞书、钉钉、企业微信、ntfy 八种通知渠道并记录通知历史
+- 🚨 **告警与通知中心** - 统一通知中心聚合系统事件、告警触发和套餐通知，支持 SSE 实时推送；告警规则支持错误率（含作用域 + 滑动窗口）、费用阈值、额度超限、渠道下线，通过 Webhook、Gotify、Email、Telegram、飞书、钉钉、企业微信、ntfy 八种渠道送达
+- 📦 **套餐监控** - 跟踪上游订阅套餐额度/用量（Codex、MiMo、StepFun、SenseNova，以及 DeepSeek / Kimi / OpenRouter 等余额类厂商），并自动在「Plan」渠道分组下创建专属转发渠道
+- 📅 **用量报表** - 支持按日 / 周 / 月调度用量报表，通过通知渠道送达
 - 💎 **模型广场** - 统一模型目录，展示价格、渠道覆盖、可用 Key 数、延迟和成功率等指标，同时保留创建 / 编辑 / 删除 / 刷新价格能力
 - 🔃 **模型同步** - 自动与渠道同步可用模型列表，省心省力
 - 📊 **Analytics 与 Evaluation** - 提供缓存概览、供应商 / 模型 / API Key 利用率、路由健康、延迟分布、语义缓存评估、供应商 Prompt Cache 分析，以及分组测试 / AI 路由入口
@@ -350,14 +352,14 @@ http://localhost:3000
 | 模块 | 作用 |
 |------|------|
 | Home | 版本信息、运行状态、高层摘要、趋势图、GitHub 风格活跃热力图和排行榜 |
-| Hub | 上游中继平台管理，包含 3 个标签页：站点（多账号卡片，内联余额/同步/签到状态、归档/恢复、批量编辑、AllAPIHub/MetAPI 批量导入）、站点渠道（投射渠道绑定）、自动化（自动同步与自动签到间隔） |
+| Hub | 上游中继平台管理，包含 5 个标签页：站点（多账号卡片，内联余额/同步/签到状态、归档/恢复、批量编辑、AllAPIHub/MetAPI 批量导入）、站点渠道（投射渠道绑定）、自动化（自动同步与自动签到间隔）、额度（套餐余额图表）和 TokenPlan（Token 套餐监控） |
 | Channel | 上游渠道、Key、Header、同步、延迟探测、代理模式和请求改写配置 |
 | Group | 模型路由、负载均衡、会话保持、分组测试、AI 路由、端点供应商、Zashboard 风格可折叠分组列表和 CC Switch 深链接 |
 | Model Market | 模型目录、自定义价格、渠道覆盖、可用 Key 数、延迟、成功率摘要和能力双视图 |
-| Analytics | 缓存概览、利用率、路由健康、延迟分布、评估中心和分享快照 |
+| Analytics | 渠道×模型（默认）、用量拆分、路由健康、延迟分布、评估中心、缓存（语义 + 供应商 Prompt Cache）和分享快照 |
 | Log | Relay 请求历史、错误详情、Token 使用和费用记录 |
-| Alert | 告警规则、通知渠道（Webhook、Gotify、Email、Telegram、飞书、钉钉、企业微信、ntfy）、状态和历史 |
-| Ops | 遥测（Hero 指标、P95 延迟、供应商健康、Prompt Cache 分析）、配额、健康、系统和审计轨迹 |
+| Notification | 统一通知中心，含 4 个分组：消息（收件箱 / 已归档）、告警（规则 / 历史）、送达（渠道 / 策略 / 偏好）和报表（调度 / 历史）。告警规则、通知渠道（Webhook、Gotify、Email、Telegram、飞书、钉钉、企业微信、ntfy）和用量报表调度都在这里 |
+| Ops | 遥测（Hero 指标、P95 延迟、供应商健康、Prompt Cache 分析）、配额、健康、维护（重试 / 熔断 / 响应过滤）、系统和审计轨迹 |
 | APIKey | API Key 创建、编辑、删除，模型白名单、过期时间、费用上限、RPM / TPM 配额、IP 白名单和按模型配额 |
 | Setting | 版本更新信息、外观与导航偏好（排序 + 可见性）、运行时调优、语义缓存、AI 路由服务池、API Key 默认配置、WebAuthn/Passkey、数据库迁移、WebDAV 备份、站点自动化、备份恢复、模型名归一化规则和危险操作 |
 | User | 管理员用户和角色管理 |
@@ -431,6 +433,21 @@ Header 和消息策略：
 **跳过模型可用性测试：**
 
 每个渠道提供 `skip_model_test` 开关（issue #98）。开启后该渠道不参与分组/模型可用性探测——适用于因低字节探测请求而扣额度或封禁账号的上游。被跳过的渠道会在测试日志中记为一次不通过的尝试并附上明确原因，而不会真正向上游发请求。
+
+**Key 选择策略：**
+
+当渠道配置了多个 Key 时，全局 `key_selection_strategy` 设置控制每次请求挑选哪个 Key：
+
+| 策略 | 说明 |
+|------|------|
+| `cost` | 默认。优先选择成本最低的 Key |
+| `availability` | 优先选择可用度评分更高的 Key（按错误类型加权，支持基于时间的惰性恢复） |
+| `speed` | 优先选择近期 TPS（每秒 token 数）吞吐更高的 Key（issue #140） |
+| `priority` | 优先选择按 Key 优先级排序更高的 Key |
+
+**定时 Key 可用性巡检：**
+
+后台任务（issue #142）按 `key_health_check_interval`（分钟）配置的间隔定期探测所有渠道 Key。失败的 Key 会触发通知并将受影响的渠道标灰，让降级的上游一目了然。
 
 ### 🌐 公共 Relay 端点
 
@@ -703,7 +720,7 @@ Telemetry 标签页包含供应商侧 Prompt Cache 监控，追踪上游供应�
 - 二者都会按统计保存周期定时落库
 - 二者也会在优雅退出时主动保存
 
-**当前设置页的重点卡片（瘦身后共 13 张）：**
+**当前设置页的重点卡片（瘦身后共 14 张）：**
 
 | 卡片 | 作用 |
 |------|------|
@@ -717,6 +734,7 @@ Telemetry 标签页包含供应商侧 Prompt Cache 监控，追踪上游供应�
 | System | Public API Base URL、代理、CORS 白名单（标签式管理）和统计落库周期 |
 | LLM Sync | 上游模型同步和价格刷新节奏 |
 | Backup | 数据库导出、导入和实时数据库迁移（SQLite / MySQL / PostgreSQL），支持连接测试和按表行数结果展示 |
+| Redis | 可选 Redis 缓存后端配置：连接设置、连接测试、保存（重启生效）。将统计、运行时状态、限流/冷却和渠道延迟探测卸载到 Redis，适用于低内存主机和多实例横向扩展 |
 | WebDAV Backup | WebDAV 云备份配置：连接设置、自动备份间隔、最大备份保留数、手动触发、远程文件列表、恢复和删除 |
 | WebAuthn / Passkey | RP ID、RP 展示名、允许的 Origin 配置 |
 | 归一化（Normalize） | 模型名归一化规则：路由前缀、功能后缀和显式变体→基准名映射（运行时可配置，支持离线 AI 辅助归一化工作流） |
@@ -753,7 +771,7 @@ Backup 设置卡片包含超越简单导出/导入的实时数据库迁移功能
 
 **设置卡片排序：**
 
-设置页支持对其 13 个卡片区域进行拖拽排序，排序结果会持久化到本地存储。提供"恢复默认"按钮。
+设置页支持对其 14 个卡片区域进行拖拽排序，排序结果会持久化到本地存储。提供"恢复默认"按钮。
 
 > ⚠️ **重要提示**：退出程序时，请使用正常的关闭方式（如 `Ctrl+C` 或发送 `SIGTERM` 信号），以确保内存中的统计数据能正确写入数据库。**请勿使用 `kill -9` 等强制终止方式**，否则可能导致统计数据丢失。
 
@@ -842,11 +860,11 @@ Hub 模块的**站点**页签将上游中继平台作为一等实体管理。站
 
 ---
 
-### 🚨 告警与通知
+### 🚨 通知中心与告警
 
-告警规则监控系统健康并触发通知：
+通知模块是统一中心，聚合系统事件、告警触发和套餐供应商通知，支持严重级别、已读/归档状态、过滤和 SSE 实时推送。告警规则监控系统健康并触发通知：
 
-**告警规则类型：** 错误率、费用阈值、额度超限和渠道下线。
+**告警规则类型：** 错误率（支持可配置作用域——按渠道 / 按分组 / 全局——和滑动窗口评估）、费用阈值、额度超限和渠道下线。
 
 **通知渠道：**
 
@@ -862,6 +880,8 @@ Hub 模块的**站点**页签将上游中继平台作为一等实体管理。站
 | ntfy | Topic URL、可选 Access Token |
 
 每条规则的告警状态和历史均会被追踪，支持可配置的评估间隔。
+
+**用量报表：** 支持按日 / 周 / 月调度用量报表，通过已配置的通知渠道送达，并记录报表历史。
 
 ---
 
@@ -944,7 +964,7 @@ internal/
 ├── conf/               # 配置加载与构建元信息
 ├── client/             # HTTP 客户端工具
 ├── db/                 # 数据库连接与迁移（SQLite/MySQL/PostgreSQL）
-│   └── migrate/        # 版本化 Schema 迁移（001-031）
+│   └── migrate/        # 版本化 Schema 迁移（001-033）
 ├── model/              # 领域类型（Channel、Group、APIKey、User、Site、ProxyConfiguration、ModelMapping……）
 ├── op/                 # 按领域拆分的业务逻辑操作
 │   ├── airoute/        # AI 路由生成、进度追踪、服务池和兼容辅助逻辑
@@ -960,14 +980,18 @@ internal/
 │   ├── group/          # 路由分组 CRUD、自动分组、分组项、测试与缓存查询
 │   ├── llm/            # LLM 价格目录操作
 │   ├── modelmapping/   # 模型映射规则管理
+│   ├── modelnormalize/ # 模型名归一化规则
 │   ├── navorder/       # 导航顺序和可见性持久化
+│   ├── notification/   # 通知中心（消息、SSE 流、偏好）
 │   ├── ops/            # Ops 仪表盘数据聚合（遥测、配额、健康）
 │   ├── ratelimitstore/ # RPM/TPM 限流状态
 │   ├── relaylog/       # Relay 日志持久化（含异步刷写 Worker）
 │   ├── remotesite/     # 远程 Hub 站点操作（余额、签到、公告、用量、令牌、兑换）
+│   ├── report/         # 用量报表调度和送达
 │   ├── setting/        # 设置增删改查和验证
 │   ├── stats/          # 请求统计聚合、缓存和站点模型回填
-│   └── user/           # 用户管理和认证
+│   ├── user/           # 用户管理和认证
+│   └── webauthn/       # WebAuthn / Passkey 注册和认证
 ├── relay/              # 核心中转管线
 │   ├── balancer/       # 负载均衡策略（轮询、随机、故障转移、加权、智能）
 │   └── condition/      # 请求条件评估
@@ -980,14 +1004,17 @@ internal/
 ├── task/               # 后台定时任务
 ├── transformer/        # 协议适配器
 │   ├── inbound/        # 客户端→内部（OpenAI、Anthropic）
-│   ├── outbound/       # 内部→上游（OpenAI、Anthropic、Cloudflare、Gemini、Volcengine、MiMo）
+│   ├── outbound/       # 内部→上游（OpenAI、Anthropic、Cloudflare、Gemini、Volcengine、MiMo、Codex、Passthrough）
 │   ├── rewrite/        # 请求规范化（可配置 Profile）
 │   └── model/          # 共享适配器类型与接口
 ├── hub/                # 远程站点适配器接口、注册表、HTTP 客户端和平台专属适配器
+├── planprovider/       # 上游订阅套餐监控（Codex、MiMo、StepFun、SenseNova、余额类厂商）
+├── store/              # 可选缓存/状态后端（KVStore、RateLimitStore、StatsStore、RuntimeStateStore）：内存 + Redis
 ├── helper/             # 横切辅助（AI 路由、渠道/分组探测、价格、通知）
 ├── price/              # LLM 价格目录（models.dev 同步）
 ├── update/             # 自更新机制
-└── utils/              # 工具库（缓存、限流、语义缓存、分词器、加密……）
+├── utils/              # 工具库（缓存、限流、语义缓存、分词器、加密……）
+└── sitesync/           # 站点同步、投射与签到实现
 ```
 
 **Relay 数据流：**
@@ -1052,10 +1079,10 @@ web/src/
 
 Octopus 涉及时区的三层独立概念：
 
-| 层 | 控制方式 | 影响范围 |
+| 层 | 控制方 | 影响 |
 |----|---------|---------|
 | **容器时区** | `ENV TZ` / `-e TZ=` | 服务端日志时间戳、`time.Now()` 返回值 |
-| **统计时区** | 管理端设置 → `stats_timezone_offset` | 每小时/每天统计数据的日期归入 |
+| **统计时区** | 管理端设置 → `stats_timezone`（IANA 名，如 `Asia/Shanghai`） | 每小时/每天统计数据的日期归入 |
 | **前端展示时区** | 管理端设置 → 用户偏好（10 个时区） | 所有页面上的时间显示格式 |
 
 三层独立配置：容器时区影响服务端运行时，统计时区影响数据聚合，前端展示时区只影响用户看到的时间文本。

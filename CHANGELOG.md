@@ -7,11 +7,160 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.4.0] - 2026-07-15
+
 ### 🚀 Features
-- **Channel (issue #144)**: batch set group - on the channel list page, toggle "Batch Group" mode to reveal a checkbox overlay on each card, select multiple channels, pick a target group from the dropdown, and move them all at once. A channel still belongs to one group, so the target overwrites the existing group. The backend (`POST /api/v1/channel/batch-group`) updates each channel independently and returns success/failed counts, so one bad channel doesn't abort the rest.
+- **Plan Provider (issue #141)**: ChatGPT Codex plan monitoring — tracks Codex subscription usage/quota and auto-creates dedicated forwarding channels with a new `codex` outbound adapter (`internal/transformer/outbound/codex/`). Plan channels are grouped under the "Plan" channel group.
+- **Analytics (issue #145)**: home usage overview now supports switching between "active models only" and "all models" scopes.
+
+## [v2.3.9] - 2026-07-15
+
+### 🚀 Features
+- **Balancer (issue #140)**: new `speed` key selection strategy — prefers keys with higher TPS (tokens per second) throughput based on recent relay performance data.
+- **Channel (issue #142)**: scheduled key availability patrol — periodically probes all keys, sends failure notifications, and greys out channels with unhealthy keys.
+- **Channel (issue #144)**: batch set channel group — toggle "Batch Group" mode on the channel list, select multiple channels, and move them to a target group in one operation (`POST /api/v1/channel/batch-group`).
+
+### 🐛 Bug Fixes
+- **Channel (issue #143)**: new channel default type now matches the first item in the frontend dropdown.
+- **Web**: trend chart China-mode cost alignment with usage overview; removed redundant currency conversion.
+
+## [v2.3.8] - 2026-07-13
+
+### 🐛 Bug Fixes
+- **Store (issue #135)**: Redis backend now gracefully degrades to in-memory when unreachable at startup, with background reconnection — prevents startup failure on transient Redis outages.
+- **Channel**: deleting a channel group now auto-migrates its channels to the default group instead of orphaning them.
+- **Group**: group deletion failure now logs the error and ensures settings consistency.
+- **Web**: fixed China-mode cost display showing "1.87¥万" misalignment; optimized home heatmap and ranking panel layout ratios for large screens.
+
+## [v2.3.7] - 2026-07-11
+
+### 🚀 Features
+- **Timezone**: stats timezone switched from fixed offsets to IANA timezone names, with frontend timezone picker wired to backend reporting.
+- **Notification**: notification titles/bodies now render as i18n keys in the user's UI language instead of being baked at creation time.
 
 ### 🛠 Optimizations
-- **Balancer (issue #133)**: the Auto strategy now deprioritizes fully circuit-broken channels during candidate scoring instead of only skipping them at iteration time. Auto scoring previously ignored breaker state, so a tripped channel could still sort first (only to be skipped later by `SkipCircuitBreak`), making the "smart selection" appear to conflict with circuit breaking. A new read-only `IsChannelAllKeysTripped` aggregate query checks whether all of a channel's enabled keys are tripped for the requested model - without triggering the `Open -> HalfOpen` state transition that `IsTripped` performs - and assigns the channel `score = -Inf` so it sorts last (kept in the list to preserve HalfOpen probe opportunities). Channels with at least one healthy key are unaffected.
+- **Balancer (issue #133)**: Auto strategy scoring now senses circuit-breaker state — fully tripped channels get `score = -Inf` so they sort last during candidate selection, avoiding the appearance of conflicting with circuit breaking.
+
+### 🐛 Bug Fixes
+- **Report**: fixed daily report data errors and switched to plain-text formatting.
+- **Notification**: fixed `notif-text` translation function type incompatibility; import `TranslationValues` from `next-intl`.
+- **Stats**: fixed timezone test non-portability on UTC runners.
+
+## [v2.3.6] - 2026-07-09
+
+### 🚀 Features
+- **Group**: group page now displays groups aggregated by category, with collapsible category sections.
+
+## [v2.3.5] - 2026-07-08
+
+### 🚀 Features
+- **Plan Provider (issue #132)**: MiMo `passToken` auto-refresh — automatically refreshes `serviceToken` when the browser-cookie-based credential expires.
+- **Site Management**: support skipping model list sync for sites where model enumeration is expensive or unnecessary.
+
+### 🐛 Bug Fixes
+- **DB**: fixed startup crash `FOREIGN KEY constraint failed (787)` after upgrading from older versions.
+
+## [v2.3.4] - 2026-07-07
+
+### 🚀 Features
+- **Group**: added per-group route model view showing which models are routable through each group.
+- **Notification**: support deleting notification preferences.
+
+### 🐛 Bug Fixes
+- **Group**: allow different endpoint types to use same-named route groups (previously blocked by unique constraint).
+- **Stats**: fixed daily stats empty error on freshly initialized databases.
+
+## [v2.3.3] - 2026-07-07
+
+### 🚀 Features
+- **Alert**: error-rate alert rules now support configurable scope (per-channel, per-group, or global) and sliding-window evaluation instead of fixed intervals.
+
+### 🐛 Bug Fixes
+- **Stats**: fixed daily stats cache not refreshing after period rollover.
+
+## [v2.3.2] - 2026-07-07
+
+### 🚀 Features
+- **Group**: added group category access control — categories can restrict which user roles see the groups within them.
+- **Plan Provider**: MiMo Token Plan monitoring via browser cookie — tracks MiMo subscription quota/usage and auto-creates forwarding channels.
+
+### 🐛 Bug Fixes
+- **Plan Provider**: fixed MiMo plan monitoring credential handling and quota statistics.
+
+## [v2.3.1] - 2026-07-06
+
+### 🚀 Features
+- **Notification**: alerts merged into the notification center — alert firings now appear as notification items alongside system events, with unified read/archive/filter UX.
+- **UI**: header icons hidden on narrow screens to reduce clutter.
+
+## [v2.3.0] - 2026-07-06
+
+### 🚀 Features
+- **Notification Center**: new unified notification center (`internal/op/notification/`) — aggregates system events, alert firings, and plan-provider notifications with severity levels, read/archive state, filtering, and SSE streaming for real-time delivery.
+- **Alert / Report**: usage report scheduling — configure daily/weekly/monthly usage reports delivered via notification channels (`internal/op/report/`).
+
+### 🐛 Bug Fixes
+- **Notification**: normalized list filter parameters.
+- **Plan Provider**: plan channels now correctly use the "Plan" channel group.
+- **Model**: normalized market dedupe aggregation.
+- **Analytics**: daily usage breakdown stats now persist correctly.
+- **Report**: aligned schedule API contract.
+- **UI**: setting order stacked under navigation preferences in appearance layout.
+
+## [v2.2.9-fix] - 2026-07-06
+
+### 🛠 Optimizations
+- **Channel**: reversed key priority direction (lower number = higher priority) and show priority input only when the priority strategy is active.
+
+### 🐛 Bug Fixes
+- **i18n**: added missing `channel.detail.priority` translation.
+
+## [v2.2.9] - 2026-07-05
+
+### 🚀 Features
+- **Channel**: key priority selection — per-key priority ordering for failover/weighted strategies, with a new `priority` key selection strategy.
+- **Channel**: per-key model detection endpoint (`POST /api/v1/channel/fetch-models-per-key`) — discover which models each key can access individually.
+- **Group**: raw outbound passthrough mode — forward requests to upstream without any protocol transformation via the new `passthrough` outbound adapter.
+
+### 🐛 Bug Fixes
+- **Docker**: fixed compose file permission issues.
+
+## [v2.2.8-fix2] - 2026-07-05
+
+### 🐛 Bug Fixes
+- **Deps**: removed redundant `@radix-ui/react-*` direct dependencies, fixing Accordion double-Context issues.
+
+## [v2.2.8-fix] - 2026-07-05
+
+### 🐛 Bug Fixes
+- **Setting**: added missing Hub/Analytics/Ops sub-tab SettingKey definitions.
+
+### 🛠 Optimizations
+- **Deps**: upgraded recharts to v3, react-day-picker to v10; regenerated shadcn/ui components.
+
+## [v2.2.8] - 2026-07-03
+
+### 🚀 Features
+- **Plan Provider**: SenseNova and StepFun plan usage monitoring integrated into the TokenPlan framework.
+- **Setting**: sub-tab order and visibility configuration for Hub/Analytics/Ops modules.
+
+### 🐛 Bug Fixes
+- **Plan Provider**: plan-monitoring channels now correctly grouped under the "Plan" channel group.
+- **Model**: fixed available-endpoints view scrolling; normalized market dedupe aggregation.
+- **Channel**: enlarged channel group management dialog.
+- **Home**: unified trend/period button heights; mobile stats cards use 2×2 grid layout.
+
+## [v2.2.7] - 2026-07-02
+
+### 🚀 Features
+- **Channel**: disposable channel support — channels can be created with an expiry time; expired channels are auto-deleted with notification.
+- **Plan Provider**: new `internal/planprovider/` module — TokenPlan quota/usage monitoring for upstream subscription plans (MiMo, StepFun, SenseNova), with auto-creation of forwarding channels from monitored plans.
+- **Site Management**: added quota/TokenPlan monitoring module to site management.
+
+### 🐛 Bug Fixes
+- **Audit**: added plan-provider write routes to the audit exemption allowlist.
+- **Model**: fixed model market stats disappearing; fixed multiple planprovider defects.
+- **Channel**: widened channel detail and creation dialogs.
 
 ## [v2.2.6] - 2026-07-02
 
