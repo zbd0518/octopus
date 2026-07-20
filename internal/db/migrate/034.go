@@ -26,15 +26,15 @@ func init() {
 // 会触发 unique 冲突；应用层希望保留两种原始大小写展示值。
 //
 // 步骤（幂等）：
-// 1. 确保 model_name_key 列存在（AutoMigrate 通常已加；legacy 表再补）
+// 1. 确保 model_name_key 列存在
 // 2. 回填空的 model_name_key
-// 3. 先创建新唯一索引 idx_site_account_group_model_key（若不存在）
-// 4. 再删除旧唯一索引 idx_site_account_group_model（若存在）
+// 3. 先创建新唯一索引 idx_site_account_group_model_key
+// 4. 再删除旧唯一索引 idx_site_account_group_model
 //
 // 步骤 3 必须在 4 之前：MySQL 上 site_models.site_account_id 的外键依赖
-// 旧复合唯一索引作为引用列索引；若先删旧索引会报
-// Error 1553 (HY000): Cannot drop index ... needed in a foreign key constraint。
-// 新唯一索引同样以 site_account_id 为最左列，可承接外键索引需求。
+// 旧复合唯一索引作为引用列索引；若先删旧索引会报 Error 1553。
+// 新唯一索引以 site_account_id 为最左列，可承接外键索引需求。
+// 删除旧索引时对 MySQL 临时关闭 FOREIGN_KEY_CHECKS，避免 1553 残留。
 func migrateSiteModelNameKey(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("db is nil")
@@ -79,9 +79,10 @@ func backfillSiteModelNameKeys(db *gorm.DB) error {
 			// 空名极少见；写占位避免 not null 违约，后续同步会清掉。
 			key = model.SiteModelNameKey("_empty_")
 		}
+		// 用 map 更新，避免触发 BeforeSave 等钩子。
 		if err := db.Model(&model.SiteModel{}).
 			Where("id = ?", rows[i].ID).
-			Update("model_name_key", key).Error; err != nil {
+			UpdateColumn("model_name_key", key).Error; err != nil {
 			return fmt.Errorf("backfill site_models.id=%d model_name_key: %w", rows[i].ID, err)
 		}
 	}
@@ -89,36 +90,85 @@ func backfillSiteModelNameKeys(db *gorm.DB) error {
 }
 
 func dropSiteModelOldUniqueIndexes(db *gorm.DB) error {
-	// 先保证 site_account_id 上仍有可用索引（新唯一索引已建时自然满足；
-	// 若 CreateIndex 因某种原因未建立，再补一个非唯一索引供 MySQL FK 使用）。
+	// 先保证 site_account_id 上仍有可用索引（新唯一索引已建时自然满足）。
 	if err := ensureSiteModelAccountIDIndexForFK(db); err != nil {
 		return err
 	}
 
-	// GORM 旧标签名
-	oldNames := []string{
-		"idx_site_account_group_model",
-		"uni_site_models_site_account_id_group_key_model_name",
-	}
-	for _, name := range oldNames {
-		if db.Migrator().HasIndex(&model.SiteModel{}, name) {
-			if err := db.Migrator().DropIndex(&model.SiteModel{}, name); err != nil {
-				return fmt.Errorf("drop site_models index %s: %w", name, err)
-			}
-		}
+	// MySQL：整段删除包在 FOREIGN_KEY_CHECKS=0 中，避免 Error 1553
+	//（外键仍“钉住”旧复合唯一索引，即使新索引已可承接 site_account_id）。
+	if db.Dialector.Name() == "mysql" {
+		return dropMySQLSiteModelOldUniqueIndexesWithFKBypass(db)
 	}
 
-	// dialect 兜底：按列组合探测并删除「仅 account+group+model_name」的唯一索引
+	if err := dropKnownSiteModelOldIndexNames(db); err != nil {
+		return err
+	}
+
 	switch db.Dialector.Name() {
 	case "sqlite":
 		return dropSQLiteSiteModelNameUniqueIndexes(db)
-	case "mysql":
-		return dropMySQLSiteModelNameUniqueIndexes(db)
 	case "postgres", "postgresql":
 		return dropPostgresSiteModelNameUniqueIndexes(db)
 	default:
 		return nil
 	}
+}
+
+func dropKnownSiteModelOldIndexNames(db *gorm.DB) error {
+	oldNames := []string{
+		"idx_site_account_group_model",
+		"uni_site_models_site_account_id_group_key_model_name",
+	}
+	for _, name := range oldNames {
+		if !db.Migrator().HasIndex(&model.SiteModel{}, name) {
+			continue
+		}
+		if err := db.Migrator().DropIndex(&model.SiteModel{}, name); err != nil {
+			return fmt.Errorf("drop site_models index %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// dropMySQLSiteModelOldUniqueIndexesWithFKBypass 先建好承接 FK 的索引后，
+// 临时关闭 FOREIGN_KEY_CHECKS 删除旧 (account, group, model_name) 唯一索引。
+func dropMySQLSiteModelOldUniqueIndexesWithFKBypass(db *gorm.DB) error {
+	if err := db.Exec("SET FOREIGN_KEY_CHECKS = 0").Error; err != nil {
+		return fmt.Errorf("disable mysql foreign_key_checks: %w", err)
+	}
+	defer func() {
+		_ = db.Exec("SET FOREIGN_KEY_CHECKS = 1").Error
+	}()
+
+	// 已知名字 + 按列组合探测，一并在 FK 检查关闭期间删除。
+	oldNames := []string{
+		"idx_site_account_group_model",
+		"uni_site_models_site_account_id_group_key_model_name",
+	}
+	for _, name := range oldNames {
+		if err := dropMySQLIndexIfExists(db, "site_models", name); err != nil {
+			return err
+		}
+	}
+	return dropMySQLSiteModelNameUniqueIndexes(db)
+}
+
+func dropMySQLIndexIfExists(db *gorm.DB, table, indexName string) error {
+	var count int64
+	if err := db.Raw(`
+SELECT COUNT(1) FROM information_schema.STATISTICS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?`,
+		table, indexName).Scan(&count).Error; err != nil {
+		return fmt.Errorf("check mysql index %s.%s: %w", table, indexName, err)
+	}
+	if count == 0 {
+		return nil
+	}
+	if err := db.Exec(fmt.Sprintf("ALTER TABLE `%s` DROP INDEX `%s`", table, indexName)).Error; err != nil {
+		return fmt.Errorf("drop mysql %s index %s: %w", table, indexName, err)
+	}
+	return nil
 }
 
 // ensureSiteModelAccountIDIndexForFK 确保删除旧复合唯一索引后，
@@ -205,8 +255,8 @@ ORDER BY INDEX_NAME, SEQ_IN_INDEX`).Scan(&rows).Error; err != nil {
 			continue
 		}
 		if isSiteAccountGroupModelNameIndex(cols) {
-			if err := db.Exec(fmt.Sprintf("ALTER TABLE site_models DROP INDEX `%s`", name)).Error; err != nil {
-				return fmt.Errorf("drop mysql site_models index %s: %w", name, err)
+			if err := dropMySQLIndexIfExists(db, "site_models", name); err != nil {
+				return err
 			}
 		}
 	}
