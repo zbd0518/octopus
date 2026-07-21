@@ -32,16 +32,15 @@ func Resolve(channelType outbound.OutboundType, cfg *appmodel.RequestRewriteConf
 		SystemMessageStrategy:               appmodel.SystemMessageStrategyKeep,
 	}
 
-
 	codexProfile := string(appmodel.RequestRewriteProfileCodexHeaders)
 
 	if cfg.Profile == appmodel.RequestRewriteProfilePreserve {
 		if cfg.HeaderProfile == codexProfile {
 			effective.ExtraHeaders = map[string]string{
 				"User-Agent": "Codex Desktop/0.131.0 (Windows 10.0.19045; x86_64) unknown (Codex Desktop; 26.519.21041)",
-				"Origin": "https://chat.openai.com",
-				"Referer": "https://chat.openai.com/",
-				"Accept": "application/json",
+				"Origin":     "https://chat.openai.com",
+				"Referer":    "https://chat.openai.com/",
+				"Accept":     "application/json",
 			}
 		}
 		return effective, true, nil
@@ -50,9 +49,9 @@ func Resolve(channelType outbound.OutboundType, cfg *appmodel.RequestRewriteConf
 	if cfg.HeaderProfile == codexProfile {
 		effective.ExtraHeaders = map[string]string{
 			"User-Agent": "Codex Desktop/0.131.0 (Windows 10.0.19045; x86_64) unknown (Codex Desktop; 26.519.21041)",
-			"Origin": "https://chat.openai.com",
-			"Referer": "https://chat.openai.com/",
-			"Accept": "application/json",
+			"Origin":     "https://chat.openai.com",
+			"Referer":    "https://chat.openai.com/",
+			"Accept":     "application/json",
 		}
 	}
 

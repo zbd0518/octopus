@@ -692,8 +692,15 @@ func syncSiteModelsByGroup(
 			groupSource = source
 		}
 		groupModels := buildSiteModels(result.names, token.GroupKey, groupSource)
-		if len(result.detections) > 0 {
-			groupModels = applyKnownRouteDetectionsToSiteModels(groupModels, result.detections)
+		// 即使上游已给出路由/定价 detections，也必须再合并 perf-metrics。
+		// 否则会跳过完整探测，导致延迟/吞吐/状态永远落不进库。
+		detections := result.detections
+		detections = mergeSiteModelRouteDetections(
+			detections,
+			detectManagedPerfMetricsSummary(ctx, siteRecord, account, accessToken, token, buildSiteModelNameFilter(result.names)),
+		)
+		if len(detections) > 0 {
+			groupModels = applyKnownRouteDetectionsToSiteModels(groupModels, detections)
 		} else {
 			groupModels = applyDetectedRoutesToSiteModels(ctx, siteRecord, account, accessToken, token, platformUserID, groupModels)
 		}

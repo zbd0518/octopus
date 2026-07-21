@@ -3,9 +3,9 @@ package openai
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/lingyuins/octopus/internal/transformer"
 	"io"
 	"net/http"
 	"net/url"
@@ -59,7 +59,7 @@ func (o *EmbeddingOutbound) TransformRequest(ctx context.Context, request *model
 		embeddingRequest["user"] = *request.User
 	}
 
-	body, err := json.Marshal(embeddingRequest)
+	body, err := transformer.Marshal(embeddingRequest)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
@@ -106,7 +106,7 @@ func (o *EmbeddingOutbound) TransformResponse(ctx context.Context, response *htt
 		var errResp struct {
 			Error model.ErrorDetail `json:"error"`
 		}
-		if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
+		if err := transformer.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
 			return nil, &model.ResponseError{
 				StatusCode: response.StatusCode,
 				Detail:     errResp.Error,
@@ -117,7 +117,7 @@ func (o *EmbeddingOutbound) TransformResponse(ctx context.Context, response *htt
 
 	// 先解析为 OpenAI 标准格式
 	var openAIResp OpenAIEmbeddingResponse
-	if err := json.Unmarshal(body, &openAIResp); err != nil {
+	if err := transformer.Unmarshal(body, &openAIResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 

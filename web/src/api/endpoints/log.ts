@@ -238,8 +238,19 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
             return allPages.length + 1;
         },
         staleTime: Infinity,
-        refetchOnMount: 'always',
+        // filter 切换后旧 key 尽快回收，避免多份分页缓存常驻。
+        gcTime: 5 * 60_000,
     });
+
+    // filter/pageSize 变化时清掉其它 logs infinite 缓存，只保留当前 key。
+    useEffect(() => {
+        const activeKey = logsInfiniteQueryKey(pageSize, stableFilter);
+        const activeSerialized = JSON.stringify(activeKey);
+        queryClient.removeQueries({
+            queryKey: ['logs', 'infinite'],
+            predicate: (query) => JSON.stringify(query.queryKey) !== activeSerialized,
+        });
+    }, [pageSize, stableFilter, queryClient]);
 
     const logs = useMemo(() => {
         const pages = logsQuery.data?.pages ?? [];

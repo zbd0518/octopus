@@ -1,13 +1,14 @@
 package model
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
 	"strings"
+
+	transformer "github.com/lingyuins/octopus/internal/transformer"
 )
 
 type APIFormat string
@@ -214,7 +215,7 @@ type InternalLLMRequest struct {
 
 	// ExtraBody is helpful to extend the request for different providers.
 	// It will not be sent to the OpenAI server.
-	ExtraBody json.RawMessage `json:"extra_body,omitempty"`
+	ExtraBody transformer.RawMessage `json:"extra_body,omitempty"`
 
 	// RawRequest is the raw request from the client.
 	RawRequest []byte `json:"-"`
@@ -441,11 +442,11 @@ type Stop struct {
 
 func (s Stop) MarshalJSON() ([]byte, error) {
 	if s.Stop != nil {
-		return json.Marshal(s.Stop)
+		return transformer.Marshal(s.Stop)
 	}
 
 	if len(s.MultipleStop) > 0 {
-		return json.Marshal(s.MultipleStop)
+		return transformer.Marshal(s.MultipleStop)
 	}
 
 	return []byte("[]"), nil
@@ -454,7 +455,7 @@ func (s Stop) MarshalJSON() ([]byte, error) {
 func (s *Stop) UnmarshalJSON(data []byte) error {
 	var str string
 
-	err := json.Unmarshal(data, &str)
+	err := transformer.Unmarshal(data, &str)
 	if err == nil {
 		s.Stop = &str
 		return nil
@@ -462,7 +463,7 @@ func (s *Stop) UnmarshalJSON(data []byte) error {
 
 	var strs []string
 
-	err = json.Unmarshal(data, &strs)
+	err = transformer.Unmarshal(data, &strs)
 	if err == nil {
 		s.MultipleStop = strs
 		return nil
@@ -558,13 +559,13 @@ type MessageContent struct {
 func (c MessageContent) MarshalJSON() ([]byte, error) {
 	if len(c.MultipleContent) > 0 {
 		if len(c.MultipleContent) == 1 && c.MultipleContent[0].Type == "text" {
-			return json.Marshal(c.MultipleContent[0].Text)
+			return transformer.Marshal(c.MultipleContent[0].Text)
 		}
 
-		return json.Marshal(c.MultipleContent)
+		return transformer.Marshal(c.MultipleContent)
 	}
 
-	return json.Marshal(c.Content)
+	return transformer.Marshal(c.Content)
 }
 
 func (c *MessageContent) UnmarshalJSON(data []byte) error {
@@ -576,7 +577,7 @@ func (c *MessageContent) UnmarshalJSON(data []byte) error {
 
 	var str string
 
-	err := json.Unmarshal(data, &str)
+	err := transformer.Unmarshal(data, &str)
 	if err == nil {
 		c.Content = &str
 		return nil
@@ -584,7 +585,7 @@ func (c *MessageContent) UnmarshalJSON(data []byte) error {
 
 	var parts []MessageContentPart
 
-	err = json.Unmarshal(data, &parts)
+	err = transformer.Unmarshal(data, &parts)
 	if err == nil {
 		c.MultipleContent = parts
 		return nil
@@ -668,7 +669,7 @@ type ResponseFormatJSONSchema struct {
 	// A description of what the schema represents.
 	Description string `json:"description,omitempty"`
 	// The actual JSON Schema definition.
-	Schema json.RawMessage `json:"schema"`
+	Schema transformer.RawMessage `json:"schema"`
 	// Whether to enforce strict schema adherence.
 	Strict *bool `json:"strict,omitempty"`
 }
@@ -927,15 +928,15 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 	if t.Type != "image_generation" {
 		m.ImageGeneration = nil
 	}
-	return json.Marshal(m)
+	return transformer.Marshal(m)
 }
 
 // Function represents a function definition.
 type Function struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Parameters  json.RawMessage `json:"parameters"`
-	Strict      *bool           `json:"strict,omitempty"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	Parameters  transformer.RawMessage `json:"parameters"`
+	Strict      *bool                  `json:"strict,omitempty"`
 }
 
 // FunctionCall represents a function call (deprecated).
@@ -986,16 +987,16 @@ type NamedToolChoice struct {
 
 func (t ToolChoice) MarshalJSON() ([]byte, error) {
 	if t.ToolChoice != nil {
-		return json.Marshal(t.ToolChoice)
+		return transformer.Marshal(t.ToolChoice)
 	}
 
-	return json.Marshal(t.NamedToolChoice)
+	return transformer.Marshal(t.NamedToolChoice)
 }
 
 func (t *ToolChoice) UnmarshalJSON(data []byte) error {
 	var str string
 
-	err := json.Unmarshal(data, &str)
+	err := transformer.Unmarshal(data, &str)
 	if err == nil {
 		t.ToolChoice = &str
 		return nil
@@ -1003,7 +1004,7 @@ func (t *ToolChoice) UnmarshalJSON(data []byte) error {
 
 	var named NamedToolChoice
 
-	err = json.Unmarshal(data, &named)
+	err = transformer.Unmarshal(data, &named)
 	if err == nil {
 		t.NamedToolChoice = &named
 		return nil
@@ -1051,11 +1052,11 @@ type EmbeddingInput struct {
 
 func (i EmbeddingInput) MarshalJSON() ([]byte, error) {
 	if i.Single != nil {
-		return json.Marshal(i.Single)
+		return transformer.Marshal(i.Single)
 	}
 
 	if len(i.Multiple) > 0 {
-		return json.Marshal(i.Multiple)
+		return transformer.Marshal(i.Multiple)
 	}
 
 	return []byte("null"), nil
@@ -1064,7 +1065,7 @@ func (i EmbeddingInput) MarshalJSON() ([]byte, error) {
 func (i *EmbeddingInput) UnmarshalJSON(data []byte) error {
 	var str string
 
-	err := json.Unmarshal(data, &str)
+	err := transformer.Unmarshal(data, &str)
 	if err == nil {
 		i.Single = &str
 		return nil
@@ -1072,7 +1073,7 @@ func (i *EmbeddingInput) UnmarshalJSON(data []byte) error {
 
 	var strs []string
 
-	err = json.Unmarshal(data, &strs)
+	err = transformer.Unmarshal(data, &strs)
 	if err == nil {
 		i.Multiple = strs
 		return nil
@@ -1100,11 +1101,11 @@ type Embedding struct {
 
 func (e Embedding) MarshalJSON() ([]byte, error) {
 	if e.Base64String != nil {
-		return json.Marshal(e.Base64String)
+		return transformer.Marshal(e.Base64String)
 	}
 
 	if len(e.FloatArray) > 0 {
-		return json.Marshal(e.FloatArray)
+		return transformer.Marshal(e.FloatArray)
 	}
 
 	return []byte("[]"), nil
@@ -1113,7 +1114,7 @@ func (e Embedding) MarshalJSON() ([]byte, error) {
 func (e *Embedding) UnmarshalJSON(data []byte) error {
 	var str string
 
-	err := json.Unmarshal(data, &str)
+	err := transformer.Unmarshal(data, &str)
 	if err == nil {
 		e.Base64String = &str
 		return nil
@@ -1121,7 +1122,7 @@ func (e *Embedding) UnmarshalJSON(data []byte) error {
 
 	var floats []float64
 
-	err = json.Unmarshal(data, &floats)
+	err = transformer.Unmarshal(data, &floats)
 	if err == nil {
 		e.FloatArray = floats
 		return nil

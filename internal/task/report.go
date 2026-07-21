@@ -425,7 +425,7 @@ func createReportNotification(ctx context.Context, sched model.ReportSchedule, c
 		SourceID:     fmt.Sprintf("%d", sched.ID),
 		DedupeKey:    fmt.Sprintf("report:%d:%s:%d", sched.ID, status, time.Now().UnixMilli()),
 		MetadataJSON: string(metadata),
-		Link:         "alert",
+		Link:         "notification",
 	}
 	// 短消息方案：通知正文不再放完整报表正文（报表历史已单独存储）。
 	// sent -> channel（detail 形如 "gotify (gotify)"）；failed/skipped -> detail（原因）。

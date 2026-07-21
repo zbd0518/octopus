@@ -3,8 +3,8 @@ package openai
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/lingyuins/octopus/internal/transformer"
 	"io"
 	"net/http"
 	"net/url"
@@ -40,7 +40,7 @@ func (o *ChatOutbound) TransformRequest(ctx context.Context, request *model.Inte
 		}
 	}
 
-	body, err := json.Marshal(compatRequest)
+	body, err := transformer.Marshal(compatRequest)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
@@ -306,7 +306,7 @@ func (o *ChatOutbound) TransformResponse(ctx context.Context, response *http.Res
 		var errResp struct {
 			Error model.ErrorDetail `json:"error"`
 		}
-		if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
+		if err := transformer.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
 			return nil, &model.ResponseError{
 				StatusCode: response.StatusCode,
 				Detail:     errResp.Error,
@@ -316,7 +316,7 @@ func (o *ChatOutbound) TransformResponse(ctx context.Context, response *http.Res
 	}
 
 	var resp model.InternalLLMResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
+	if err := transformer.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 	normalizeOpenAICompatUsage(&resp)
@@ -333,14 +333,14 @@ func (o *ChatOutbound) TransformStream(ctx context.Context, eventData []byte) (*
 	var errCheck struct {
 		Error *model.ErrorDetail `json:"error"`
 	}
-	if err := json.Unmarshal(eventData, &errCheck); err == nil && errCheck.Error != nil {
+	if err := transformer.Unmarshal(eventData, &errCheck); err == nil && errCheck.Error != nil {
 		return nil, &model.ResponseError{
 			Detail: *errCheck.Error,
 		}
 	}
 
 	var resp model.InternalLLMResponse
-	if err := json.Unmarshal(eventData, &resp); err != nil {
+	if err := transformer.Unmarshal(eventData, &resp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal stream chunk: %w", err)
 	}
 	normalizeOpenAICompatUsage(&resp)

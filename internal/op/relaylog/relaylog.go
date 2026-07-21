@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
+	"github.com/lingyuins/octopus/internal/utils/json"
 	"strings"
 	"sync"
 	"time"
@@ -128,6 +128,24 @@ func RelayLogStreamTokenRevoke(token string) {
 	relayLogStreamTokensLock.Unlock()
 }
 
+// PurgeExpiredStreamTokens 清理过期的 SSE 流 token（5 分钟 TTL）。
+// 虽然 Verify 会惰性删除过期条目，但长期未访问的 token 会驻留；
+// 周期主动清理防止 map 在高频创建 + 低频访问场景下无界增长。
+func PurgeExpiredStreamTokens() int {
+	now := time.Now()
+	relayLogStreamTokensLock.Lock()
+	defer relayLogStreamTokensLock.Unlock()
+
+	deleted := 0
+	for token, createdAt := range relayLogStreamTokens {
+		if now.Sub(createdAt) > relayLogStreamTokenTTL {
+			delete(relayLogStreamTokens, token)
+			deleted++
+		}
+	}
+	return deleted
+}
+
 func RelayLogSubscribe() chan model.RelayLog {
 	ch := make(chan model.RelayLog, 10)
 	relayLogSubscribersLock.Lock()
@@ -189,9 +207,17 @@ func relayLogFlushToDB(ctx context.Context) error {
 		return nil
 	}
 
+	// Create 前剥离大字段的副本？不行——需要把 content 写入 DB。
+	// Create 成功后截断缓存即可释放内存；截断前 batch 持有 content 是短暂尖刺。
 	result := conn.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&batch)
 	if result.Error != nil {
 		return result.Error
+	}
+
+	// 尽快丢弃 batch 对大字段的引用，帮助 GC。
+	for i := range batch {
+		batch[i].RequestContent = ""
+		batch[i].ResponseContent = ""
 	}
 
 	relayLogCacheLock.Lock()
@@ -208,6 +234,11 @@ func relayLogFlushToDB(ctx context.Context) error {
 		}
 	}
 	if cutIdx > 0 {
+		// 显式清空被截断前缀的大字段，避免底层数组仍被引用时拖住内存。
+		for i := 0; i < cutIdx; i++ {
+			relayLogCache[i].RequestContent = ""
+			relayLogCache[i].ResponseContent = ""
+		}
 		relayLogCache = relayLogCache[cutIdx:]
 	}
 	if len(relayLogCache) == 0 {

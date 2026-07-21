@@ -2,7 +2,7 @@ package relay
 
 import (
 	"context"
-	"encoding/json"
+
 	"errors"
 	"fmt"
 	"net"
@@ -130,7 +130,7 @@ type failureHintCache struct {
 var globalFailureHintCache = &failureHintCache{entries: make(map[string]failureHintEntry)}
 
 func failureHintKey(channelID, keyID int, modelName string) string {
-	return fmt.Sprintf("%d:%d:%s", channelID, keyID, strings.TrimSpace(modelName))
+	return buildFailureHintKey(channelID, keyID, modelName)
 }
 
 func shouldStoreFailureHint(statusCode int, err error) (time.Duration, bool) {
@@ -197,7 +197,7 @@ func (c *failureHintCache) set(channelID, keyID int, modelName string, entry fai
 	// Redis 后端：序列化整条 entry 写入 KVStore，TTL 由 Redis 原生过期保证，
 	// 无需维护 expiresAt 与主动 purge。降级（Redis err）时回退内存。
 	if store.Enabled() {
-		data, err := json.Marshal(entry)
+		data, err := jsonAPI.Marshal(entry)
 		if err == nil {
 			ttl := time.Until(entry.expiresAt)
 			if ttl > 0 {
@@ -222,7 +222,7 @@ func (c *failureHintCache) get(channelID, keyID int, modelName string) (failureH
 		data, found, err := kv.Get(context.Background(), failureHintKVKey(channelID, keyID, modelName))
 		if err == nil && found {
 			var entry failureHintEntry
-			if json.Unmarshal(data, &entry) == nil {
+			if jsonAPI.Unmarshal(data, &entry) == nil {
 				return entry, true
 			}
 		}
@@ -286,12 +286,12 @@ func cloneInternalResponse(resp *transmodel.InternalLLMResponse) *transmodel.Int
 	if resp == nil {
 		return nil
 	}
-	payload, err := json.Marshal(resp)
+	payload, err := jsonAPI.Marshal(resp)
 	if err != nil {
 		return nil
 	}
 	var cloned transmodel.InternalLLMResponse
-	if err := json.Unmarshal(payload, &cloned); err != nil {
+	if err := jsonAPI.Unmarshal(payload, &cloned); err != nil {
 		return nil
 	}
 	return &cloned
@@ -314,7 +314,7 @@ func requestSingleflightKey(apiKeyID int, endpointFamily, requestModel, text str
 	if len(req.Tools) > 0 {
 		return "", false
 	}
-	return fmt.Sprintf("%d|%s|%s|%s|false", apiKeyID, endpointFamily, requestModel, text), true
+	return buildSemanticCacheKey(apiKeyID, endpointFamily, requestModel, text), true
 }
 
 func lookupSemanticEmbeddingWithCache(ctx context.Context, req *relayRequest, cfg semantic_cache.RuntimeConfig, cacheKey string, text string) ([]float64, bool, error) {

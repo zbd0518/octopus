@@ -3,9 +3,9 @@ package handlers
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	utilsjson "github.com/lingyuins/octopus/internal/utils/json"
 	"io"
 	"net/http"
 	"strconv"
@@ -221,7 +221,7 @@ func exportDB(c *gin.Context) {
 	c.Status(http.StatusOK)
 
 	// Stream JSON to avoid buffering the entire dump in memory
-	encoder := json.NewEncoder(c.Writer)
+	encoder := utilsjson.NewEncoder(c.Writer)
 	encoder.SetEscapeHTML(false)
 	_ = encoder.Encode(dump)
 }
@@ -321,7 +321,7 @@ func createDatabaseMigrationNotification(ctx context.Context, req model.Database
 	if err != nil {
 		metadata["error"] = err.Error()
 	}
-	b, _ := json.Marshal(metadata)
+	b, _ := utilsjson.Marshal(metadata)
 	n := &model.Notification{
 		Type:         model.NotificationTypeSystem,
 		Severity:     severity,
@@ -504,7 +504,7 @@ func decodeDBDumpReader(r io.Reader, dump *model.DBDump) error {
 	limitedReader := &io.LimitedReader{R: r, N: maxDBImportBytes + 1}
 	if dump == nil {
 		var empty struct{}
-		if err := json.NewDecoder(limitedReader).Decode(&empty); err != nil {
+		if err := utilsjson.NewDecoder(limitedReader).Decode(&empty); err != nil {
 			if limitedReader.N <= 0 {
 				return newDBImportTooLargeError()
 			}
@@ -518,11 +518,11 @@ func decodeDBDumpReader(r io.Reader, dump *model.DBDump) error {
 
 	var envelope struct {
 		model.DBDump
-		Code    int             `json:"code"`
-		Message string          `json:"message"`
-		Data    json.RawMessage `json:"data"`
+		Code    int                  `json:"code"`
+		Message string               `json:"message"`
+		Data    utilsjson.RawMessage `json:"data"`
 	}
-	if err := json.NewDecoder(limitedReader).Decode(&envelope); err != nil {
+	if err := utilsjson.NewDecoder(limitedReader).Decode(&envelope); err != nil {
 		if limitedReader.N <= 0 {
 			return newDBImportTooLargeError()
 		}
@@ -535,7 +535,7 @@ func decodeDBDumpReader(r io.Reader, dump *model.DBDump) error {
 	*dump = envelope.DBDump
 
 	if isEmptyDBDump(*dump) && len(envelope.Data) > 0 {
-		if err := json.Unmarshal(envelope.Data, dump); err != nil {
+		if err := utilsjson.Unmarshal(envelope.Data, dump); err != nil {
 			return err
 		}
 	}

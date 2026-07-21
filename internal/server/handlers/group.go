@@ -168,11 +168,11 @@ func classifyGroupMutationError(err error) (int, string, bool) {
 			strings.Contains(msg, "unknown column") ||
 			strings.Contains(msg, "does not exist")):
 		return http.StatusServiceUnavailable, "database schema is outdated; restart the service to apply the latest migrations", true
-	case strings.Contains(msg, "unique constraint failed: groups.name") ||
-		(strings.Contains(msg, "duplicate entry") && strings.Contains(msg, "groups.name")) ||
-		(strings.Contains(msg, "duplicate key value violates unique constraint") &&
-			(strings.Contains(msg, "groups_name") || strings.Contains(msg, "groups.name"))):
-		return http.StatusConflict, "group name already exists", true
+	case strings.Contains(msg, "unique constraint failed: groups.endpoint_type, groups.name") ||
+		strings.Contains(msg, "idx_groups_endpoint_name") ||
+		(strings.Contains(msg, "duplicate entry") && strings.Contains(msg, "idx_groups_endpoint_name")) ||
+		(strings.Contains(msg, "duplicate key value violates unique constraint") && strings.Contains(msg, "idx_groups_endpoint_name")):
+		return http.StatusConflict, "a group with this name and endpoint type already exists", true
 	case strings.Contains(msg, "unique constraint failed: group_items.group_id, group_items.channel_id, group_items.model_name") ||
 		(strings.Contains(msg, "duplicate entry") && strings.Contains(msg, "idx_group_channel_model")) ||
 		(strings.Contains(msg, "duplicate key value violates unique constraint") && strings.Contains(msg, "idx_group_channel_model")):

@@ -187,11 +187,6 @@ function buildChartConfig(t: CacheTranslations) {
     };
 }
 
-function TrendTooltipLabel({ payload }: { payload?: Array<{ payload?: { time?: string } }> }) {
-    if (!payload?.length) return null;
-    const item = payload[0]?.payload;
-    return <div className="font-semibold">{item?.time}</div>;
-}
 
 function TrendTooltipValue({ value, name, t }: { value: number; name: string; t: CacheTranslations }) {
     const label = name === 'cache_read_tokens'
@@ -347,7 +342,10 @@ function ProviderPromptCacheView({
                                                 <ChartTooltipContent
                                                     indicator="dot"
                                                     nameKey="time"
-                                                    labelFormatter={(payload) => <TrendTooltipLabel payload={payload as Array<{ payload?: { time?: string } }>} />}
+                                                    labelFormatter={(_value, payload) => {
+                                                        const time = payload?.[0]?.payload?.time;
+                                                        return typeof time === 'string' ? <div className="font-semibold">{time}</div> : null;
+                                                    }}
                                                     formatter={(value, name) => (
                                                         <TrendTooltipValue value={value as number} name={name as string} t={t} />
                                                     )}

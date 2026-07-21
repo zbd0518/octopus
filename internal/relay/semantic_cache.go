@@ -2,7 +2,7 @@ package relay
 
 import (
 	"context"
-	"encoding/json"
+
 	"errors"
 	"fmt"
 	"net/http"
@@ -153,7 +153,7 @@ func serveStreamingCacheHit(c *gin.Context, payload []byte, model string) error 
 		Usage map[string]interface{} `json:"usage"`
 	}
 
-	if err := json.Unmarshal(payload, &response); err != nil {
+	if err := jsonAPI.Unmarshal(payload, &response); err != nil {
 		return sendSSEChunk(c, payload)
 	}
 
@@ -192,7 +192,7 @@ func serveStreamingCacheHit(c *gin.Context, payload []byte, model string) error 
 				},
 			}
 
-			chunkJSON, err := json.Marshal(chunk)
+			chunkJSON, err := jsonAPI.Marshal(chunk)
 			if err != nil {
 				continue
 			}
@@ -220,7 +220,7 @@ func serveStreamingCacheHit(c *gin.Context, payload []byte, model string) error 
 			finishChunk["usage"] = response.Usage
 		}
 
-		finishJSON, err := json.Marshal(finishChunk)
+		finishJSON, err := jsonAPI.Marshal(finishChunk)
 		if err == nil {
 			if err := sendSSEChunk(c, finishJSON); err != nil {
 				return err
@@ -244,7 +244,7 @@ func sendSSEChunk(c *gin.Context, data []byte) error {
 }
 
 func storeSemanticCacheResponse(ctx context.Context, req *transmodel.InternalLLMRequest, responseJSON []byte) {
-	if req == nil || len(responseJSON) == 0 || !json.Valid(responseJSON) {
+	if req == nil || len(responseJSON) == 0 || !jsonAPI.Valid(responseJSON) {
 		return
 	}
 
@@ -276,12 +276,12 @@ func isSemanticCacheHitRequest(req *transmodel.InternalLLMRequest) bool {
 }
 
 func semanticCacheHitPayload(responseJSON []byte, req *transmodel.InternalLLMRequest) []byte {
-	if len(responseJSON) == 0 || !json.Valid(responseJSON) {
+	if len(responseJSON) == 0 || !jsonAPI.Valid(responseJSON) {
 		return responseJSON
 	}
 
 	var payload map[string]any
-	if err := json.Unmarshal(responseJSON, &payload); err != nil {
+	if err := jsonAPI.Unmarshal(responseJSON, &payload); err != nil {
 		return responseJSON
 	}
 
@@ -308,7 +308,7 @@ func semanticCacheHitPayload(responseJSON []byte, req *transmodel.InternalLLMReq
 		}
 	}
 
-	normalized, err := json.Marshal(payload)
+	normalized, err := jsonAPI.Marshal(payload)
 	if err != nil {
 		return responseJSON
 	}
@@ -337,7 +337,7 @@ func buildSemanticCacheHitInternalResponse(req *transmodel.InternalLLMRequest, p
 				} `json:"input_token_details"`
 			} `json:"usage"`
 		}
-		if err := json.Unmarshal(payload, &respPayload); err != nil {
+		if err := jsonAPI.Unmarshal(payload, &respPayload); err != nil {
 			return nil, err
 		}
 		internalResponse.ID = respPayload.ID
@@ -357,7 +357,7 @@ func buildSemanticCacheHitInternalResponse(req *transmodel.InternalLLMRequest, p
 			}
 		}
 	default:
-		if err := json.Unmarshal(payload, internalResponse); err != nil {
+		if err := jsonAPI.Unmarshal(payload, internalResponse); err != nil {
 			return nil, err
 		}
 	}

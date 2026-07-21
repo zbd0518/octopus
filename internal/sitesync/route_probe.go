@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/lingyuins/octopus/internal/model"
 )
@@ -12,6 +13,8 @@ type siteModelRouteDetection struct {
 	RouteType       model.SiteModelRouteType
 	RouteRawPayload string
 	ApplyRouteType  bool
+	Price           siteModelPriceDetection
+	Perf            siteModelPerfDetection
 }
 
 func applyDetectedRoutesToSiteModels(
@@ -41,17 +44,29 @@ func applyKnownRouteDetectionsToSiteModels(
 	if len(items) == 0 || len(detections) == 0 {
 		return items
 	}
+	now := time.Now()
 	for i := range items {
 		modelName := strings.ToLower(strings.TrimSpace(items[i].ModelName))
 		detection, ok := detections[modelName]
 		if !ok {
 			continue
 		}
-		if detection.ApplyRouteType {
-			items[i].RouteType = detection.RouteType
+		// 有路由元数据时才写 route 字段，避免“仅价格”探测清空已有 route_raw_payload。
+		if detection.ApplyRouteType || strings.TrimSpace(detection.RouteRawPayload) != "" {
+			if detection.ApplyRouteType {
+				items[i].RouteType = detection.RouteType
+			}
+			items[i].RouteSource = model.SiteModelRouteSourceSyncInferred
+			if strings.TrimSpace(detection.RouteRawPayload) != "" {
+				items[i].RouteRawPayload = detection.RouteRawPayload
+			}
 		}
-		items[i].RouteSource = model.SiteModelRouteSourceSyncInferred
-		items[i].RouteRawPayload = detection.RouteRawPayload
+		if detection.Price.HasPrice {
+			applySiteModelPriceDetection(&items[i], detection.Price, now)
+		}
+		if detection.Perf.HasMetrics {
+			applySiteModelPerfDetection(&items[i], detection.Perf, now)
+		}
 	}
 	return items
 }
@@ -79,12 +94,22 @@ func detectSiteModelRoutes(
 
 	switch siteRecord.Platform {
 	case model.SitePlatformNewAPI, model.SitePlatformOneAPI:
-		return detectManagedPricingRoutes(ctx, siteRecord, account, accessToken, modelToken, modelFilter)
+		detections := detectManagedPricingRoutes(ctx, siteRecord, account, accessToken, modelToken, modelFilter)
+		detections = mergeSiteModelRouteDetections(
+			detections,
+			detectManagedPerfMetricsSummary(ctx, siteRecord, account, accessToken, modelToken, modelFilter),
+		)
+		return detections
 	case model.SitePlatformOneHub, model.SitePlatformDoneHub:
 		detections := detectManagedPricingRoutes(ctx, siteRecord, account, accessToken, modelToken, modelFilter)
 		detections = mergeSiteModelRouteDetections(
 			detections,
 			detectManagedAvailableModelRoutes(ctx, siteRecord, account, accessToken, modelToken, modelFilter),
+		)
+		// 新版 DoneHub/OneHub 若兼容 NewAPI 性能接口也一并尝试。
+		detections = mergeSiteModelRouteDetections(
+			detections,
+			detectManagedPerfMetricsSummary(ctx, siteRecord, account, accessToken, modelToken, modelFilter),
 		)
 		return detections
 	case model.SitePlatformAnyRouter:
@@ -111,6 +136,28 @@ func detectManagedPricingRoutes(
 		"/api/pricing",
 		modelFilter,
 		collectPricingRouteDetections,
+	)
+}
+
+func detectManagedPerfMetricsSummary(
+	ctx context.Context,
+	siteRecord *model.Site,
+	account *model.SiteAccount,
+	accessToken string,
+	modelToken model.SiteToken,
+	modelFilter map[string]struct{},
+) map[string]siteModelRouteDetection {
+	// NewAPI 新版模型广场：GET /api/perf-metrics/summary?hours=24
+	// 一次返回全部模型的 avg_latency_ms / avg_tps / success_rate。
+	return detectManagedRoutesFromPath(
+		ctx,
+		siteRecord,
+		account,
+		accessToken,
+		modelToken,
+		"/api/perf-metrics/summary?hours=24",
+		modelFilter,
+		collectPerfMetricsDetections,
 	)
 }
 
@@ -154,6 +201,10 @@ func detectManagedExplicitGroupRoutes(
 	detections = mergeSiteModelRouteDetections(
 		detections,
 		detectManagedAvailableModelRoutes(ctx, siteRecord, account, accessToken, model.SiteToken{}, modelFilter),
+	)
+	detections = mergeSiteModelRouteDetections(
+		detections,
+		detectManagedPerfMetricsSummary(ctx, siteRecord, account, accessToken, model.SiteToken{}, modelFilter),
 	)
 	if len(detections) == 0 {
 		return nil
@@ -301,8 +352,24 @@ func collectPricingRouteDetections(
 			modelFilter,
 		)
 		if !ok {
+			// 即使 endpoint 元数据不足以建立路由，仍尝试只记录价格。
+			normalizedName := strings.ToLower(strings.TrimSpace(modelName))
+			if normalizedName == "" {
+				continue
+			}
+			if len(modelFilter) > 0 {
+				if _, exists := modelFilter[normalizedName]; !exists {
+					continue
+				}
+			}
+			price := parseSiteModelPriceDetection(item)
+			if !price.HasPrice {
+				continue
+			}
+			result[normalizedName] = siteModelRouteDetection{Price: price}
 			continue
 		}
+		detection.Price = parseSiteModelPriceDetection(item)
 		result[strings.ToLower(strings.TrimSpace(modelName))] = detection
 	}
 	if len(result) == 0 {
@@ -642,8 +709,33 @@ func mergeSiteModelRouteDetections(
 	}
 	for key, value := range src {
 		existing, ok := dst[key]
-		if !ok || shouldReplaceSiteModelRouteDetection(existing, value) {
+		if !ok {
 			dst[key] = value
+			continue
+		}
+		if shouldReplaceSiteModelRouteDetection(existing, value) {
+			// 新路由元数据更好时仍保留已有价格/性能。
+			if !value.Price.HasPrice && existing.Price.HasPrice {
+				value.Price = existing.Price
+			}
+			if !value.Perf.HasMetrics && existing.Perf.HasMetrics {
+				value.Perf = existing.Perf
+			}
+			dst[key] = value
+			continue
+		}
+		// 路由元数据不替换时，若新值带价格/性能则补上。
+		changed := false
+		if value.Price.HasPrice && !existing.Price.HasPrice {
+			existing.Price = value.Price
+			changed = true
+		}
+		if value.Perf.HasMetrics && !existing.Perf.HasMetrics {
+			existing.Perf = value.Perf
+			changed = true
+		}
+		if changed {
+			dst[key] = existing
 		}
 	}
 	return dst

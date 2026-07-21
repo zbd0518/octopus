@@ -3,7 +3,7 @@ package relay
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+
 	"errors"
 	"fmt"
 	"io"
@@ -488,7 +488,7 @@ func formatRelaySSEEvent(sequence int64, payload []byte) []byte {
 }
 
 func writeSSEErrorEvent(w io.Writer, message string) {
-	data, _ := json.Marshal(map[string]string{"error": message})
+	data, _ := jsonAPI.Marshal(map[string]string{"error": message})
 	fmt.Fprintf(w, "event: error\ndata: %s\n\n", data)
 }
 

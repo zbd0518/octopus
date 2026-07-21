@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"encoding/json"
 	"strings"
 	"unicode/utf8"
 
@@ -31,7 +30,7 @@ func loadResponseFilterConfig() responseFilterConfig {
 		ErrorMessage: errMsg,
 	}
 	if raw != "" {
-		_ = json.Unmarshal([]byte(raw), &cfg.Keywords)
+		_ = jsonAPI.Unmarshal([]byte(raw), &cfg.Keywords)
 	}
 
 	if cfg.Action == "" {
@@ -51,7 +50,8 @@ func extractResponseText(resp *model.InternalLLMResponse) string {
 	if resp == nil {
 		return ""
 	}
-	var buf strings.Builder
+	buf := getBuilder()
+	defer putBuilder(buf)
 	for _, choice := range resp.Choices {
 		var msg *model.Message
 		if choice.Message != nil {
@@ -104,7 +104,7 @@ func replaceKeywordsInText(text string, keywords []string) string {
 		mask := strings.Repeat("*", utf8.RuneCountInString(kw))
 		kwRunes := []rune(kw)
 		kwLen := len(kwRunes)
-		var buf strings.Builder
+		buf := getBuilder()
 		textRunes := []rune(result)
 		i := 0
 		for i < len(textRunes) {
@@ -117,6 +117,7 @@ func replaceKeywordsInText(text string, keywords []string) string {
 			}
 		}
 		result = buf.String()
+		putBuilder(buf)
 	}
 	return result
 }

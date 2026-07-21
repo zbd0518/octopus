@@ -571,7 +571,8 @@ export function Toolbar() {
                     {toolbarItem === 'channel' ? (
                         <ChannelGroupManagerDialog className={cn(
                             buttonVariants({ variant: "ghost", size: "default" }),
-                            COMMAND_TEXT_BUTTON_CLASS
+                            COMMAND_TEXT_BUTTON_CLASS,
+                            "hidden sm:flex"
                         )} />
                     ) : null}
 

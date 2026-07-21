@@ -1306,8 +1306,7 @@
     "corsAllowOrigins": {
       "label": "CORS 跨網域白名單",
       "hint": "為空禁止跨網域，* 允許所有",
-      "example": "只允許指定域名: https://example.com,https://example2.com",
-      "removeAriaLabel": "移除 {origin}"
+      "example": "只允許指定域名: https://example.com,https://example2.com"
     },
     "trustedProxies": {
       "label": "可信反向代理",
@@ -2109,6 +2108,10 @@
         "label": "美元兌人民幣匯率",
         "hint": "預設 7.2，可手動調整"
       }
+    },
+    "groupUpstreamMeta": {
+      "label": "分組上游渠道資訊",
+      "description": "在分組編輯頁展示上游價格、餘額、今日收入與延遲/吞吐/狀態"
     }
   },
   "group": {
@@ -3150,6 +3153,10 @@
     "unreadCount": "{count} 條未讀",
     "empty": "暫無通知",
     "loading": "正在載入通知...",
+    "list": {
+      "loadingMore": "載入更多...",
+      "noMore": "沒有更多通知了"
+    },
     "tabs": {
       "inbox": "收件匣",
       "archived": "已封存",

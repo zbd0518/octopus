@@ -2,7 +2,7 @@ package codex
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/lingyuins/octopus/internal/transformer"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,7 +14,7 @@ import (
 
 func makeOAuthKey(t *testing.T, accessToken, accountID string) string {
 	t.Helper()
-	b, _ := json.Marshal(map[string]any{
+	b, _ := transformer.Marshal(map[string]any{
 		"access_token": accessToken,
 		"account_id":   accountID,
 	})
@@ -47,14 +47,14 @@ func TestParseOAuthKey_NotJSON(t *testing.T) {
 }
 
 func TestParseOAuthKey_MissingAccessToken(t *testing.T) {
-	b, _ := json.Marshal(map[string]any{"account_id": "acct-1"})
+	b, _ := transformer.Marshal(map[string]any{"account_id": "acct-1"})
 	if _, err := parseOAuthKey(string(b)); err == nil {
 		t.Fatal("expected error for missing access_token")
 	}
 }
 
 func TestParseOAuthKey_MissingAccountID(t *testing.T) {
-	b, _ := json.Marshal(map[string]any{"access_token": "tok-1"})
+	b, _ := transformer.Marshal(map[string]any{"access_token": "tok-1"})
 	if _, err := parseOAuthKey(string(b)); err == nil {
 		t.Fatal("expected error for missing account_id")
 	}
@@ -152,7 +152,7 @@ func TestTransformRequest_StoreFalseAndNoMaxOutputTokens(t *testing.T) {
 	}
 
 	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
+	if err := transformer.Unmarshal(body, &payload); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
 

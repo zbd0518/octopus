@@ -1,7 +1,7 @@
 package condition
 
 import (
-	"encoding/json"
+	"github.com/lingyuins/octopus/internal/utils/json"
 	"strconv"
 	"strings"
 	"time"

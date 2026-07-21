@@ -2,7 +2,7 @@ package cloudflare
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/lingyuins/octopus/internal/transformer"
 	"io"
 	"strings"
 	"testing"
@@ -43,8 +43,8 @@ func TestChatOutboundTransformRequest_StripsModelFromBody(t *testing.T) {
 		t.Fatalf("read body: %v", err)
 	}
 
-	var parsed map[string]json.RawMessage
-	if err := json.Unmarshal(body, &parsed); err != nil {
+	var parsed map[string]transformer.RawMessage
+	if err := transformer.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("body is not a JSON object: %v\nbody: %s", err, string(body))
 	}
 

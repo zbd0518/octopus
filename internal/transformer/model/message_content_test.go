@@ -1,14 +1,14 @@
 package model
 
 import (
-	"encoding/json"
+	"github.com/lingyuins/octopus/internal/transformer"
 	"testing"
 )
 
 func TestMessageContent_UnmarshalJSON_AllowsNull(t *testing.T) {
 	var content MessageContent
 
-	if err := json.Unmarshal([]byte("null"), &content); err != nil {
+	if err := transformer.Unmarshal([]byte("null"), &content); err != nil {
 		t.Fatalf("expected null content to be accepted, got error: %v", err)
 	}
 

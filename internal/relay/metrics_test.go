@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -87,7 +86,7 @@ func TestFilterRequestForLogTruncatesLargeTextFields(t *testing.T) {
 	longPart := strings.Repeat("p", relayLogTextFieldMaxBytes+100)
 	longEmbedding := strings.Repeat("e", relayLogTextFieldMaxBytes+100)
 	longToolDescription := strings.Repeat("d", relayLogTextFieldMaxBytes+100)
-	longToolParams := json.RawMessage(`{"type":"object","description":"` + strings.Repeat("s", relayLogJSONFieldMaxBytes+100) + `"}`)
+	longToolParams := RawMessage(`{"type":"object","description":"` + strings.Repeat("s", relayLogJSONFieldMaxBytes+100) + `"}`)
 	stream := true
 	req := &transmodel.InternalLLMRequest{
 		Model:  "gpt-4o",
@@ -111,7 +110,7 @@ func TestFilterRequestForLogTruncatesLargeTextFields(t *testing.T) {
 				Parameters:  longToolParams,
 			},
 		}},
-		ExtraBody:  json.RawMessage(`{"large":"body"}`),
+		ExtraBody:  RawMessage(`{"large":"body"}`),
 		RawRequest: []byte(`{"raw":"request"}`),
 	}
 

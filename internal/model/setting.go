@@ -98,6 +98,7 @@ const (
 	SettingKeyKeyHealthCheckNotifyEnabled          SettingKey = "key_health_check_notify_enabled"          // 是否发送 Key 验证失败通知
 	SettingKeyKeyHealthCheckRecoveryNotify         SettingKey = "key_health_check_recovery_notify"         // 是否发送 Key 验证恢复通知
 	SettingKeyKeyHealthCheckNotifyCooldown         SettingKey = "key_health_check_notify_cooldown"         // Key 验证通知冷却时间（秒）
+	SettingKeyGroupUpstreamMetaDisplayEnabled      SettingKey = "group_upstream_meta_display_enabled"      // 分组编辑页展示上游价/余额/今日收入/性能指标
 )
 
 type Setting struct {
@@ -139,8 +140,8 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeySemanticCacheEmbeddingAPIKey, Value: ""},
 		{Key: SettingKeySemanticCacheEmbeddingModel, Value: ""},
 		{Key: SettingKeySemanticCacheEmbeddingTimeoutSeconds, Value: "10"},
-		{Key: SettingKeyNavOrder, Value: `["home","hub","channel","group","model","analytics","log","alert","ops","apikey","setting","user"]`},
-		{Key: SettingKeyNavVisible, Value: `["home","hub","channel","group","model","analytics","log","alert","ops","apikey","setting","user"]`},
+		{Key: SettingKeyNavOrder, Value: `["home","hub","channel","group","model","analytics","log","notification","ops","apikey","setting","user"]`},
+		{Key: SettingKeyNavVisible, Value: `["home","hub","channel","group","model","analytics","log","notification","ops","apikey","setting","user"]`},
 		{Key: SettingKeyHubTabOrder, Value: `["sites","site-channels","automation","balance","tokenplan"]`},
 		{Key: SettingKeyHubTabVisible, Value: `["sites","site-channels","automation","balance","tokenplan"]`},
 		{Key: SettingKeyAnalyticsTabOrder, Value: `["cache","utilization","route-health","channel-model","evaluation","latency"]`},
@@ -192,6 +193,7 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyKeyHealthCheckNotifyEnabled, Value: "true"},  // 默认发送失败通知
 		{Key: SettingKeyKeyHealthCheckRecoveryNotify, Value: "true"}, // 默认发送恢复通知
 		{Key: SettingKeyKeyHealthCheckNotifyCooldown, Value: "300"},  // 默认通知冷却 5 分钟
+		{Key: SettingKeyGroupUpstreamMetaDisplayEnabled, Value: "true"}, // 默认开启分组上游元信息展示
 	}
 }
 
@@ -370,7 +372,7 @@ func (s *Setting) Validate() error {
 			return fmt.Errorf("webdav config must be a valid JSON object")
 		}
 		return nil
-	case SettingKeyResponseFilterEnabled:
+	case SettingKeyResponseFilterEnabled, SettingKeyGroupUpstreamMetaDisplayEnabled:
 		if s.Value != "true" && s.Value != "false" {
 			return fmt.Errorf("setting value must be true or false")
 		}

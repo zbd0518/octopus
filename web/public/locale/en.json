@@ -1350,8 +1350,7 @@
     "corsAllowOrigins": {
       "label": "CORS Allowed Origins",
       "hint": "Empty = deny all, * = allow all",
-      "example": "Only allow specific domains: https://example.com,https://example2.com",
-      "removeAriaLabel": "Remove {origin}"
+      "example": "Only allow specific domains: https://example.com,https://example2.com"
     },
     "trustedProxies": {
       "label": "Trusted Reverse Proxies",
@@ -2153,6 +2152,10 @@
         "label": "USD to CNY Rate",
         "hint": "Default 7.2, adjustable"
       }
+    },
+    "groupUpstreamMeta": {
+      "label": "Group upstream channel info",
+      "description": "Show upstream price, balance, today's income, and latency/throughput/status in the group editor"
     }
   },
   "group": {
@@ -3150,6 +3153,10 @@
     "unreadCount": "{count} unread",
     "empty": "No notifications",
     "loading": "Loading notifications...",
+    "list": {
+      "loadingMore": "Loading more...",
+      "noMore": "No more notifications"
+    },
     "tabs": {
       "inbox": "Inbox",
       "archived": "Archived",

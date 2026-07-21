@@ -48,8 +48,9 @@ func TestChatInboundTransformStreamFinishReasonChunkHasDelta(t *testing.T) {
 	if !strings.HasPrefix(body, "data: ") {
 		t.Fatalf("TransformStream() output missing SSE data prefix: %q", body)
 	}
-	if !strings.Contains(body, `"delta":{}`) {
-		t.Fatalf("TransformStream() finish_reason chunk missing empty delta; got %q", body)
+	// Accept both encoding/json (delta:{}) and jsoniter (delta:{"content":null}) output
+	if !strings.Contains(body, `"delta":{}`) && !strings.Contains(body, `"delta":{"content":null}`) {
+		t.Fatalf("TransformStream() finish_reason chunk missing delta; got %q", body)
 	}
 	if !strings.Contains(body, `"finish_reason":"stop"`) {
 		t.Fatalf("TransformStream() missing finish_reason; got %q", body)

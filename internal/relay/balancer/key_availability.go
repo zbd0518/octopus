@@ -1,7 +1,6 @@
 package balancer
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -52,7 +51,7 @@ var globalKeyAvailability sync.Map // key: string -> *keyAvailabilityEntry
 
 // availabilityKey 构造存储 key，与 cooldownKey 格式一致。
 func availabilityKey(channelID, keyID int, modelName string) string {
-	return fmt.Sprintf("%d:%d:%s", channelID, keyID, strings.TrimSpace(modelName))
+	return buildKey3(channelID, keyID, strings.TrimSpace(modelName))
 }
 
 // penaltyForStatusCode 根据状态码返回衰减分数。
@@ -197,7 +196,7 @@ func PurgeStaleKeyAvailability(maxAge time.Duration) int {
 // RemoveChannelKeyAvailability 删除指定渠道的所有可用度条目。
 // 在渠道被删除时调用，注册于 OnChannelDeletedHooks。
 func RemoveChannelKeyAvailability(channelID int) {
-	prefix := fmt.Sprintf("%d:", channelID)
+	prefix := buildKeyPrefix(channelID)
 	globalKeyAvailability.Range(func(key, _ any) bool {
 		if k, ok := key.(string); ok && strings.HasPrefix(k, prefix) {
 			globalKeyAvailability.Delete(key)
@@ -212,7 +211,7 @@ func RemoveKeyAvailability(keyID int) {
 	if keyID == 0 {
 		return
 	}
-	needle := fmt.Sprintf(":%d:", keyID)
+	needle := buildKeyNeedle(keyID)
 	globalKeyAvailability.Range(func(key, _ any) bool {
 		k, ok := key.(string)
 		if !ok {

@@ -2,7 +2,7 @@ package relay
 
 import (
 	"context"
-	"encoding/json"
+
 	"fmt"
 	"strconv"
 	"strings"
@@ -306,7 +306,7 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 	if contentEnabled {
 		// 请求内容
 		if m.InternalRequest != nil {
-			if reqJSON, jsonErr := json.Marshal(m.filterRequestForLog(m.InternalRequest)); jsonErr == nil {
+			if reqJSON, jsonErr := jsonAPI.Marshal(m.filterRequestForLog(m.InternalRequest)); jsonErr == nil {
 				relayLog.RequestContent = string(reqJSON)
 			}
 		}
@@ -314,7 +314,7 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 		// 响应内容
 		if m.InternalResponse != nil {
 			respForLog := m.filterResponseForLog(m.InternalResponse)
-			if respJSON, jsonErr := json.Marshal(respForLog); jsonErr == nil {
+			if respJSON, jsonErr := jsonAPI.Marshal(respForLog); jsonErr == nil {
 				if m.InternalResponse.Usage != nil && m.InternalResponse.Usage.AnthropicUsage {
 					respStr := string(respJSON)
 					old := `"usage":{`
@@ -492,7 +492,7 @@ func filterToolsForLog(tools []transformerModel.Tool) []transformerModel.Tool {
 		filtered[i] = tool
 		filtered[i].Function.Description = truncateRelayLogString(tool.Function.Description, relayLogTextFieldMaxBytes)
 		if len(tool.Function.Parameters) > relayLogJSONFieldMaxBytes {
-			filtered[i].Function.Parameters = json.RawMessage(strconv.Quote(truncateRelayLogString(string(tool.Function.Parameters), relayLogJSONFieldMaxBytes)))
+			filtered[i].Function.Parameters = RawMessage(strconv.Quote(truncateRelayLogString(string(tool.Function.Parameters), relayLogJSONFieldMaxBytes)))
 		}
 	}
 	return filtered

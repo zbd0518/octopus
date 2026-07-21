@@ -1076,8 +1076,16 @@ func loadAnalyticsChannelModelRows(ctx context.Context, r model.AnalyticsRange, 
 		key := strconv.Itoa(row.ChannelID) + "\x00" + modelName
 		rows[key] = &rowCopy
 	}
-	if len(rows) == 0 {
-		return loadAnalyticsChannelModelRowsFromRelayLogs(ctx, r, scope)
+	// stats_daily 为主、relay_logs 补缺：stats_daily 未覆盖的 (channel, model)
+	// 组合从 relay_logs 补充，避免迁移后旧数据消失（issue #148）。
+	// 仅补缺不合并，避免同一请求在两个数据源中双计。
+	logRows, logErr := loadAnalyticsChannelModelRowsFromRelayLogs(ctx, r, scope)
+	if logErr == nil {
+		for key, logRow := range logRows {
+			if _, exists := rows[key]; !exists {
+				rows[key] = logRow
+			}
+		}
 	}
 
 	return rows, nil
@@ -1182,8 +1190,14 @@ func loadAnalyticsProviderRows(ctx context.Context, r model.AnalyticsRange) (map
 		rowCopy := row
 		rows[row.ChannelID] = &rowCopy
 	}
-	if len(rows) == 0 {
-		return loadAnalyticsProviderRowsFromRelayLogs(ctx, r)
+	// stats_daily 为主、relay_logs 补缺（issue #148）。
+	logRows, logErr := loadAnalyticsProviderRowsFromRelayLogs(ctx, r)
+	if logErr == nil {
+		for channelID, logRow := range logRows {
+			if _, exists := rows[channelID]; !exists {
+				rows[channelID] = logRow
+			}
+		}
 	}
 
 	return rows, nil
@@ -1223,8 +1237,14 @@ func loadAnalyticsModelRows(ctx context.Context, r model.AnalyticsRange) (map[st
 		rowCopy.ModelName = modelName
 		rows[modelName] = &rowCopy
 	}
-	if len(rows) == 0 {
-		return loadAnalyticsModelRowsFromRelayLogs(ctx, r)
+	// stats_daily 为主、relay_logs 补缺（issue #148）。
+	logRows, logErr := loadAnalyticsModelRowsFromRelayLogs(ctx, r)
+	if logErr == nil {
+		for modelName, logRow := range logRows {
+			if _, exists := rows[modelName]; !exists {
+				rows[modelName] = logRow
+			}
+		}
 	}
 
 	return rows, nil
@@ -1261,8 +1281,14 @@ func loadAnalyticsAPIKeyRows(ctx context.Context, r model.AnalyticsRange) (map[s
 		rowCopy.Name = strings.TrimSpace(row.Name)
 		rows[makeAnalyticsAPIKeyAggregateKey(row.APIKeyID, rowCopy.Name)] = &rowCopy
 	}
-	if len(rows) == 0 {
-		return loadAnalyticsAPIKeyRowsFromRelayLogs(ctx, r)
+	// stats_daily 为主、relay_logs 补缺（issue #148）。
+	logRows, logErr := loadAnalyticsAPIKeyRowsFromRelayLogs(ctx, r)
+	if logErr == nil {
+		for key, logRow := range logRows {
+			if _, exists := rows[key]; !exists {
+				rows[key] = logRow
+			}
+		}
 	}
 
 	return rows, nil
@@ -1439,31 +1465,32 @@ func loadAnalyticsChannelModelRowsFromRelayLogs(ctx context.Context, r model.Ana
 	if keepEnabled {
 		readConn := relayLogReadConn()
 		if readConn != nil {
-			type relayLogLite struct {
-				ChannelId        int                    `gorm:"column:channel_id"`
-				ChannelName      string                 `gorm:"column:channel_name"`
-				RequestModelName string                 `gorm:"column:request_model_name"`
-				ActualModelName  string                 `gorm:"column:actual_model_name"`
-				InputTokens      int                    `gorm:"column:input_tokens"`
-				OutputTokens     int                    `gorm:"column:output_tokens"`
-				Cost             float64                `gorm:"column:cost"`
-				Error            string                 `gorm:"column:error"`
-				Attempts         []model.ChannelAttempt `gorm:"column:attempts;serializer:json"`
-			}
-			var liteLogs []relayLogLite
-			query := readConn.WithContext(ctx).Table("relay_logs").Select("channel_id", "channel_name", "request_model_name", "actual_model_name", "input_tokens", "output_tokens", "cost", "error", "attempts")
-			if startUnix != nil {
-				query = query.Where("time >= ?", *startUnix)
-			}
-			if err := query.Find(&liteLogs).Error; err != nil {
-				return nil, err
-			}
-			for i := range liteLogs {
-				lite := &liteLogs[i]
-				mergeRelayLogIntoChannelModelRows(rows, &model.RelayLog{ChannelId: lite.ChannelId, ChannelName: lite.ChannelName, RequestModelName: lite.RequestModelName, ActualModelName: lite.ActualModelName, InputTokens: lite.InputTokens, OutputTokens: lite.OutputTokens, Cost: lite.Cost, Error: lite.Error, Attempts: lite.Attempts}, inScope)
+			if connHasRelayLogAttempts(readConn) {
+				// 1) attempts 表 DB 聚合（主路径，无 JSON 装载）
+				if err := loadChannelModelRowsFromAttemptsTable(ctx, readConn, startUnix, rows, inScope); err != nil {
+					return nil, err
+				}
+				// 2) 仅有 attempts JSON、无 attempts 表行的历史日志（issue #121 兼容）
+				//    用 NOT EXISTS 过滤，避免与 attempts 表双计。
+				if err := loadChannelModelRowsFromAttemptsJSONBatched(ctx, readConn, startUnix, rows, inScope, true); err != nil {
+					return nil, err
+				}
+				// 3) 完全无 attempts 信息的日志：顶层列 GROUP BY 补缺
+				if err := loadChannelModelRowsFromTopLevelMissingAttempts(ctx, readConn, startUnix, rows, inScope); err != nil {
+					return nil, err
+				}
+			} else {
+				// 无 attempts 表：分批 JSON（有 attempts 字段）+ 顶层补缺（无 attempts）
+				if err := loadChannelModelRowsFromAttemptsJSONBatched(ctx, readConn, startUnix, rows, inScope, false); err != nil {
+					return nil, err
+				}
+				if err := loadChannelModelRowsFromTopLevelMissingAttempts(ctx, readConn, startUnix, rows, inScope); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
+	// 内存缓存仍可走完整 merge（含 attempts），体量有界（relayLogMaxSize）。
 	cache, lock := relaylog.GetCacheAndLock()
 	lock.Lock()
 	defer lock.Unlock()
@@ -1474,6 +1501,199 @@ func loadAnalyticsChannelModelRowsFromRelayLogs(ctx context.Context, r model.Ana
 		mergeRelayLogIntoChannelModelRows(rows, &logItem, inScope)
 	}
 	return rows, nil
+}
+
+// loadChannelModelRowsFromAttemptsTable 从 relay_log_attempts 做 DB 端聚合。
+// token/cost 仅在 status=success 且父日志 error 为空时计入（与 mergeRelayLogIntoChannelModelRows 一致）。
+func loadChannelModelRowsFromAttemptsTable(
+	ctx context.Context,
+	conn *gorm.DB,
+	startUnix *int64,
+	rows map[string]*analyticsChannelModelAggregateRow,
+	inScope func(int, string) bool,
+) error {
+	type attemptAggRow struct {
+		ChannelID      int     `gorm:"column:channel_id"`
+		ChannelName    string  `gorm:"column:channel_name"`
+		ModelName      string  `gorm:"column:model_name"`
+		InputTokens    int64   `gorm:"column:input_tokens"`
+		OutputTokens   int64   `gorm:"column:output_tokens"`
+		TotalCost      float64 `gorm:"column:total_cost"`
+		RequestSuccess int64   `gorm:"column:request_success"`
+		RequestFailed  int64   `gorm:"column:request_failed"`
+	}
+	var dbRows []attemptAggRow
+	query := conn.WithContext(ctx).
+		Table("relay_log_attempts AS a").
+		Select(`
+			a.channel_id,
+			MAX(a.channel_name) AS channel_name,
+			COALESCE(NULLIF(a.model_name, ''), NULLIF(l.actual_model_name, ''), l.request_model_name) AS model_name,
+			COALESCE(SUM(CASE WHEN a.status = ? AND l.error = '' THEN l.input_tokens ELSE 0 END), 0) AS input_tokens,
+			COALESCE(SUM(CASE WHEN a.status = ? AND l.error = '' THEN l.output_tokens ELSE 0 END), 0) AS output_tokens,
+			COALESCE(SUM(CASE WHEN a.status = ? AND l.error = '' THEN l.cost ELSE 0 END), 0) AS total_cost,
+			COALESCE(SUM(CASE WHEN a.status = ? THEN 1 ELSE 0 END), 0) AS request_success,
+			COALESCE(SUM(CASE WHEN a.status = ? THEN 1 ELSE 0 END), 0) AS request_failed
+		`, string(model.AttemptSuccess), string(model.AttemptSuccess), string(model.AttemptSuccess), string(model.AttemptSuccess), string(model.AttemptFailed)).
+		Joins("JOIN relay_logs AS l ON l.id = a.relay_log_id").
+		Group("a.channel_id, COALESCE(NULLIF(a.model_name, ''), NULLIF(l.actual_model_name, ''), l.request_model_name)")
+	if startUnix != nil {
+		query = query.Where("a.time >= ?", *startUnix)
+	}
+	if err := query.Scan(&dbRows).Error; err != nil {
+		return err
+	}
+	for _, row := range dbRows {
+		modelName := strings.TrimSpace(row.ModelName)
+		if modelName == "" || row.ChannelID == 0 || !inScope(row.ChannelID, modelName) {
+			continue
+		}
+		key := strconv.Itoa(row.ChannelID) + "\x00" + modelName
+		rows[key] = &analyticsChannelModelAggregateRow{
+			ChannelID:      row.ChannelID,
+			ChannelName:    strings.TrimSpace(row.ChannelName),
+			ModelName:      modelName,
+			InputTokens:    row.InputTokens,
+			OutputTokens:   row.OutputTokens,
+			TotalCost:      row.TotalCost,
+			RequestSuccess: row.RequestSuccess,
+			RequestFailed:  row.RequestFailed,
+		}
+	}
+	return nil
+}
+
+// loadChannelModelRowsFromTopLevelMissingAttempts 只聚合「无 attempts 信息」的日志，
+// 避免与 attempts 表 / attempts JSON 路径双计。
+func loadChannelModelRowsFromTopLevelMissingAttempts(
+	ctx context.Context,
+	conn *gorm.DB,
+	startUnix *int64,
+	rows map[string]*analyticsChannelModelAggregateRow,
+	inScope func(int, string) bool,
+) error {
+	modelExpr := "COALESCE(NULLIF(actual_model_name, ''), request_model_name)"
+	var dbRows []analyticsChannelModelAggregateRow
+	query := conn.WithContext(ctx).Model(&model.RelayLog{}).
+		Select(`
+			channel_id,
+			MAX(channel_name) AS channel_name,
+			` + modelExpr + ` AS model_name,
+			COALESCE(SUM(input_tokens), 0) AS input_tokens,
+			COALESCE(SUM(output_tokens), 0) AS output_tokens,
+			COALESCE(SUM(cost), 0) AS total_cost,
+			COALESCE(SUM(CASE WHEN error = '' THEN 1 ELSE 0 END), 0) AS request_success,
+			COALESCE(SUM(CASE WHEN error <> '' THEN 1 ELSE 0 END), 0) AS request_failed
+		`).
+		// 无 attempts JSON，且（若表存在）无 attempts 表行。
+		Where("(attempts IS NULL OR attempts = '' OR attempts = 'null' OR attempts = '[]')").
+		Group("channel_id, " + modelExpr)
+	if startUnix != nil {
+		query = query.Where("time >= ?", *startUnix)
+	}
+	// 有 attempts 表时排除已有关联行的父日志（双保险）。
+	if connHasRelayLogAttempts(conn) {
+		query = query.Where("NOT EXISTS (SELECT 1 FROM relay_log_attempts a WHERE a.relay_log_id = relay_logs.id)")
+	}
+	if err := query.Scan(&dbRows).Error; err != nil {
+		return err
+	}
+	for _, row := range dbRows {
+		modelName := strings.TrimSpace(row.ModelName)
+		if modelName == "" || row.ChannelID == 0 || !inScope(row.ChannelID, modelName) {
+			continue
+		}
+		key := strconv.Itoa(row.ChannelID) + "\x00" + modelName
+		if existing, ok := rows[key]; ok {
+			existing.InputTokens += row.InputTokens
+			existing.OutputTokens += row.OutputTokens
+			existing.TotalCost += row.TotalCost
+			existing.RequestSuccess += row.RequestSuccess
+			existing.RequestFailed += row.RequestFailed
+			if existing.ChannelName == "" {
+				existing.ChannelName = strings.TrimSpace(row.ChannelName)
+			}
+			continue
+		}
+		rowCopy := row
+		rowCopy.ModelName = modelName
+		rowCopy.ChannelName = strings.TrimSpace(row.ChannelName)
+		rows[key] = &rowCopy
+	}
+	return nil
+}
+
+// channelModelAttemptsJSONBatchSize 控制 attempts JSON 回退路径的峰值内存。
+const channelModelAttemptsJSONBatchSize = 500
+
+// loadChannelModelRowsFromAttemptsJSONBatched 分批读 attempts JSON（不读 content 大字段）。
+// onlyMissingAttemptsTable=true 时跳过已有 attempts 表行的父日志，避免双计。
+func loadChannelModelRowsFromAttemptsJSONBatched(
+	ctx context.Context,
+	conn *gorm.DB,
+	startUnix *int64,
+	rows map[string]*analyticsChannelModelAggregateRow,
+	inScope func(int, string) bool,
+	onlyMissingAttemptsTable bool,
+) error {
+	type rowWithID struct {
+		ID               int64                  `gorm:"column:id"`
+		ChannelId        int                    `gorm:"column:channel_id"`
+		ChannelName      string                 `gorm:"column:channel_name"`
+		RequestModelName string                 `gorm:"column:request_model_name"`
+		ActualModelName  string                 `gorm:"column:actual_model_name"`
+		InputTokens      int                    `gorm:"column:input_tokens"`
+		OutputTokens     int                    `gorm:"column:output_tokens"`
+		Cost             float64                `gorm:"column:cost"`
+		Error            string                 `gorm:"column:error"`
+		Attempts         []model.ChannelAttempt `gorm:"column:attempts;serializer:json"`
+	}
+	var lastID int64
+	for {
+		var idBatch []rowWithID
+		query := conn.WithContext(ctx).Table("relay_logs").
+			Select("id", "channel_id", "channel_name", "request_model_name", "actual_model_name", "input_tokens", "output_tokens", "cost", "error", "attempts").
+			Where("attempts IS NOT NULL AND attempts <> '' AND attempts <> 'null' AND attempts <> '[]'").
+			Order("id ASC").
+			Limit(channelModelAttemptsJSONBatchSize)
+		if startUnix != nil {
+			query = query.Where("time >= ?", *startUnix)
+		}
+		if lastID > 0 {
+			query = query.Where("id > ?", lastID)
+		}
+		if onlyMissingAttemptsTable {
+			query = query.Where("NOT EXISTS (SELECT 1 FROM relay_log_attempts a WHERE a.relay_log_id = relay_logs.id)")
+		}
+		if err := query.Find(&idBatch).Error; err != nil {
+			return err
+		}
+		if len(idBatch) == 0 {
+			break
+		}
+		for i := range idBatch {
+			lite := idBatch[i]
+			lastID = lite.ID
+			if len(lite.Attempts) == 0 {
+				continue
+			}
+			mergeRelayLogIntoChannelModelRows(rows, &model.RelayLog{
+				ChannelId:        lite.ChannelId,
+				ChannelName:      lite.ChannelName,
+				RequestModelName: lite.RequestModelName,
+				ActualModelName:  lite.ActualModelName,
+				InputTokens:      lite.InputTokens,
+				OutputTokens:     lite.OutputTokens,
+				Cost:             lite.Cost,
+				Error:            lite.Error,
+				Attempts:         lite.Attempts,
+			}, inScope)
+		}
+		if len(idBatch) < channelModelAttemptsJSONBatchSize {
+			break
+		}
+	}
+	return nil
 }
 
 func makeAnalyticsAPIKeyAggregateKey(apiKeyID int, name string) string {

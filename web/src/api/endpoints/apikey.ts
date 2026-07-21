@@ -204,6 +204,5 @@ export function useAPIKeyStats() {
         },
         select: formatAPIKeyStatsResponse,
         refetchInterval: REFETCH_INTERVAL_DEFAULT,
-        refetchOnMount: 'always',
     });
 }

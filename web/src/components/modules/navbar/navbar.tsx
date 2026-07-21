@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { motion, useReducedMotion } from "motion/react"
 import { cn } from "@/lib/utils"
 import { useNavStore, type NavItem } from "@/components/modules/navbar"
@@ -10,6 +10,11 @@ import { ENTRANCE_VARIANTS } from "@/lib/animations/fluid-transitions"
 import { useTranslations } from "next-intl"
 import { useIsMobile } from "@/hooks/use-mobile"
 
+type LabelAnchor = {
+    x: number
+    y: number
+}
+
 export function NavBar() {
     const { activeItem, orderedItems, visibleItems, setActiveItem } = useNavStore()
     const { preload } = usePreload()
@@ -18,6 +23,9 @@ export function NavBar() {
     const reduceMotion = useReducedMotion()
     const lightweightMotion = isMobile || reduceMotion
     const [pressedItem, setPressedItem] = useState<string | null>(null)
+    const [labelAnchors, setLabelAnchors] = useState<Record<string, LabelAnchor>>({})
+    const navRef = useRef<HTMLElement | null>(null)
+    const buttonRefs = useRef(new Map<string, HTMLButtonElement>())
     const visibleRouteSet = useMemo(() => new Set(visibleItems), [visibleItems])
     const routeById = useMemo(
         () => new Map(ROUTES.map((route) => [route.id as NavItem, route])),
@@ -32,9 +40,70 @@ export function NavBar() {
         [orderedItems, routeById, visibleRouteSet]
     )
 
+    // Mobile labels must not live inside the overflow-x-auto nav, or the vertical
+    // axis is also clipped (CSS: non-visible overflow on one axis forces the other).
+    // Render them as fixed layers anchored to each button's viewport rect instead.
+    const visibleLabelIds = useMemo(() => {
+        if (!isMobile) return [] as string[]
+        const ids = new Set<string>()
+        if (activeItem) ids.add(activeItem)
+        if (pressedItem) ids.add(pressedItem)
+        return [...ids]
+    }, [activeItem, isMobile, pressedItem])
+
+    const updateLabelAnchors = useCallback(() => {
+        if (!isMobile || visibleLabelIds.length === 0) {
+            setLabelAnchors((prev) => (Object.keys(prev).length === 0 ? prev : {}))
+            return
+        }
+
+        const next: Record<string, LabelAnchor> = {}
+        for (const id of visibleLabelIds) {
+            const el = buttonRefs.current.get(id)
+            if (!el) continue
+            const rect = el.getBoundingClientRect()
+            next[id] = {
+                x: rect.left + rect.width / 2,
+                y: rect.top,
+            }
+        }
+        setLabelAnchors(next)
+    }, [isMobile, visibleLabelIds])
+
+    useLayoutEffect(() => {
+        updateLabelAnchors()
+    }, [updateLabelAnchors, orderedRoutes])
+
+    useEffect(() => {
+        if (!isMobile) return
+
+        const onScrollOrResize = () => updateLabelAnchors()
+        const nav = navRef.current
+
+        window.addEventListener("resize", onScrollOrResize)
+        // capture: catch scroll from the nav strip and any page scrollers
+        window.addEventListener("scroll", onScrollOrResize, true)
+        nav?.addEventListener("scroll", onScrollOrResize)
+
+        return () => {
+            window.removeEventListener("resize", onScrollOrResize)
+            window.removeEventListener("scroll", onScrollOrResize, true)
+            nav?.removeEventListener("scroll", onScrollOrResize)
+        }
+    }, [isMobile, updateLabelAnchors])
+
+    const setButtonRef = useCallback((id: string, node: HTMLButtonElement | null) => {
+        if (node) {
+            buttonRefs.current.set(id, node)
+        } else {
+            buttonRefs.current.delete(id)
+        }
+    }, [])
+
     return (
         <div className="relative z-50 md:min-h-full">
             <motion.nav
+                ref={navRef}
                 aria-label={t('ariaLabel')}
                 className={cn(
                     "fixed left-1/2 bottom-[calc(1.25rem+env(safe-area-inset-bottom,0px))] flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 items-center gap-1 overflow-x-auto p-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
@@ -52,6 +121,7 @@ export function NavBar() {
                     return (
                         <motion.button
                             key={route.id}
+                            ref={(node) => setButtonRef(route.id, node)}
                             type="button"
                             aria-label={t(route.id as NavItem)}
                             onClick={() => setActiveItem(route.id as NavItem)}
@@ -99,21 +169,29 @@ export function NavBar() {
                             <span className="hidden text-sm font-medium md:inline">
                                 {t(route.id as NavItem)}
                             </span>
-                            {isMobile && (isActive || pressedItem === route.id) && (
-                                <motion.span
-                                    initial={{ opacity: 0, y: 2 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    exit={{ opacity: 0 }}
-                                    transition={{ duration: 0.12 }}
-                                    className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-popover px-1.5 py-0.5 text-[10px] font-medium text-popover-foreground shadow-md ring-1 ring-border"
-                                >
-                                    {t(route.id as NavItem)}
-                                </motion.span>
-                            )}
                         </motion.button>
                     )
                 })}
             </motion.nav>
+
+            {isMobile &&
+                visibleLabelIds.map((id) => {
+                    const anchor = labelAnchors[id]
+                    if (!anchor) return null
+                    return (
+                        <motion.span
+                            key={`nav-label-${id}`}
+                            initial={{ opacity: 0, y: 2 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: 0.12 }}
+                            style={{ left: anchor.x, top: anchor.y }}
+                            className="pointer-events-none fixed z-[60] -translate-x-1/2 -translate-y-[calc(100%+0.35rem)] whitespace-nowrap rounded-md bg-popover px-1.5 py-0.5 text-[10px] font-medium text-popover-foreground shadow-md ring-1 ring-border"
+                        >
+                            {t(id as NavItem)}
+                        </motion.span>
+                    )
+                })}
         </div>
     )
 }

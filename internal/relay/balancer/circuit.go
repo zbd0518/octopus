@@ -2,7 +2,6 @@ package balancer
 
 import (
 	"context"
-	"fmt"
 	"math/bits"
 	"strings"
 	"sync"
@@ -37,7 +36,7 @@ var globalBreaker sync.Map // key: string -> value: *circuitEntry
 
 // circuitKey 生成熔断器键：channelID:channelKeyID:modelName
 func circuitKey(channelID, keyID int, modelName string) string {
-	return fmt.Sprintf("%d:%d:%s", channelID, keyID, modelName)
+	return buildKey3(channelID, keyID, modelName)
 }
 
 // getOrCreateEntry 获取或创建熔断器条目
@@ -248,7 +247,7 @@ func RecordFailure(channelID, keyID int, modelName string) {
 // RemoveChannelEntries 删除指定渠道的所有熔断器条目。
 // 在渠道被删除时调用，防止 globalBreaker map 无限增长。
 func RemoveChannelEntries(channelID int) {
-	prefix := fmt.Sprintf("%d:", channelID)
+	prefix := buildKeyPrefix(channelID)
 	globalBreaker.Range(func(key, _ any) bool {
 		if k, ok := key.(string); ok && len(k) > 0 && strings.HasPrefix(k, prefix) {
 			globalBreaker.Delete(key)

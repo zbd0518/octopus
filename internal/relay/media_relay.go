@@ -1,11 +1,10 @@
 package relay
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
+
 	"errors"
 	"fmt"
 	"io"
@@ -190,7 +189,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 			channel, err := ch.Get(item.ChannelID, c.Request.Context())
 			if err != nil {
 				log.Warnf("failed to get channel %d: %v", item.ChannelID, err)
-				routeIter.Skip(item.ChannelID, 0, fmt.Sprintf("channel_%d", item.ChannelID), fmt.Sprintf("channel not found: %v", err))
+				routeIter.Skip(item.ChannelID, 0, buildChannelName(item.ChannelID), fmt.Sprintf("channel not found: %v", err))
 				continue
 			}
 			if !channel.Enabled {
@@ -293,7 +292,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				// 决策摘要 + 上游原始错误，使 relay log 能区分 429 等错误的真实成因（issue #93）。
 				mediaFailMsg := decision.String()
 				if upstreamErr := extractUpstreamErrorDetail(fwdErr); upstreamErr != "" {
-					mediaFailMsg = fmt.Sprintf("%s: %s", mediaFailMsg, upstreamErr)
+					mediaFailMsg = buildErrorMessage(mediaFailMsg, upstreamErr)
 				}
 				span.End(dbmodel.AttemptFailed, statusCode, mediaFailMsg)
 				st.ChannelUpdate(channel.ID, dbmodel.StatsMetrics{
@@ -385,7 +384,13 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 	if len(bodyBytes) > 0 {
 		contentEnabled, _ := setting.GetBool(dbmodel.SettingKeyRelayLogContentEnabled)
 		if contentEnabled {
-			relayLog.RequestContent = string(bodyBytes)
+			// 与 chat 路径 JSON 字段上限对齐，避免媒体请求 body 无界写入日志缓存。
+			const mediaLogBodyMaxBytes = 16 * 1024
+			if len(bodyBytes) > mediaLogBodyMaxBytes {
+				relayLog.RequestContent = string(bodyBytes[:mediaLogBodyMaxBytes]) + "...(truncated)"
+			} else {
+				relayLog.RequestContent = string(bodyBytes)
+			}
 		}
 	}
 
@@ -431,7 +436,7 @@ func recordPreparedCandidateSkip(iter *balancer.Iterator, item dbmodel.GroupItem
 	}
 
 	channelID := item.ChannelID
-	channelName := fmt.Sprintf("channel_%d", item.ChannelID)
+	channelName := buildChannelName(item.ChannelID)
 	keyID := 0
 	if prepare.Channel != nil {
 		channelID = prepare.Channel.ID
@@ -461,7 +466,7 @@ func extractModelFromJSON(c *gin.Context) (string, []byte, bool, error) {
 	}
 
 	var raw map[string]any
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if err := jsonAPI.Unmarshal(body, &raw); err != nil {
 		return "", nil, false, fmt.Errorf("invalid JSON body: %w", err)
 	}
 
@@ -718,13 +723,13 @@ func replaceModelInJSON(body []byte, originalModel, resolvedModel string) ([]byt
 	}
 
 	var raw map[string]any
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if err := jsonAPI.Unmarshal(body, &raw); err != nil {
 		log.Debugf("replaceModelInJSON: failed to parse JSON body, returning original: %v", err)
 		return body, nil
 	}
 
 	raw["model"] = resolvedModel
-	return json.Marshal(raw)
+	return jsonAPI.Marshal(raw)
 }
 
 // buildMediaUpstreamURL constructs the full upstream URL from base URL and path.
@@ -805,7 +810,8 @@ func handleSSEResponse(c *gin.Context, response *http.Response) (int, error) {
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
-	reader := bufio.NewReader(response.Body)
+	reader := getReader(response.Body)
+	defer putReader(reader)
 	for {
 		line, err := reader.ReadBytes('\n')
 		if len(line) > 0 {
@@ -857,7 +863,7 @@ func rewriteMusicRequestByProvider(group dbmodel.Group, cfg mediaEndpointConfig,
 	}
 
 	var raw map[string]any
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if err := jsonAPI.Unmarshal(body, &raw); err != nil {
 		return nil, "", err
 	}
 
@@ -870,7 +876,7 @@ func rewriteMusicRequestByProvider(group dbmodel.Group, cfg mediaEndpointConfig,
 	}
 	delete(raw, "prompt")
 
-	converted, err := json.Marshal(raw)
+	converted, err := jsonAPI.Marshal(raw)
 	if err != nil {
 		return nil, "", err
 	}
@@ -905,7 +911,7 @@ func rewriteAudioSpeechRequestByProvider(group dbmodel.Group, cfg mediaEndpointC
 	}
 
 	var raw map[string]any
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if err := jsonAPI.Unmarshal(body, &raw); err != nil {
 		return body, cfg
 	}
 
@@ -938,7 +944,7 @@ func rewriteAudioSpeechRequestByProvider(group dbmodel.Group, cfg mediaEndpointC
 		},
 	}
 
-	converted, err := json.Marshal(mimoReq)
+	converted, err := jsonAPI.Marshal(mimoReq)
 	if err != nil {
 		return body, cfg
 	}
@@ -966,7 +972,7 @@ func handleMimoTTSResponse(c *gin.Context, response *http.Response, audioFormat 
 	}
 
 	var mimoResp mimoTTSChatResponse
-	if err := json.Unmarshal(respBody, &mimoResp); err != nil {
+	if err := jsonAPI.Unmarshal(respBody, &mimoResp); err != nil {
 		return response.StatusCode, fmt.Errorf("failed to parse MiMo TTS response: %w", err)
 	}
 

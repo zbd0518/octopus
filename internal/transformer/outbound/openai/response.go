@@ -3,8 +3,8 @@ package openai
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/lingyuins/octopus/internal/transformer"
 	"io"
 	"net/http"
 	"net/url"
@@ -31,7 +31,7 @@ func (o *ResponseOutbound) TransformRequest(ctx context.Context, request *model.
 	// Convert to Responses API request format
 	responsesReq := ConvertToResponsesRequest(request)
 
-	body, err := json.Marshal(responsesReq)
+	body, err := transformer.Marshal(responsesReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal responses api request: %w", err)
 	}
@@ -81,7 +81,7 @@ func (o *ResponseOutbound) TransformResponse(ctx context.Context, response *http
 		var errResp struct {
 			Error model.ErrorDetail `json:"error"`
 		}
-		if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
+		if err := transformer.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
 			return nil, &model.ResponseError{
 				StatusCode: response.StatusCode,
 				Detail:     errResp.Error,
@@ -91,7 +91,7 @@ func (o *ResponseOutbound) TransformResponse(ctx context.Context, response *http
 	}
 
 	var resp ResponsesResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
+	if err := transformer.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal responses api response: %w", err)
 	}
 
@@ -118,7 +118,7 @@ func (o *ResponseOutbound) TransformStream(ctx context.Context, eventData []byte
 
 	// Parse the streaming event
 	var streamEvent ResponsesStreamEvent
-	if err := json.Unmarshal(eventData, &streamEvent); err != nil {
+	if err := transformer.Unmarshal(eventData, &streamEvent); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal stream event: %w", err)
 	}
 
@@ -171,7 +171,12 @@ func (o *ResponseOutbound) TransformStream(ctx context.Context, eventData []byte
 							ID:    streamEvent.CallID,
 							Type:  "function",
 							Function: model.FunctionCall{
-								Name: func() string { if streamEvent.Name != "" { return streamEvent.Name }; return "" }(),
+								Name: func() string {
+									if streamEvent.Name != "" {
+										return streamEvent.Name
+									}
+									return ""
+								}(),
 								Arguments: streamEvent.Delta,
 							},
 						},
@@ -282,19 +287,19 @@ type ResponsesInput struct {
 
 func (i ResponsesInput) MarshalJSON() ([]byte, error) {
 	if i.Text != nil {
-		return json.Marshal(i.Text)
+		return transformer.Marshal(i.Text)
 	}
-	return json.Marshal(i.Items)
+	return transformer.Marshal(i.Items)
 }
 
 func (i *ResponsesInput) UnmarshalJSON(data []byte) error {
 	var text string
-	if err := json.Unmarshal(data, &text); err == nil {
+	if err := transformer.Unmarshal(data, &text); err == nil {
 		i.Text = &text
 		return nil
 	}
 	var items []ResponsesItem
-	if err := json.Unmarshal(data, &items); err == nil {
+	if err := transformer.Unmarshal(data, &items); err == nil {
 		i.Items = items
 		return nil
 	}
@@ -370,11 +375,11 @@ type ResponsesToolChoice struct {
 func (t ResponsesToolChoice) MarshalJSON() ([]byte, error) {
 	// If only Mode is set and it's a simple mode like "auto", "none", "required"
 	if t.Mode != nil && t.Type == nil && t.Name == nil {
-		return json.Marshal(*t.Mode)
+		return transformer.Marshal(*t.Mode)
 	}
 	// Otherwise, serialize as an object
 	type Alias ResponsesToolChoice
-	return json.Marshal(Alias(t))
+	return transformer.Marshal(Alias(t))
 }
 
 type ResponsesTextOptions struct {
@@ -383,9 +388,9 @@ type ResponsesTextOptions struct {
 }
 
 type ResponsesTextFormat struct {
-	Type   string          `json:"type,omitempty"`
-	Name   string          `json:"name,omitempty"`
-	Schema json.RawMessage `json:"schema,omitempty"`
+	Type   string                 `json:"type,omitempty"`
+	Name   string                 `json:"name,omitempty"`
+	Schema transformer.RawMessage `json:"schema,omitempty"`
 }
 
 type ResponsesReasoning struct {
@@ -674,7 +679,7 @@ func convertToolsToResponses(tools []model.Tool) []ResponsesTool {
 			}
 			if len(tool.Function.Parameters) > 0 {
 				var params map[string]any
-				if err := json.Unmarshal(tool.Function.Parameters, &params); err == nil {
+				if err := transformer.Unmarshal(tool.Function.Parameters, &params); err == nil {
 					rt.Parameters = params
 				}
 			}

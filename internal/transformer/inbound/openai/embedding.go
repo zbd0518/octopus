@@ -2,8 +2,8 @@ package openai
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/lingyuins/octopus/internal/transformer"
 
 	"github.com/lingyuins/octopus/internal/transformer/model"
 )
@@ -34,7 +34,7 @@ type OpenAIEmbeddingResponse struct {
 
 func (i *EmbeddingInbound) TransformRequest(ctx context.Context, body []byte) (*model.InternalLLMRequest, error) {
 	var openAIReq OpenAIEmbeddingRequest
-	if err := json.Unmarshal(body, &openAIReq); err != nil {
+	if err := transformer.Unmarshal(body, &openAIReq); err != nil {
 		return nil, err
 	}
 
@@ -64,7 +64,7 @@ func (i *EmbeddingInbound) TransformResponse(ctx context.Context, response *mode
 		Usage:   response.Usage,
 	}
 
-	body, err := json.Marshal(openAIResp)
+	body, err := transformer.Marshal(openAIResp)
 	if err != nil {
 		return nil, err
 	}

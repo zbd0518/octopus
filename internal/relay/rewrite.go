@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"encoding/json"
 	"fmt"
 
 	appmodel "github.com/lingyuins/octopus/internal/model"
@@ -49,33 +48,33 @@ func applyParamOverride(channel *appmodel.Channel, request *transmodel.InternalL
 		return
 	}
 
-	var overrides map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(*channel.ParamOverride), &overrides); err != nil {
+	var overrides map[string]RawMessage
+	if err := jsonAPI.Unmarshal([]byte(*channel.ParamOverride), &overrides); err != nil {
 		log.Warnf("param_override: invalid JSON for channel %d: %v", channel.ID, err)
 		return
 	}
 
 	if v, ok := overrides["max_tokens"]; ok && request.MaxTokens == nil {
 		var val int64
-		if err := json.Unmarshal(v, &val); err == nil {
+		if err := jsonAPI.Unmarshal(v, &val); err == nil {
 			request.MaxTokens = &val
 		}
 	}
 	if v, ok := overrides["max_completion_tokens"]; ok && request.MaxCompletionTokens == nil {
 		var val int64
-		if err := json.Unmarshal(v, &val); err == nil {
+		if err := jsonAPI.Unmarshal(v, &val); err == nil {
 			request.MaxCompletionTokens = &val
 		}
 	}
 	if v, ok := overrides["temperature"]; ok && request.Temperature == nil {
 		var val float64
-		if err := json.Unmarshal(v, &val); err == nil {
+		if err := jsonAPI.Unmarshal(v, &val); err == nil {
 			request.Temperature = &val
 		}
 	}
 	if v, ok := overrides["top_p"]; ok && request.TopP == nil {
 		var val float64
-		if err := json.Unmarshal(v, &val); err == nil {
+		if err := jsonAPI.Unmarshal(v, &val); err == nil {
 			request.TopP = &val
 		}
 	}

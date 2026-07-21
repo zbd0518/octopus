@@ -10,7 +10,7 @@ import type { StatsMetricsFormatted } from '@/api/endpoints/stats';
 
 import { LoadingState } from '@/components/common/LoadingState';
 import { ErrorState } from '@/components/common/ErrorState';
-import { Radio, RefreshCw, Clock3, Layers, CheckSquare, X } from 'lucide-react';
+import { Radio, RefreshCw, Clock3, Layers, CheckSquare, X, FolderTree } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/common/Toast';
@@ -23,7 +23,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
-import { getChannelGroupDisplayName } from './GroupManager';
+import { getChannelGroupDisplayName, ChannelGroupManagerDialog } from './GroupManager';
 
 type ChannelListItem = {
     raw: ChannelModel;
@@ -193,45 +193,47 @@ export function Channel() {
     return (
         <section className="relative flex h-full min-h-0 flex-col overflow-y-auto overscroll-contain rounded-t-xl pb-3 md:pb-4" aria-label={pageKey}>
             <div className="relative flex flex-col gap-4 rounded-xl border border-border bg-card p-3 text-card-foreground md:p-4">
-                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2 rounded-lg border-border/30 bg-card px-3 py-2 text-xs text-muted-foreground sm:text-sm">
                         <Clock3 className="h-4 w-4 text-primary" />
                         <span className="truncate">{settingT('llmSync.lastSync')}: {formatLastSyncTime(lastSyncTime)}</span>
                     </div>
-                    {selectionMode ? (
+                    <div className="flex items-center gap-2">
+                        {selectionMode ? (
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={exitSelectionMode}
+                                className="h-9 gap-1.5 px-3 text-xs sm:text-sm"
+                            >
+                                <X className="h-4 w-4" />
+                                <span className="hidden sm:inline">{t('batchGroup.exit')}</span>
+                            </Button>
+                        ) : (
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setSelectionMode(true)}
+                                className="h-9 gap-1.5 px-3 text-xs text-destructive hover:text-destructive sm:text-sm"
+                            >
+                                <CheckSquare className="h-4 w-4" />
+                                <span className="hidden sm:inline">{t('batchGroup.enter')}</span>
+                            </Button>
+                        )}
                         <Button
                             type="button"
-                            variant="outline"
+                            variant="ghost"
                             size="sm"
-                            onClick={exitSelectionMode}
-                            className="h-10 rounded-lg border-border/30 bg-card px-3.5"
+                            onClick={handleManualSync}
+                            disabled={syncChannel.isPending}
+                            className="h-9 gap-1.5 px-3 text-xs text-primary hover:text-primary sm:text-sm"
                         >
-                            <X className="mr-2 h-4 w-4" />
-                            {t('batchGroup.exit')}
+                            <RefreshCw className={`h-4 w-4 ${syncChannel.isPending ? 'animate-spin' : ''}`} />
+                            <span className="hidden sm:inline">{syncChannel.isPending ? settingT('llmSync.manualSync.syncing') : settingT('llmSync.manualSync.button')}</span>
                         </Button>
-                    ) : (
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setSelectionMode(true)}
-                            className="h-10 rounded-lg border-border/30 bg-card px-3.5"
-                        >
-                            <CheckSquare className="mr-2 h-4 w-4" />
-                            {t('batchGroup.enter')}
-                        </Button>
-                    )}
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={handleManualSync}
-                        disabled={syncChannel.isPending}
-                        className="h-10 rounded-lg border-border/30 bg-card px-3.5"
-                    >
-                        <RefreshCw className={`mr-2 h-4 w-4 ${syncChannel.isPending ? 'animate-spin' : ''}`} />
-                        {syncChannel.isPending ? settingT('llmSync.manualSync.syncing') : settingT('llmSync.manualSync.button')}
-                    </Button>
+                    </div>
                 </div>
 
                 {selectionMode ? (
@@ -283,7 +285,11 @@ export function Channel() {
                         <section className="rounded-xl border border-border/30 bg-card/70 p-3 md:p-4">
                             {activeGroup ? (
                                 <header className="mb-3 flex flex-wrap items-center gap-2">
-                                    <h3 className="text-sm font-semibold text-card-foreground">
+                                    <ChannelGroupManagerDialog className={cn(
+                                        "inline-flex items-center gap-1.5 text-sm font-semibold text-card-foreground hover:text-primary transition-colors sm:hidden",
+                                        "p-0 border-0 shadow-none bg-transparent hover:bg-transparent"
+                                    )} />
+                                    <h3 className="hidden text-sm font-semibold text-card-foreground sm:block">
                                         {getChannelGroupDisplayName(activeGroup, defaultGroupName)}
                                     </h3>
                                     {activeGroup.is_default ? (

@@ -11,8 +11,8 @@ package cloudflare
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/lingyuins/octopus/internal/transformer"
 	"io"
 	"net/http"
 	"strings"
@@ -48,7 +48,7 @@ func (o *ChatOutbound) TransformRequest(ctx context.Context, request *transforme
 	// stream_options 是 OpenAI 特有字段，Cloudflare 不识别，清掉避免干扰。
 	compatRequest.StreamOptions = nil
 
-	body, err := json.Marshal(compatRequest)
+	body, err := transformer.Marshal(compatRequest)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
@@ -57,12 +57,12 @@ func (o *ChatOutbound) TransformRequest(ctx context.Context, request *transforme
 	// InternalLLMRequest.Model 没有 omitempty，直接序列化会得到 "model":""，导致 Workers AI
 	// 的 anyOf 输入格式动态检测失败（messages/prompt/input 均不匹配，oneOf 0 matches），
 	// 因此需要从 body 中剔除 model 键。
-	var bodyMap map[string]json.RawMessage
-	if err := json.Unmarshal(body, &bodyMap); err != nil {
+	var bodyMap map[string]transformer.RawMessage
+	if err := transformer.Unmarshal(body, &bodyMap); err != nil {
 		return nil, fmt.Errorf("failed to decode request body: %w", err)
 	}
 	delete(bodyMap, "model")
-	if body, err = json.Marshal(bodyMap); err != nil {
+	if body, err = transformer.Marshal(bodyMap); err != nil {
 		return nil, fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
@@ -108,7 +108,7 @@ func (o *ChatOutbound) TransformResponse(ctx context.Context, response *http.Res
 
 	if response.StatusCode >= 400 {
 		var errResp cloudflareResponse
-		if err := json.Unmarshal(body, &errResp); err == nil && len(errResp.Errors) > 0 && errResp.Errors[0].Message != "" {
+		if err := transformer.Unmarshal(body, &errResp); err == nil && len(errResp.Errors) > 0 && errResp.Errors[0].Message != "" {
 			return nil, &transformermodel.ResponseError{
 				StatusCode: response.StatusCode,
 				Detail:     transformermodel.ErrorDetail{Message: errResp.Errors[0].Message},
@@ -118,7 +118,7 @@ func (o *ChatOutbound) TransformResponse(ctx context.Context, response *http.Res
 	}
 
 	var cfResp cloudflareResponse
-	if err := json.Unmarshal(body, &cfResp); err != nil {
+	if err := transformer.Unmarshal(body, &cfResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
@@ -148,14 +148,14 @@ func (o *ChatOutbound) TransformStream(ctx context.Context, eventData []byte) (*
 	var errCheck struct {
 		Error *transformermodel.ErrorDetail `json:"error"`
 	}
-	if err := json.Unmarshal(eventData, &errCheck); err == nil && errCheck.Error != nil {
+	if err := transformer.Unmarshal(eventData, &errCheck); err == nil && errCheck.Error != nil {
 		return nil, &transformermodel.ResponseError{Detail: *errCheck.Error}
 	}
 
 	var chunk struct {
 		Response string `json:"response"`
 	}
-	if err := json.Unmarshal(eventData, &chunk); err != nil {
+	if err := transformer.Unmarshal(eventData, &chunk); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal stream chunk: %w", err)
 	}
 

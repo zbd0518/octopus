@@ -1,7 +1,6 @@
 package balancer
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -43,7 +42,7 @@ var globalKeySpeed sync.Map // key: string -> *keySpeedEntry
 
 // speedKey 构造存储 key，与 cooldownKey / availabilityKey 格式一致。
 func speedKey(channelID, keyID int, modelName string) string {
-	return fmt.Sprintf("%d:%d:%s", channelID, keyID, strings.TrimSpace(modelName))
+	return buildKey3(channelID, keyID, strings.TrimSpace(modelName))
 }
 
 // getOrCreateSpeedEntry 读取或创建条目（初始 avgTPS=0，表示无数据）。
@@ -138,7 +137,7 @@ func PurgeStaleKeySpeed(maxAge time.Duration) int {
 // RemoveChannelKeySpeed 删除指定渠道的所有速度条目。
 // 在渠道被删除时调用，注册于 OnChannelDeletedHooks。
 func RemoveChannelKeySpeed(channelID int) {
-	prefix := fmt.Sprintf("%d:", channelID)
+	prefix := buildKeyPrefix(channelID)
 	globalKeySpeed.Range(func(key, _ any) bool {
 		if k, ok := key.(string); ok && strings.HasPrefix(k, prefix) {
 			globalKeySpeed.Delete(key)
@@ -153,7 +152,7 @@ func RemoveKeySpeed(keyID int) {
 	if keyID == 0 {
 		return
 	}
-	needle := fmt.Sprintf(":%d:", keyID)
+	needle := buildKeyNeedle(keyID)
 	globalKeySpeed.Range(func(key, _ any) bool {
 		k, ok := key.(string)
 		if !ok {

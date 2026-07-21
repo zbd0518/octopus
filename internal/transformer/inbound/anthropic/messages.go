@@ -2,8 +2,8 @@ package anthropic
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/lingyuins/octopus/internal/transformer"
 
 	"github.com/lingyuins/octopus/internal/transformer/model"
 	"github.com/lingyuins/octopus/internal/utils/log"
@@ -35,7 +35,7 @@ type MessagesInbound struct {
 
 func (i *MessagesInbound) TransformRequest(ctx context.Context, body []byte) (*model.InternalLLMRequest, error) {
 	var anthropicReq MessageRequest
-	if err := json.Unmarshal(body, &anthropicReq); err != nil {
+	if err := transformer.Unmarshal(body, &anthropicReq); err != nil {
 		return nil, err
 	}
 	if anthropicReq.MaxTokens < 1 {
@@ -419,16 +419,16 @@ func (i *MessagesInbound) TransformResponse(ctx context.Context, response *model
 			// Handle tool calls
 			if len(message.ToolCalls) > 0 {
 				for _, toolCall := range message.ToolCalls {
-					var input json.RawMessage
+					var input transformer.RawMessage
 					if toolCall.Function.Arguments != "" {
 						// Attempt to use the provided arguments; repair if invalid, fallback to {}
-						if json.Valid([]byte(toolCall.Function.Arguments)) {
-							input = json.RawMessage(toolCall.Function.Arguments)
+						if transformer.Valid([]byte(toolCall.Function.Arguments)) {
+							input = transformer.RawMessage(toolCall.Function.Arguments)
 						} else {
-							input = json.RawMessage("{}")
+							input = transformer.RawMessage("{}")
 						}
 					} else {
-						input = json.RawMessage("{}")
+						input = transformer.RawMessage("{}")
 					}
 
 					contentBlocks = append(contentBlocks, MessageContentBlock{
@@ -474,7 +474,7 @@ func (i *MessagesInbound) TransformResponse(ctx context.Context, response *model
 		resp.Usage = usage
 	}
 
-	return json.Marshal(resp)
+	return transformer.Marshal(resp)
 }
 
 func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.InternalLLMResponse) ([]byte, error) {
@@ -520,7 +520,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 			},
 		}
 
-		data, err := json.Marshal(startEvent)
+		data, err := transformer.Marshal(startEvent)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal message_start event: %w", err)
 		}
@@ -541,7 +541,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 					Type:  "content_block_stop",
 					Index: &i.contentIndex,
 				}
-				data, err := json.Marshal(stopEvent)
+				data, err := transformer.Marshal(stopEvent)
 				if err != nil {
 					return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
 				}
@@ -563,7 +563,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 						Signature: lo.ToPtr(""),
 					},
 				}
-				data, err := json.Marshal(startEvent)
+				data, err := transformer.Marshal(startEvent)
 				if err != nil {
 					return nil, fmt.Errorf("failed to marshal content_block_start event: %w", err)
 				}
@@ -579,7 +579,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 					Thinking: choice.Delta.ReasoningContent,
 				},
 			}
-			data, err := json.Marshal(deltaEvent)
+			data, err := transformer.Marshal(deltaEvent)
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal content_block_delta event: %w", err)
 			}
@@ -596,7 +596,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 					Signature: choice.Delta.ReasoningSignature,
 				},
 			}
-			data, err := json.Marshal(sigEvent)
+			data, err := transformer.Marshal(sigEvent)
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal signature_delta event: %w", err)
 			}
@@ -613,7 +613,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 					Type:  "content_block_stop",
 					Index: &i.contentIndex,
 				}
-				data, err := json.Marshal(stopEvent)
+				data, err := transformer.Marshal(stopEvent)
 				if err != nil {
 					return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
 				}
@@ -630,7 +630,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 					Type:  "content_block_stop",
 					Index: &i.contentIndex,
 				}
-				data, err := json.Marshal(stopEvent)
+				data, err := transformer.Marshal(stopEvent)
 				if err != nil {
 					return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
 				}
@@ -651,7 +651,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 						Text: lo.ToPtr(""),
 					},
 				}
-				data, err := json.Marshal(startEvent)
+				data, err := transformer.Marshal(startEvent)
 				if err != nil {
 					return nil, fmt.Errorf("failed to marshal content_block_start event: %w", err)
 				}
@@ -667,7 +667,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 					Text: choice.Delta.Content.Content,
 				},
 			}
-			data, err := json.Marshal(deltaEvent)
+			data, err := transformer.Marshal(deltaEvent)
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal content_block_delta event: %w", err)
 			}
@@ -684,7 +684,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 					Type:  "content_block_stop",
 					Index: &i.contentIndex,
 				}
-				data, err := json.Marshal(stopEvent)
+				data, err := transformer.Marshal(stopEvent)
 				if err != nil {
 					return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
 				}
@@ -701,7 +701,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 					Type:  "content_block_stop",
 					Index: &i.contentIndex,
 				}
-				data, err := json.Marshal(stopEvent)
+				data, err := transformer.Marshal(stopEvent)
 				if err != nil {
 					return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
 				}
@@ -726,7 +726,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 							Type:  "content_block_stop",
 							Index: &i.contentIndex,
 						}
-						data, err := json.Marshal(stopEvent)
+						data, err := transformer.Marshal(stopEvent)
 						if err != nil {
 							return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
 						}
@@ -745,10 +745,10 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 							Type:  "tool_use",
 							ID:    deltaToolCall.ID,
 							Name:  &deltaToolCall.Function.Name,
-							Input: json.RawMessage("{}"),
+							Input: transformer.RawMessage("{}"),
 						},
 					}
-					data, err := json.Marshal(startEvent)
+					data, err := transformer.Marshal(startEvent)
 					if err != nil {
 						return nil, fmt.Errorf("failed to marshal content_block_start event: %w", err)
 					}
@@ -764,7 +764,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 								PartialJSON: &deltaToolCall.Function.Arguments,
 							},
 						}
-						data, err := json.Marshal(deltaEvent)
+						data, err := transformer.Marshal(deltaEvent)
 						if err != nil {
 							return nil, fmt.Errorf("failed to marshal content_block_delta event: %w", err)
 						}
@@ -780,7 +780,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 							PartialJSON: &deltaToolCall.Function.Arguments,
 						},
 					}
-					data, err := json.Marshal(deltaEvent)
+					data, err := transformer.Marshal(deltaEvent)
 					if err != nil {
 						return nil, fmt.Errorf("failed to marshal content_block_delta event: %w", err)
 					}
@@ -799,7 +799,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 					Type:  "content_block_stop",
 					Index: &i.contentIndex,
 				}
-				data, err := json.Marshal(stopEvent)
+				data, err := transformer.Marshal(stopEvent)
 				if err != nil {
 					return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
 				}
@@ -839,7 +839,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 
 		msgDeltaEvent.Usage = i.convertUsage(stream.Usage)
 
-		data, err := json.Marshal(msgDeltaEvent)
+		data, err := transformer.Marshal(msgDeltaEvent)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal message_delta event: %w", err)
 		}
@@ -849,7 +849,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 		msgStopEvent := StreamEvent{
 			Type: "message_stop",
 		}
-		data, err = json.Marshal(msgStopEvent)
+		data, err = transformer.Marshal(msgStopEvent)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal message_stop event: %w", err)
 		}

@@ -434,15 +434,22 @@ export function SettingAppearance() {
     const initialTimeZone = useRef(timeZone);
     const [localExchangeRate, setLocalExchangeRate] = useState(exchangeRate.toString());
     const initialExchangeRate = useRef(exchangeRate);
-
+    const [groupUpstreamMetaEnabled, setGroupUpstreamMetaEnabled] = useState(true);
+    const initialGroupUpstreamMetaEnabled = useRef(true);
     useEffect(() => {
         if (!settings) return;
         const alertNotifyLanguageSetting = settings.find((item) => item.key === SettingKey.AlertNotifyLanguage);
-        if (!alertNotifyLanguageSetting) return;
+        if (alertNotifyLanguageSetting) {
+            const nextValue = normalizeAlertNotifyLanguage(alertNotifyLanguageSetting.value);
+            queueMicrotask(() => setAlertNotifyLanguage(nextValue));
+            initialAlertNotifyLanguage.current = nextValue;
+        }
 
-        const nextValue = normalizeAlertNotifyLanguage(alertNotifyLanguageSetting.value);
-        queueMicrotask(() => setAlertNotifyLanguage(nextValue));
-        initialAlertNotifyLanguage.current = nextValue;
+        const groupMetaSetting = settings.find((item) => item.key === SettingKey.GroupUpstreamMetaDisplayEnabled);
+        // 缺省或非 false 都视为开启，保持默认打开。
+        const nextGroupMeta = groupMetaSetting?.value !== 'false';
+        queueMicrotask(() => setGroupUpstreamMetaEnabled(nextGroupMeta));
+        initialGroupUpstreamMetaEnabled.current = nextGroupMeta;
     }, [settings]);
 
     // 从服务端同步 stats_timezone：后端配置为准，覆盖 localStorage 默认值，保证多端一致。
@@ -493,6 +500,26 @@ export function SettingAppearance() {
                     toast.error(t('saveFailed'));
                 },
             }
+        );
+    };
+
+    const handleGroupUpstreamMetaEnabledChange = (checked: boolean) => {
+        setGroupUpstreamMetaEnabled(checked);
+        setSetting.mutate(
+            {
+                key: SettingKey.GroupUpstreamMetaDisplayEnabled,
+                value: checked ? 'true' : 'false',
+            },
+            {
+                onSuccess: () => {
+                    toast.success(t('saved'));
+                    initialGroupUpstreamMetaEnabled.current = checked;
+                },
+                onError: () => {
+                    setGroupUpstreamMetaEnabled(initialGroupUpstreamMetaEnabled.current);
+                    toast.error(t('saveFailed'));
+                },
+            },
         );
     };
 
@@ -651,10 +678,31 @@ export function SettingAppearance() {
                                         }
                                     }}
                                     className="w-48 rounded-xl"
-                                    placeholder="7.2"
                                 />
                             </div>
                         )}
+                    </div>
+
+                    {/* 分组上游渠道元信息展示 */}
+                    <div className="flex items-center justify-between gap-4 rounded-lg border border-primary/20 bg-gradient-to-br from-primary/5 to-transparent p-4 shadow-sm">
+                        <div className="flex min-w-0 items-center gap-3">
+                            <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/12">
+                                <Layers className="h-5 w-5 text-primary" />
+                            </div>
+                            <div className="min-w-0 space-y-0.5">
+                                <span className="text-sm font-semibold text-card-foreground">
+                                    {t('groupUpstreamMeta.label')}
+                                </span>
+                                <p className="text-xs text-muted-foreground">
+                                    {t('groupUpstreamMeta.description')}
+                                </p>
+                            </div>
+                        </div>
+                        <Switch
+                            checked={groupUpstreamMetaEnabled}
+                            onCheckedChange={handleGroupUpstreamMetaEnabledChange}
+                            aria-label={t('groupUpstreamMeta.label')}
+                        />
                     </div>
                     <div className="grid items-start gap-4 xl:grid-cols-2">
                         <div className="flex flex-col gap-4">

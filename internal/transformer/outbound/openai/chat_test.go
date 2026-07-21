@@ -2,7 +2,7 @@ package openai
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/lingyuins/octopus/internal/transformer"
 	"io"
 	"net/http"
 	"strings"
@@ -69,12 +69,12 @@ func TestChatOutboundTransformRequest_NormalizesOpenAICompatMessages(t *testing.
 
 	var got struct {
 		Messages []struct {
-			Role      string           `json:"role"`
-			Content   json.RawMessage  `json:"content"`
-			ToolCalls []model.ToolCall `json:"tool_calls,omitempty"`
+			Role      string                 `json:"role"`
+			Content   transformer.RawMessage `json:"content"`
+			ToolCalls []model.ToolCall       `json:"tool_calls,omitempty"`
 		} `json:"messages"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -133,10 +133,10 @@ func TestChatOutboundTransformRequest_PreservesMixedMultiPartContent(t *testing.
 
 	var got struct {
 		Messages []struct {
-			Content json.RawMessage `json:"content"`
+			Content transformer.RawMessage `json:"content"`
 		} `json:"messages"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -145,7 +145,7 @@ func TestChatOutboundTransformRequest_PreservesMixedMultiPartContent(t *testing.
 	}
 
 	var contentParts []map[string]any
-	if err := json.Unmarshal(got.Messages[0].Content, &contentParts); err != nil {
+	if err := transformer.Unmarshal(got.Messages[0].Content, &contentParts); err != nil {
 		t.Fatalf("expected mixed multipart content to stay as array, got error: %v", err)
 	}
 	if len(contentParts) != 2 {
@@ -197,7 +197,7 @@ func TestChatOutboundTransformRequest_PreservesReasoningContentForDeepSeekToolCo
 			ReasoningContent *string `json:"reasoning_content,omitempty"`
 		} `json:"messages"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -256,7 +256,7 @@ func TestChatOutboundTransformRequest_PreservesReasoningContentForMimoToolContin
 			ReasoningContent *string `json:"reasoning_content,omitempty"`
 		} `json:"messages"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -320,7 +320,7 @@ func TestChatOutboundTransformRequest_AttachesStandaloneDeepSeekReasoningToNextT
 			ToolCalls        []model.ToolCall `json:"tool_calls,omitempty"`
 		} `json:"messages"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -367,7 +367,7 @@ func TestChatOutboundTransformRequest_DropsTrailingStandaloneDeepSeekReasoning(t
 			ReasoningContent *string `json:"reasoning_content,omitempty"`
 		} `json:"messages"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -419,7 +419,7 @@ func TestChatOutboundTransformRequest_DropsStandaloneDeepSeekReasoningBeforeFina
 			ReasoningContent *string `json:"reasoning_content,omitempty"`
 		} `json:"messages"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -489,7 +489,7 @@ func TestChatOutboundTransformRequest_AttachesStandaloneDeepSeekReasoningAcrossA
 			ToolCalls        []model.ToolCall `json:"tool_calls,omitempty"`
 		} `json:"messages"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -540,7 +540,7 @@ func TestChatOutboundTransformRequest_PreservesReasoningContentForDeepSeekFollow
 			ReasoningContent *string `json:"reasoning_content,omitempty"`
 		} `json:"messages"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -604,7 +604,7 @@ func TestChatOutboundTransformRequest_PreservesReasoningContentForDeepSeekEndpoi
 			ReasoningContent *string `json:"reasoning_content,omitempty"`
 		} `json:"messages"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -649,7 +649,7 @@ func TestChatOutboundTransformRequest_PreservesReasoningContentForDeepSeekReason
 			ReasoningContent *string `json:"reasoning_content,omitempty"`
 		} `json:"messages"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -694,7 +694,7 @@ func TestChatOutboundTransformRequest_ClearsReasoningContentForGenericOpenAIComp
 			ReasoningContent *string `json:"reasoning_content,omitempty"`
 		} `json:"messages"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -751,7 +751,7 @@ func TestChatOutboundTransformRequest_NormalizesReasoningAliasForDeepSeekToolCon
 			Reasoning        *string `json:"reasoning,omitempty"`
 		} `json:"messages"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -802,7 +802,7 @@ func TestChatOutboundTransformRequest_ClearsReasoningAliasForGenericOpenAICompat
 			Reasoning *string `json:"reasoning,omitempty"`
 		} `json:"messages"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -846,7 +846,7 @@ func TestChatOutboundTransformRequest_OmitsNoneReasoningEffort(t *testing.T) {
 	var got struct {
 		ReasoningEffort *string `json:"reasoning_effort,omitempty"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -866,7 +866,7 @@ func TestChatOutboundTransformRequest_MapsDeepSeekThinkingControls(t *testing.T)
 		Model:           "DeepSeek-V4-Pro",
 		ReasoningEffort: "xhigh",
 		Store:           &stream,
-		ExtraBody:       json.RawMessage(`{"thinking":{"type":"enabled"},"foo":"bar"}`),
+		ExtraBody:       transformer.RawMessage(`{"thinking":{"type":"enabled"},"foo":"bar"}`),
 		Messages: []model.Message{
 			{
 				Role: "user",
@@ -891,7 +891,7 @@ func TestChatOutboundTransformRequest_MapsDeepSeekThinkingControls(t *testing.T)
 		ReasoningEffort string         `json:"reasoning_effort,omitempty"`
 		ExtraBody       map[string]any `json:"extra_body,omitempty"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -919,7 +919,7 @@ func TestChatOutboundTransformRequest_MapsMimoThinkingControls(t *testing.T) {
 		Model:           "mimo-v2.5-pro",
 		ReasoningEffort: "xhigh",
 		Store:           &stream,
-		ExtraBody:       json.RawMessage(`{"thinking":{"type":"enabled"},"foo":"bar"}`),
+		ExtraBody:       transformer.RawMessage(`{"thinking":{"type":"enabled"},"foo":"bar"}`),
 		Messages: []model.Message{
 			{
 				Role: "user",
@@ -944,7 +944,7 @@ func TestChatOutboundTransformRequest_MapsMimoThinkingControls(t *testing.T) {
 		ReasoningEffort string         `json:"reasoning_effort,omitempty"`
 		ExtraBody       map[string]any `json:"extra_body,omitempty"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -991,7 +991,7 @@ func TestChatOutboundTransformRequest_SetsDefaultMimoMaxCompletionTokens(t *test
 		MaxCompletionTokens *int64 `json:"max_completion_tokens,omitempty"`
 		MaxTokens           *int64 `json:"max_tokens,omitempty"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -1031,7 +1031,7 @@ func TestChatOutboundTransformRequest_RaisesSmallMimoMaxTokens(t *testing.T) {
 		MaxCompletionTokens *int64 `json:"max_completion_tokens,omitempty"`
 		MaxTokens           *int64 `json:"max_tokens,omitempty"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -1084,7 +1084,7 @@ func TestChatOutboundTransformRequest_DisablesDeepSeekThinkingWhenReasoningEffor
 			} `json:"thinking"`
 		} `json:"extra_body,omitempty"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -1137,7 +1137,7 @@ func TestChatOutboundTransformRequest_DisablesMimoThinkingWhenReasoningEffortNon
 			} `json:"thinking"`
 		} `json:"extra_body,omitempty"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -1157,7 +1157,7 @@ func TestChatOutboundTransformRequest_DeepSeekThinkingDisabledOverridesReasoning
 		Model:           "deepseek-v4-pro",
 		ReasoningEffort: "high",
 		Store:           &stream,
-		ExtraBody:       json.RawMessage(`{"thinking":{"type":"disabled"}}`),
+		ExtraBody:       transformer.RawMessage(`{"thinking":{"type":"disabled"}}`),
 		Messages: []model.Message{
 			{
 				Role: "user",
@@ -1186,7 +1186,7 @@ func TestChatOutboundTransformRequest_DeepSeekThinkingDisabledOverridesReasoning
 			} `json:"thinking"`
 		} `json:"extra_body,omitempty"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
@@ -1198,11 +1198,11 @@ func TestChatOutboundTransformRequest_DeepSeekThinkingDisabledOverridesReasoning
 	}
 }
 
-func assertJSONEncodedString(t *testing.T, raw json.RawMessage, want string) {
+func assertJSONEncodedString(t *testing.T, raw transformer.RawMessage, want string) {
 	t.Helper()
 
 	var got string
-	if err := json.Unmarshal(raw, &got); err != nil {
+	if err := transformer.Unmarshal(raw, &got); err != nil {
 		t.Fatalf("expected JSON string %q, got %s (err=%v)", want, string(raw), err)
 	}
 	if got != want {
@@ -1296,7 +1296,7 @@ func TestChatOutboundTransformRequest_MimoPreservesReasoningContentForHistorical
 			ToolCalls        []model.ToolCall `json:"tool_calls,omitempty"`
 		} `json:"messages"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
+	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 

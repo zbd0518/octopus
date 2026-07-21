@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -29,8 +28,8 @@ func populateRelayRequestSessionFields(c *gin.Context, req *transmodel.InternalL
 		req.ResumeFromEventID = parseRelayEventSequence(c.Query("resume_from_sequence"))
 	}
 
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(body, &raw); err != nil {
+	var raw map[string]RawMessage
+	if err := jsonAPI.Unmarshal(body, &raw); err != nil {
 		return
 	}
 
@@ -45,32 +44,32 @@ func populateRelayRequestSessionFields(c *gin.Context, req *transmodel.InternalL
 	}
 }
 
-func parseRelayRawStringField(raw map[string]json.RawMessage, field string) string {
+func parseRelayRawStringField(raw map[string]RawMessage, field string) string {
 	value, ok := raw[field]
 	if !ok || len(value) == 0 {
 		return ""
 	}
 
 	var s string
-	if err := json.Unmarshal(value, &s); err == nil {
+	if err := jsonAPI.Unmarshal(value, &s); err == nil {
 		return strings.TrimSpace(s)
 	}
 	return ""
 }
 
-func parseRelayRawIntField(raw map[string]json.RawMessage, field string) int64 {
+func parseRelayRawIntField(raw map[string]RawMessage, field string) int64 {
 	value, ok := raw[field]
 	if !ok || len(value) == 0 {
 		return 0
 	}
 
 	var n int64
-	if err := json.Unmarshal(value, &n); err == nil && n > 0 {
+	if err := jsonAPI.Unmarshal(value, &n); err == nil && n > 0 {
 		return n
 	}
 
 	var s string
-	if err := json.Unmarshal(value, &s); err == nil {
+	if err := jsonAPI.Unmarshal(value, &s); err == nil {
 		return parseRelayEventSequence(s)
 	}
 	return 0
@@ -129,7 +128,7 @@ func normalizeRelayRequestHashBody(rawRequest []byte) []byte {
 	}
 
 	var payload any
-	if err := json.Unmarshal(rawRequest, &payload); err != nil {
+	if err := jsonAPI.Unmarshal(rawRequest, &payload); err != nil {
 		return rawRequest
 	}
 
@@ -142,7 +141,7 @@ func normalizeRelayRequestHashBody(rawRequest []byte) []byte {
 	delete(root, "last_event_id")
 	delete(root, "resume_from_sequence")
 
-	normalized, err := json.Marshal(root)
+	normalized, err := jsonAPI.Marshal(root)
 	if err != nil {
 		return rawRequest
 	}

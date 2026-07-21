@@ -3,8 +3,8 @@ package mimo
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/lingyuins/octopus/internal/transformer"
 	"net/http"
 	"net/url"
 
@@ -37,7 +37,7 @@ func (o *ChatOutbound) TransformRequest(ctx context.Context, request *transforme
 		}
 	}
 
-	body, err := json.Marshal(compatRequest)
+	body, err := transformer.Marshal(compatRequest)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}

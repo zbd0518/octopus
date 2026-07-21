@@ -3,8 +3,8 @@ package volcengine
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/lingyuins/octopus/internal/transformer"
 	"net/http"
 	"net/url"
 	"strings"
@@ -46,7 +46,7 @@ func (o *ResponseOutbound) TransformRequest(ctx context.Context, request *model.
 	default:
 	}
 
-	body, err := json.Marshal(responsesReq)
+	body, err := transformer.Marshal(responsesReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal responses api request: %w", err)
 	}
@@ -106,19 +106,19 @@ type ResponsesInput struct {
 
 func (i ResponsesInput) MarshalJSON() ([]byte, error) {
 	if i.Text != nil {
-		return json.Marshal(i.Text)
+		return transformer.Marshal(i.Text)
 	}
-	return json.Marshal(i.Items)
+	return transformer.Marshal(i.Items)
 }
 
 func (i *ResponsesInput) UnmarshalJSON(data []byte) error {
 	var text string
-	if err := json.Unmarshal(data, &text); err == nil {
+	if err := transformer.Unmarshal(data, &text); err == nil {
 		i.Text = &text
 		return nil
 	}
 	var items []ResponsesItem
-	if err := json.Unmarshal(data, &items); err == nil {
+	if err := transformer.Unmarshal(data, &items); err == nil {
 		i.Items = items
 		return nil
 	}

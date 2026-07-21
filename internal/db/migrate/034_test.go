@@ -2,151 +2,143 @@ package migrate
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/glebarez/sqlite"
-	"github.com/lingyuins/octopus/internal/model"
 	"gorm.io/gorm"
 )
 
-func TestMigrateSiteModelNameKeyBackfillAndIndex(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "site-model-key.db")
+// newNavSettingsDB 建一张仅含 settings(key,value) 的最小库，模拟存量 settings 行。
+func newNavSettingsDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "nav.db")
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
+		t.Fatalf("open sqlite db: %v", err)
 	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		t.Fatalf("sql db: %v", err)
+	t.Cleanup(func() {
+		if sqlDB, err := db.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	if err := db.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`).Error; err != nil {
+		t.Fatalf("create settings table: %v", err)
 	}
-	defer sqlDB.Close()
+	return db
+}
 
-	// 模拟旧表：唯一索引在 (site_account_id, group_key, model_name)，无 model_name_key。
-	if err := db.Exec(`
-CREATE TABLE site_models (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  site_account_id INTEGER NOT NULL,
-  group_key TEXT NOT NULL DEFAULT 'default',
-  model_name TEXT NOT NULL,
-  source TEXT,
-  route_type TEXT NOT NULL DEFAULT 'openai_chat',
-  route_source TEXT NOT NULL DEFAULT 'sync_inferred',
-  manual_override INTEGER DEFAULT 0,
-  route_raw_payload TEXT,
-  route_updated_at DATETIME,
-  disabled INTEGER DEFAULT 0
-)`).Error; err != nil {
-		t.Fatalf("create legacy table: %v", err)
+func navValue(t *testing.T, db *gorm.DB, key string) string {
+	t.Helper()
+	var value string
+	if err := db.Raw(`SELECT value FROM settings WHERE key = ?`, key).Scan(&value).Error; err != nil {
+		t.Fatalf("read %s: %v", key, err)
 	}
-	if err := db.Exec(`CREATE UNIQUE INDEX idx_site_account_group_model ON site_models(site_account_id, group_key, model_name)`).Error; err != nil {
-		t.Fatalf("create legacy unique index: %v", err)
-	}
-	if err := db.Exec(`INSERT INTO site_models (site_account_id, group_key, model_name, source) VALUES (1, 'default', 'GLM-5.2', 'sync')`).Error; err != nil {
-		t.Fatalf("insert legacy row: %v", err)
-	}
+	return value
+}
 
-	if err := migrateSiteModelNameKey(db); err != nil {
-		t.Fatalf("migrateSiteModelNameKey: %v", err)
+// 存量行含 "alert" 时，迁移应将其替换为 "notification"，保序且无残留 "alert"。
+func TestMigrateNavAlertToNotification_RenamesAlert(t *testing.T) {
+	db := newNavSettingsDB(t)
+	legacy := `["home","hub","channel","group","model","analytics","log","alert","ops","apikey","setting","user"]`
+	for _, key := range []string{"nav_order", "nav_visible"} {
+		if err := db.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)`, key, legacy).Error; err != nil {
+			t.Fatalf("insert %s: %v", key, err)
+		}
 	}
 
-	if !db.Migrator().HasColumn(&model.SiteModel{}, "ModelNameKey") {
-		t.Fatal("expected model_name_key column")
-	}
-	if db.Migrator().HasIndex(&model.SiteModel{}, "idx_site_account_group_model") {
-		t.Fatal("legacy unique index should be dropped")
-	}
-	if !db.Migrator().HasIndex(&model.SiteModel{}, "idx_site_account_group_model_key") {
-		t.Fatal("expected new unique index idx_site_account_group_model_key")
+	if err := migrateNavAlertToNotification(db); err != nil {
+		t.Fatalf("migrateNavAlertToNotification: %v", err)
 	}
 
-	var row model.SiteModel
-	if err := db.First(&row, "site_account_id = ?", 1).Error; err != nil {
-		t.Fatalf("load row: %v", err)
-	}
-	want := model.SiteModelNameKey("GLM-5.2")
-	if row.ModelNameKey != want {
-		t.Fatalf("backfill key = %q, want %q", row.ModelNameKey, want)
-	}
-
-	// 同组大小写变体应可并存
-	variant := model.SiteModel{
-		SiteAccountID: 1,
-		GroupKey:      model.SiteDefaultGroupKey,
-		ModelName:     "glm-5.2",
-		Source:        "sync",
-		RouteType:     model.SiteModelRouteTypeOpenAIChat,
-		RouteSource:   model.SiteModelRouteSourceSyncInferred,
-	}
-	variant.EnsureModelNameKey()
-	if err := db.Create(&variant).Error; err != nil {
-		t.Fatalf("insert case variant should succeed after migration: %v", err)
-	}
-
-	// 幂等
-	if err := migrateSiteModelNameKey(db); err != nil {
-		t.Fatalf("second migrateSiteModelNameKey: %v", err)
+	want := `["home","hub","channel","group","model","analytics","log","notification","ops","apikey","setting","user"]`
+	for _, key := range []string{"nav_order", "nav_visible"} {
+		if got := navValue(t, db, key); got != want {
+			t.Fatalf("%s = %s, want %s", key, got, want)
+		}
 	}
 }
 
-// TestMigrateSiteModelNameKeyCreatesNewIndexBeforeDroppingOld 验证「先建新索引再删旧索引」：
-// 中途若只完成 CreateIndex 再失败，重试仍可幂等；最终旧索引消失、新索引存在。
-// MySQL 上旧复合唯一索引常被 FK 当作 site_account_id 的索引；先删后建会 Error 1553。
-func TestMigrateSiteModelNameKeyCreatesNewIndexBeforeDroppingOld(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "site-model-key-order.db")
+// 行同时含 "alert" 与 "notification" 时，应去重为单个 "notification"（占 alert 原位）。
+func TestMigrateNavAlertToNotification_DedupesWhenBothPresent(t *testing.T) {
+	db := newNavSettingsDB(t)
+	both := `["home","log","alert","notification","ops","setting"]`
+	if err := db.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)`, "nav_order", both).Error; err != nil {
+		t.Fatalf("insert nav_order: %v", err)
+	}
+
+	if err := migrateNavAlertToNotification(db); err != nil {
+		t.Fatalf("migrateNavAlertToNotification: %v", err)
+	}
+
+	want := `["home","log","notification","ops","setting"]`
+	if got := navValue(t, db, "nav_order"); got != want {
+		t.Fatalf("nav_order = %s, want %s", got, want)
+	}
+}
+
+// 行不含 "alert" 时迁移为 no-op；连续两次运行结果稳定（幂等）。
+func TestMigrateNavAlertToNotification_NoAlertUnchanged(t *testing.T) {
+	db := newNavSettingsDB(t)
+	clean := `["home","log","notification","ops","setting"]`
+	if err := db.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)`, "nav_visible", clean).Error; err != nil {
+		t.Fatalf("insert nav_visible: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		if err := migrateNavAlertToNotification(db); err != nil {
+			t.Fatalf("run %d: %v", i, err)
+		}
+		if got := navValue(t, db, "nav_visible"); got != clean {
+			t.Fatalf("run %d nav_visible = %s, want unchanged %s", i, got, clean)
+		}
+	}
+}
+
+// settings 表存在但无相关行时，迁移不应报错。
+func TestMigrateNavAlertToNotification_MissingRowsNoError(t *testing.T) {
+	db := newNavSettingsDB(t)
+	if err := migrateNavAlertToNotification(db); err != nil {
+		t.Fatalf("migrateNavAlertToNotification on empty table: %v", err)
+	}
+}
+
+// settings 表不存在时（极早期库），迁移应安全跳过。
+func TestMigrateNavAlertToNotification_NoSettingsTable(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "nosettings.db")
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
+		t.Fatalf("open sqlite db: %v", err)
 	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		t.Fatalf("sql db: %v", err)
+	defer func() {
+		if sqlDB, err := db.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+	}()
+	if err := migrateNavAlertToNotification(db); err != nil {
+		t.Fatalf("migrateNavAlertToNotification without settings table: %v", err)
 	}
-	defer sqlDB.Close()
+}
 
-	if err := db.Exec(`
-CREATE TABLE site_models (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  site_account_id INTEGER NOT NULL,
-  group_key TEXT NOT NULL DEFAULT 'default',
-  model_name TEXT NOT NULL,
-  model_name_key TEXT NOT NULL DEFAULT '',
-  source TEXT,
-  route_type TEXT NOT NULL DEFAULT 'openai_chat',
-  route_source TEXT NOT NULL DEFAULT 'sync_inferred',
-  manual_override INTEGER DEFAULT 0,
-  route_raw_payload TEXT,
-  route_updated_at DATETIME,
-  disabled INTEGER DEFAULT 0
-)`).Error; err != nil {
-		t.Fatalf("create table: %v", err)
+// renameNavItem 单元用例：覆盖替换、去重、无变更、空输入。
+func TestRenameNavItem(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{name: "replace preserves position", in: []string{"a", "alert", "b"}, want: []string{"a", "notification", "b"}},
+		{name: "dedupe when both present", in: []string{"alert", "notification"}, want: []string{"notification"}},
+		{name: "no alert returns nil", in: []string{"home", "notification"}, want: nil},
+		{name: "empty returns nil", in: []string{}, want: nil},
+		{name: "duplicate alert collapses", in: []string{"alert", "x", "alert"}, want: []string{"notification", "x"}},
 	}
-	if err := db.Exec(`CREATE UNIQUE INDEX idx_site_account_group_model ON site_models(site_account_id, group_key, model_name)`).Error; err != nil {
-		t.Fatalf("create old unique: %v", err)
-	}
-	if err := db.Exec(`INSERT INTO site_models (site_account_id, group_key, model_name, model_name_key, source)
-VALUES (1, 'default', 'GLM-5.2', '', 'sync')`).Error; err != nil {
-		t.Fatalf("insert: %v", err)
-	}
-
-	// 模拟「新索引已存在、旧索引仍在」的中间态（MySQL 先建后删的安全态 / 重试态）
-	if err := db.Exec(`CREATE UNIQUE INDEX idx_site_account_group_model_key ON site_models(site_account_id, group_key, model_name_key)`).Error; err != nil {
-		t.Fatalf("precreate new unique: %v", err)
-	}
-
-	if err := migrateSiteModelNameKey(db); err != nil {
-		t.Fatalf("migrate from intermediate state: %v", err)
-	}
-	if db.Migrator().HasIndex(&model.SiteModel{}, "idx_site_account_group_model") {
-		t.Fatal("old unique index should be dropped even when new index already exists")
-	}
-	if !db.Migrator().HasIndex(&model.SiteModel{}, "idx_site_account_group_model_key") {
-		t.Fatal("new unique index must remain")
-	}
-	var key string
-	if err := db.Raw(`SELECT model_name_key FROM site_models WHERE id = 1`).Scan(&key).Error; err != nil {
-		t.Fatalf("read key: %v", err)
-	}
-	if key != model.SiteModelNameKey("GLM-5.2") {
-		t.Fatalf("backfill key = %q, want %q", key, model.SiteModelNameKey("GLM-5.2"))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := renameNavItem(tt.in, "alert", "notification")
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("renameNavItem(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
 	}
 }

@@ -2,8 +2,8 @@ package balancer
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/lingyuins/octopus/internal/utils/json"
 	"strings"
 	"sync"
 	"time"
@@ -30,7 +30,7 @@ type keyCooldownEntry struct {
 var globalKeyCooldown sync.Map // key: string -> *keyCooldownEntry
 
 func cooldownKey(channelID, keyID int, modelName string) string {
-	return fmt.Sprintf("%d:%d:%s", channelID, keyID, strings.TrimSpace(modelName))
+	return buildKey3(channelID, keyID, strings.TrimSpace(modelName))
 }
 
 // cooldownKVKeyPrefix 是 key 冷却在 KVStore 中的子系统前缀。
@@ -156,7 +156,7 @@ func RemoveChannelKeyCooldowns(channelID int) {
 			fmt.Sprintf("%s%d:", cooldownKVKeyPrefix, channelID))
 		return
 	}
-	prefix := fmt.Sprintf("%d:", channelID)
+	prefix := buildKeyPrefix(channelID)
 	globalKeyCooldown.Range(func(key, _ any) bool {
 		if k, ok := key.(string); ok && strings.HasPrefix(k, prefix) {
 			globalKeyCooldown.Delete(key)
@@ -173,7 +173,7 @@ func RemoveKeyCooldowns(keyID int) {
 	if keyID == 0 {
 		return
 	}
-	needle := fmt.Sprintf(":%d:", keyID)
+	needle := buildKeyNeedle(keyID)
 	if store.Enabled() {
 		// 在 cooldown 命名空间下按子串删除（KVStore.DelBySubstring 内部 SCAN + 客户端过滤）。
 		_ = store.GetKV().DelBySubstring(context.Background(), cooldownKVKeyPrefix, needle)

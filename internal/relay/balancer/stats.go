@@ -1,7 +1,6 @@
 package balancer
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -42,7 +41,7 @@ var globalAutoStats sync.Map // string -> *ChannelStats
 
 // statsKey generates the key for channel stats storage.
 func statsKey(channelID int, modelName string) string {
-	return fmt.Sprintf("%d:%s", channelID, normalizeAutoStatsModelName(modelName))
+	return buildKey2(channelID, normalizeAutoStatsModelName(modelName))
 }
 
 func normalizeAutoStatsModelName(modelName string) string {
@@ -282,7 +281,7 @@ func snapshotFromStats(channelID int, modelName string, stats *ChannelStats) Aut
 // RemoveChannelStats deletes all auto-strategy statistics entries for the given channel.
 // Called when a channel is deleted to prevent globalAutoStats from growing unbounded.
 func RemoveChannelStats(channelID int) {
-	prefix := fmt.Sprintf("%d:", channelID)
+	prefix := buildKeyPrefix(channelID)
 	globalAutoStats.Range(func(key, _ any) bool {
 		if k, ok := key.(string); ok && len(k) > 0 && strings.HasPrefix(k, prefix) {
 			globalAutoStats.Delete(key)

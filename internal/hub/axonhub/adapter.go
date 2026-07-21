@@ -294,6 +294,9 @@ query QueryChannels($input: QueryChannelInput!) {
 }`
 
 // graphqlIDMap stores bidirectional mapping between numeric IDs and GraphQL opaque IDs.
+// 有硬上限：Hub 渠道列表会反复同步，无界 map 会在长跑后线性涨内存。
+const graphqlIDMapMaxEntries = 10000
+
 var (
 	gqlIDMu       sync.RWMutex
 	numToGraphql  = make(map[int]string)
@@ -306,6 +309,12 @@ func mapGraphqlID(gqlID string) int {
 	defer gqlIDMu.Unlock()
 	if numID, ok := graphqlToNum[gqlID]; ok {
 		return numID
+	}
+	// 超上限时整表清空后重建。旧 numeric ID 会失效，但 axonhub 适配器仅在
+	// 同进程会话内用 numeric 反查 GraphQL ID；清空后下次 List 会重新映射。
+	if len(graphqlToNum) >= graphqlIDMapMaxEntries {
+		numToGraphql = make(map[int]string, 1024)
+		graphqlToNum = make(map[string]int, 1024)
 	}
 	nextNumericID++
 	numToGraphql[nextNumericID] = gqlID

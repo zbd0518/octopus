@@ -88,6 +88,9 @@ func Init() {
 	}
 
 	Register(TaskRelayLogSave, 10*time.Minute, false, func() {
+		// 清理过期的 SSE 流 token（issue #149 内存优化补充）
+		relaylog.PurgeExpiredStreamTokens()
+
 		// 清理过期的失败提示缓存条目
 		relay.PurgeFailureHintCache()
 
@@ -164,12 +167,18 @@ func Init() {
 		}
 	})
 
-	// WebDAV cloud backup every 6 hours
-	Register(TaskWebDAVBackup, 6*time.Hour, false, func() {
-		if err := backup.PerformWebDAVBackup(context.Background()); err != nil {
-			log.Warnf("webdav backup failed: %v", err)
-		}
-	})
+	// WebDAV cloud backup: respects interval_hours from settings (issue: user reported 72h setting ignored)
+	webdavCfg, err := backup.GetWebDAVConfig()
+	if err != nil {
+		log.Warnf("failed to get webdav config: %v", err)
+	} else if webdavCfg.IntervalHours > 0 {
+		webdavInterval := time.Duration(webdavCfg.IntervalHours) * time.Hour
+		Register(TaskWebDAVBackup, webdavInterval, false, func() {
+			if err := backup.PerformWebDAVBackup(context.Background()); err != nil {
+				log.Warnf("webdav backup failed: %v", err)
+			}
+		})
+	}
 
 	// Site sync task
 	siteSyncIntervalHours, err := setting.GetInt(model.SettingKeySiteSyncInterval)

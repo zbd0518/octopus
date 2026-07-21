@@ -252,6 +252,13 @@ export function GroupCard({ group }: { group: Group }) {
     const { data: modelChannels = [] } = useModelChannelList();
 
     const channelNameByKey = useMemo(() => buildChannelNameByModelKey(modelChannels), [modelChannels]);
+    const channelByKey = useMemo(() => {
+        const map = new Map<string, (typeof modelChannels)[number]>();
+        modelChannels.forEach((mc) => {
+            map.set(modelChannelKey(mc.channel_id, mc.name), mc);
+        });
+        return map;
+    }, [modelChannels]);
     const enabledByKey = useMemo(() => {
         const map = new Map<string, boolean>();
         modelChannels.forEach((mc) => {
@@ -263,16 +270,24 @@ export function GroupCard({ group }: { group: Group }) {
     const displayMembers = useMemo((): SelectedMember[] =>
         [...(group.items || [])]
             .sort((a, b) => a.priority - b.priority)
-            .map((item) => ({
-                id: modelChannelKey(item.channel_id, item.model_name),
-                name: item.model_name,
-                enabled: enabledByKey.get(modelChannelKey(item.channel_id, item.model_name)) ?? true,
-                channel_id: item.channel_id,
-                channel_name: channelNameByKey.get(modelChannelKey(item.channel_id, item.model_name)) ?? t('aiRoute.progress.channelFallbackName', { id: item.channel_id }),
-                item_id: item.id,
-                weight: item.weight,
-            })),
-        [group.items, channelNameByKey, enabledByKey, t]
+            .map((item) => {
+                const key = modelChannelKey(item.channel_id, item.model_name);
+                const channelModel = channelByKey.get(key);
+                return {
+                    id: key,
+                    name: item.model_name,
+                    enabled: enabledByKey.get(key) ?? true,
+                    channel_id: item.channel_id,
+                    channel_name: channelNameByKey.get(key) ?? t('aiRoute.progress.channelFallbackName', { id: item.channel_id }),
+                    item_id: item.id,
+                    weight: item.weight,
+                    upstream_price: channelModel?.upstream_price,
+                    upstream_metrics: channelModel?.upstream_metrics,
+                    channel_balance: channelModel?.channel_balance,
+                    channel_today_income: channelModel?.channel_today_income,
+                };
+            }),
+        [group.items, channelByKey, channelNameByKey, enabledByKey, t]
     );
 
     const [confirmDelete, setConfirmDelete] = useState(false);
@@ -840,6 +855,7 @@ export function GroupCard({ group }: { group: Group }) {
                     onDragFinish={handleDragFinish}
                     autoScrollOnAdd={false}
                     showWeight={resolvedMode === GroupMode.Weighted || resolvedMode === GroupMode.Auto}
+                    showUpstreamMeta={false}
                     layoutScope={`card-${group.id ?? 'unknown'}`}
                 />
             </section>

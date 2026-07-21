@@ -1,8 +1,8 @@
 package anthropic
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/lingyuins/octopus/internal/transformer"
 )
 
 // MessageRequest represents the Anthropic Messages API request format.
@@ -99,11 +99,11 @@ type SystemPrompt struct {
 
 func (s *SystemPrompt) MarshalJSON() ([]byte, error) {
 	if s.Prompt != nil {
-		return json.Marshal(s.Prompt)
+		return transformer.Marshal(s.Prompt)
 	}
 
 	if len(s.MultiplePrompts) > 0 {
-		return json.Marshal(s.MultiplePrompts)
+		return transformer.Marshal(s.MultiplePrompts)
 	}
 
 	return []byte("null"), nil
@@ -112,7 +112,7 @@ func (s *SystemPrompt) MarshalJSON() ([]byte, error) {
 func (s *SystemPrompt) UnmarshalJSON(data []byte) error {
 	var str string
 
-	err := json.Unmarshal(data, &str)
+	err := transformer.Unmarshal(data, &str)
 	if err == nil {
 		s.Prompt = &str
 		return nil
@@ -120,7 +120,7 @@ func (s *SystemPrompt) UnmarshalJSON(data []byte) error {
 
 	var parts []SystemPromptPart
 
-	err = json.Unmarshal(data, &parts)
+	err = transformer.Unmarshal(data, &parts)
 	if err == nil {
 		s.MultiplePrompts = parts
 		return nil
@@ -175,10 +175,10 @@ type Tool struct {
 	// Ensure the omitempty, otherwise it will be sent empty string to the API, will cause some providers ignore the tool.
 	// For now, we only support function (client tool or custom tool in anthropic) tool, so we can just omit the type.
 	// Type         string          `json:"type,omitempty"`
-	Name         string          `json:"name"`
-	Description  string          `json:"description"`
-	InputSchema  json.RawMessage `json:"input_schema"`
-	CacheControl *CacheControl   `json:"cache_control,omitempty"`
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description"`
+	InputSchema  transformer.RawMessage `json:"input_schema"`
+	CacheControl *CacheControl          `json:"cache_control,omitempty"`
 }
 
 type CacheControl struct {
@@ -237,10 +237,10 @@ func (m MessageContent) ExtractTrivalBlocks(cacheControl *CacheControl) []Messag
 
 func (c MessageContent) MarshalJSON() ([]byte, error) {
 	if c.Content != nil {
-		return json.Marshal(c.Content)
+		return transformer.Marshal(c.Content)
 	}
 
-	return json.Marshal(c.MultipleContent)
+	return transformer.Marshal(c.MultipleContent)
 }
 
 func (c *MessageContent) UnmarshalJSON(data []byte) error {
@@ -250,7 +250,7 @@ func (c *MessageContent) UnmarshalJSON(data []byte) error {
 
 	var blocks []MessageContentBlock
 
-	err := json.Unmarshal(data, &blocks)
+	err := transformer.Unmarshal(data, &blocks)
 	if err == nil {
 		c.MultipleContent = blocks
 		return nil
@@ -258,7 +258,7 @@ func (c *MessageContent) UnmarshalJSON(data []byte) error {
 
 	var str string
 
-	err = json.Unmarshal(data, &str)
+	err = transformer.Unmarshal(data, &str)
 	if err == nil {
 		c.Content = &str
 		return nil
@@ -292,10 +292,10 @@ type MessageContentBlock struct {
 
 	// Tool use request
 	// tool_use or server_tool_use
-	ID           string          `json:"id,omitempty"`
-	Name         *string         `json:"name,omitempty"`
-	Input        json.RawMessage `json:"input,omitempty"`
-	CacheControl *CacheControl   `json:"cache_control,omitempty"`
+	ID           string                 `json:"id,omitempty"`
+	Name         *string                `json:"name,omitempty"`
+	Input        transformer.RawMessage `json:"input,omitempty"`
+	CacheControl *CacheControl          `json:"cache_control,omitempty"`
 
 	// Tool result fields
 	ToolUseID *string `json:"tool_use_id,omitempty"`

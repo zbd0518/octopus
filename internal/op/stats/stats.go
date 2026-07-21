@@ -122,6 +122,45 @@ var apiKeyCacheNeedUpdate = make(map[int]struct{})
 var apiKeyCacheNeedUpdateLock sync.Mutex
 var apiKeyMutationLock sync.Mutex
 
+// dailyChannelModelRetryQueue 存储写入失败的渠道×模型统计条目，供 SaveDB 重试。
+// 使用 ring buffer 限制内存（最多保留 1000 条），FIFO 淘汰最旧条目。
+type dailyChannelModelRetryQueue struct {
+	mu      sync.Mutex
+	entries []model.StatsDailyChannelModel
+	maxSize int
+}
+
+var retryQueue = &dailyChannelModelRetryQueue{maxSize: 1000}
+
+func (q *dailyChannelModelRetryQueue) push(entry model.StatsDailyChannelModel) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.entries) >= q.maxSize {
+		// FIFO 淘汰：移除最旧的一半，为新条目腾出空间
+		copy(q.entries, q.entries[q.maxSize/2:])
+		q.entries = q.entries[:q.maxSize/2]
+	}
+	q.entries = append(q.entries, entry)
+}
+
+func (q *dailyChannelModelRetryQueue) drain() []model.StatsDailyChannelModel {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.entries) == 0 {
+		return nil
+	}
+	snapshot := make([]model.StatsDailyChannelModel, len(q.entries))
+	copy(snapshot, q.entries)
+	q.entries = q.entries[:0]
+	return snapshot
+}
+
+func (q *dailyChannelModelRetryQueue) len() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.entries)
+}
+
 // SaveDBTask is a convenience wrapper that creates a 2-minute context and calls SaveDB.
 func SaveDBTask() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -195,10 +234,52 @@ func SaveDB(ctx context.Context) error {
 		requeueDirtyIDs(channelIDs, modelIDs, apiKeyIDs)
 		return err
 	}
+	// 重试失败的渠道×模型统计条目（issue #检查渠道×模型的聚合链路）
+	if retryEntries := retryQueue.drain(); len(retryEntries) > 0 {
+		if err := retryDailyChannelModelEntries(ctx, retryEntries); err != nil {
+			log.Warnf("failed to retry %d daily channel-model entries: %v", len(retryEntries), err)
+		} else {
+			log.Debugf("successfully retried %d daily channel-model entries", len(retryEntries))
+		}
+	}
 	// Redis 后端：落盘成功后清除已持久化的 scope，开始下一轮增量累积（issue #123）。
 	// 失败仅记录日志，不影响主流程（下次 SaveDB 会重新落盘累积值，幂等）。
 	clearRedisStatsScopes(ctx)
 	return nil
+}
+
+// retryDailyChannelModelEntries 批量重试失败的渠道×模型统计条目。
+// 按日期+渠道+模型分组聚合，避免重复 upsert 同一 (date, channel_id, model_name)。
+// 失败条目不重新入队（避免死循环），但会记录日志。
+func retryDailyChannelModelEntries(ctx context.Context, entries []model.StatsDailyChannelModel) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	// 聚合：key = "date\x00channelID\x00modelName"
+	merged := make(map[string]*model.StatsDailyChannelModel)
+	for i := range entries {
+		entry := &entries[i]
+		key := entry.Date + "\x00" + strconv.Itoa(entry.ChannelID) + "\x00" + entry.ModelName
+		if existing, ok := merged[key]; ok {
+			existing.StatsMetrics.RequestSuccess += entry.StatsMetrics.RequestSuccess
+			existing.StatsMetrics.RequestFailed += entry.StatsMetrics.RequestFailed
+			existing.StatsMetrics.InputToken += entry.StatsMetrics.InputToken
+			existing.StatsMetrics.OutputToken += entry.StatsMetrics.OutputToken
+			existing.StatsMetrics.InputCost += entry.StatsMetrics.InputCost
+			existing.StatsMetrics.OutputCost += entry.StatsMetrics.OutputCost
+			if existing.ChannelName == "" {
+				existing.ChannelName = entry.ChannelName
+			}
+		} else {
+			entryCopy := *entry
+			merged[key] = &entryCopy
+		}
+	}
+	batch := make([]model.StatsDailyChannelModel, 0, len(merged))
+	for _, entry := range merged {
+		batch = append(batch, *entry)
+	}
+	return upsertDailyChannelModels(db.GetDB().WithContext(ctx), batch)
 }
 
 // clearRedisStatsScopes 清除所有统计 scope 的 Redis 增量，仅在 SaveDB 成功后调用。
@@ -579,7 +660,11 @@ func DailyDimensionAPIKeyUpdate(ctx context.Context, apiKeyID int, name string, 
 
 func DailyDimensionChannelModelUpdate(ctx context.Context, channelID int, channelName, modelName string, metrics model.StatsMetrics) error {
 	modelName = strings.TrimSpace(modelName)
-	if channelID == 0 || modelName == "" {
+	if channelID == 0 {
+		return nil
+	}
+	if modelName == "" {
+		log.Warnf("skipped daily channel-model update: channelID=%d, modelName empty", channelID)
 		return nil
 	}
 	entry := model.StatsDailyChannelModel{
@@ -589,7 +674,12 @@ func DailyDimensionChannelModelUpdate(ctx context.Context, channelID int, channe
 		ModelName:    modelName,
 		StatsMetrics: metrics,
 	}
-	return upsertDailyChannelModels(db.GetDB().WithContext(ctx), []model.StatsDailyChannelModel{entry})
+	if err := upsertDailyChannelModels(db.GetDB().WithContext(ctx), []model.StatsDailyChannelModel{entry}); err != nil {
+		// 写入失败：入队重试（SaveDB 时批量补偿）
+		retryQueue.push(entry)
+		return err
+	}
+	return nil
 }
 
 // TotalUpdate adds metrics to the running total statistics.
@@ -698,7 +788,8 @@ func touchModelActivity(modelID int64) {
 			return
 		}
 	}
-	p := new(int64)
+	var pVal int64
+	p := &pVal
 	atomic.StoreInt64(p, now)
 	actual, _ := modelLastActivity.LoadOrStore(modelID, p)
 	if ap, ok := actual.(*int64); ok && ap != p {
@@ -1138,6 +1229,9 @@ func clearModelActivityForTest() {
 		modelLastActivity.Delete(key)
 		return true
 	})
+	retryQueue.mu.Lock()
+	retryQueue.entries = retryQueue.entries[:0]
+	retryQueue.mu.Unlock()
 }
 
 // ResetCachesForTest resets all stats caches to a known state for testing.
@@ -1181,6 +1275,11 @@ func GetChannelDirtyIDs() []int {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// GetRetryQueueLen returns the current retry queue size (for tests and monitoring).
+func GetRetryQueueLen() int {
+	return retryQueue.len()
 }
 
 // GetModelDirtyIDs returns the set of model IDs marked as dirty.

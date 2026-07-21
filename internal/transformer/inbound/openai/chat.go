@@ -2,7 +2,7 @@ package openai
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/lingyuins/octopus/internal/transformer"
 
 	"github.com/lingyuins/octopus/internal/transformer/model"
 )
@@ -16,7 +16,7 @@ type ChatInbound struct {
 
 func (i *ChatInbound) TransformRequest(ctx context.Context, body []byte) (*model.InternalLLMRequest, error) {
 	var request model.InternalLLMRequest
-	if err := json.Unmarshal(body, &request); err != nil {
+	if err := transformer.Unmarshal(body, &request); err != nil {
 		return nil, err
 	}
 	request.RawAPIFormat = model.APIFormatOpenAIChatCompletion
@@ -27,7 +27,7 @@ func (i *ChatInbound) TransformResponse(ctx context.Context, response *model.Int
 	// Store the response for later retrieval
 	i.storedResponse = response
 
-	body, err := json.Marshal(response)
+	body, err := transformer.Marshal(response)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +54,7 @@ func (i *ChatInbound) TransformStream(ctx context.Context, stream *model.Interna
 	if stream.Object == "chat.completion.chunk" {
 		body, err = marshalChatChunk(stream)
 	} else {
-		body, err = json.Marshal(stream)
+		body, err = transformer.Marshal(stream)
 	}
 
 	if err != nil {
@@ -94,7 +94,7 @@ func marshalChatChunk(stream *model.InternalLLMResponse) ([]byte, error) {
 		alias:   (*alias)(stream),
 		Choices: choices,
 	}
-	return json.Marshal(aux)
+	return transformer.Marshal(aux)
 }
 
 // GetInternalResponse returns the complete internal response for logging, statistics, etc.

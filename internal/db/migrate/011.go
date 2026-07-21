@@ -20,24 +20,24 @@ func init() {
 // into the Hub module as tabs and should no longer appear as standalone
 // nav entries.
 var validNavItems = map[string]struct{}{
-	"home":      {},
-	"hub":       {},
-	"channel":   {},
-	"group":     {},
-	"model":     {},
-	"analytics": {},
-	"log":       {},
-	"alert":     {},
-	"ops":       {},
-	"apikey":    {},
-	"setting":   {},
-	"user":      {},
+	"home":         {},
+	"hub":          {},
+	"channel":      {},
+	"group":        {},
+	"model":        {},
+	"analytics":    {},
+	"log":          {},
+	"notification": {},
+	"ops":          {},
+	"apikey":       {},
+	"setting":      {},
+	"user":         {},
 }
 
 // defaultNavOrder is the canonical default order for top-level nav items.
 var defaultNavOrder = []string{
 	"home", "hub", "channel", "group", "model",
-	"analytics", "log", "alert", "ops", "apikey", "setting", "user",
+	"analytics", "log", "notification", "ops", "apikey", "setting", "user",
 }
 
 func migrateNavOrderCleanup(db *gorm.DB) error {

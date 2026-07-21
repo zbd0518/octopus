@@ -1,7 +1,7 @@
 package model
 
 import (
-	"encoding/json"
+	"github.com/lingyuins/octopus/internal/transformer"
 	"testing"
 )
 
@@ -30,7 +30,7 @@ func TestEmbeddingInput_MarshalJSON(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := json.Marshal(tt.input)
+			data, err := transformer.Marshal(tt.input)
 			if err != nil {
 				t.Fatalf("failed to marshal: %v", err)
 			}
@@ -62,7 +62,7 @@ func TestEmbeddingInput_UnmarshalJSON(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var input EmbeddingInput
-			err := json.Unmarshal([]byte(tt.input), &input)
+			err := transformer.Unmarshal([]byte(tt.input), &input)
 			if err != nil {
 				t.Fatalf("failed to unmarshal: %v", err)
 			}
@@ -105,7 +105,7 @@ func TestEmbedding_MarshalJSON(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := json.Marshal(tt.emb)
+			data, err := transformer.Marshal(tt.emb)
 			if err != nil {
 				t.Fatalf("failed to marshal: %v", err)
 			}

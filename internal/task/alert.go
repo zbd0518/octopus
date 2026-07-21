@@ -377,7 +377,7 @@ func createAlertNotification(ctx context.Context, rule *model.AlertRule, state m
 		SourceID:     fmt.Sprintf("%d", rule.ID),
 		DedupeKey:    fmt.Sprintf("alert:%d:%d:%d", rule.ID, state, time.Now().UnixMilli()),
 		MetadataJSON: string(metadata),
-		Link:         "alert",
+		Link:         "notification",
 	}
 	// 应用内通知走 i18n 键（前端按 UI 语言渲染）。外部通知仍由 notifyAlert 用
 	// buildAlertNotificationMessage 渲染后发送，与此处独立。

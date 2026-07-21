@@ -1,12 +1,15 @@
 'use client';
 
-import { useMemo, useState, type ReactNode } from 'react';
-import { Archive, Bell, Check, Clock, Inbox, Megaphone, Pencil, RefreshCw, Save, Search, Send, Trash2, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Archive, Bell, Check, Clock, Inbox, Loader2, Megaphone, Pencil, RefreshCw, Save, Search, Send, Trash2, X } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { PageWrapper } from '@/components/common/PageWrapper';
+import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { AlertSections, type AlertSection } from '@/components/modules/alert';
 import { ReportHistoryList } from '@/components/modules/report/ReportHistoryList';
 import { ReportScheduleManager } from '@/components/modules/report/ReportScheduleManager';
@@ -25,8 +28,9 @@ import {
     useCreateNotificationPolicy,
     useUpdateNotificationPolicy,
     useDeleteNotificationPolicy,
-    useNotifications,
+    useNotificationsInfinite,
     useUnreadNotificationCount,
+    type NotificationDelivery,
     type NotificationFilter,
     type NotificationItem,
     type NotificationPolicy,
@@ -74,7 +78,7 @@ function NotificationCard({ item, selected, onSelect }: { item: NotificationItem
     const t = useTranslations('notification');
     const tn = useTranslations('notif');
     return (
-        <button onClick={onSelect} className={`w-full rounded-2xl border p-4 text-left transition hover:bg-muted/60 ${selected ? 'border-primary bg-primary/5' : 'border-border bg-card'}`}>
+        <button onClick={onSelect} className={`w-full rounded-2xl border p-3 text-left transition hover:bg-muted/60 sm:p-4 ${selected ? 'border-primary bg-primary/5' : 'border-border bg-card'}`}>
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
@@ -91,6 +95,50 @@ function NotificationCard({ item, selected, onSelect }: { item: NotificationItem
     );
 }
 
+function NotificationDetailContent({ selected, deliveries, onMarkRead, onMarkUnread, onArchive, onDelete }: {
+    selected: NotificationItem;
+    deliveries: NotificationDelivery[];
+    onMarkRead: () => void;
+    onMarkUnread: () => void;
+    onArchive: () => void;
+    onDelete: () => void;
+}) {
+    const t = useTranslations('notification');
+    const tn = useTranslations('notif');
+    return (
+        <div className="space-y-4">
+            <div>
+                <div className="flex flex-wrap gap-2"><Badge>{t(`type.${selected.type}`)}</Badge><Badge variant="outline" className={severityClass(selected.severity)}>{t(`severity.${selected.severity}`)}</Badge></div>
+                <h2 className="mt-3 break-words text-lg font-semibold">{resolveNotifTitle(selected, tn)}</h2>
+                <p className="mt-1 text-xs text-muted-foreground">{formatTime(selected.created_at)}</p>
+            </div>
+            <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">{resolveNotifContent(selected, tn)}</p>
+            <div className="flex flex-wrap gap-2">
+                {selected.read_at ? <Button size="sm" variant="outline" onClick={onMarkUnread}>{t('actions.markUnread')}</Button> : <Button size="sm" onClick={onMarkRead}>{t('actions.markRead')}</Button>}
+                {!selected.archived_at && <Button size="sm" variant="outline" onClick={onArchive}>{t('actions.archive')}</Button>}
+                <Button size="sm" variant="destructive" onClick={onDelete}><Trash2 className="h-4 w-4" />{t('actions.delete')}</Button>
+            </div>
+            <div className="border-t pt-3">
+                <h3 className="text-sm font-semibold">{t('detail.deliveries')}</h3>
+                <div className="mt-2 space-y-2">
+                    {deliveries.length === 0 ? <p className="text-xs text-muted-foreground">{t('detail.noDeliveries')}</p> : null}
+                    {deliveries.map((d) => <div key={d.id} className="break-words rounded-xl bg-muted p-2 text-xs"><b>{d.channel_name || d.channel_id}</b> · {d.status}{d.last_error ? ` · ${d.last_error}` : ''}</div>)}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// 搜索输入防抖：避免每次击键都触发列表查询重建。
+function useDebouncedValue<T>(value: T, delayMs = 300) {
+    const [debounced, setDebounced] = useState(value);
+    useEffect(() => {
+        const timer = setTimeout(() => setDebounced(value), delayMs);
+        return () => clearTimeout(timer);
+    }, [value, delayMs]);
+    return debounced;
+}
+
 export function Notification() {
     const t = useTranslations('notification');
     const tn = useTranslations('notif');
@@ -104,16 +152,17 @@ export function Notification() {
     const [editingPolicyID, setEditingPolicyID] = useState<number | null>(null);
     const [preferenceDraft, setPreferenceDraft] = useState<Partial<NotificationPreference>>({ user_id: 0, type: 'alert', enabled: true, in_app_enabled: true, external_enabled: true, min_severity: 'info', channel_ids: '[]' });
 
+    const debouncedSearch = useDebouncedValue(search, 300);
+    const isMobile = useIsMobile();
+
     const filter: NotificationFilter = useMemo(() => ({
-        page: 1,
-        page_size: 50,
         archived: subTab === 'archived',
         type: type || undefined,
         severity: severity || undefined,
-        search: search || undefined,
-    }), [search, severity, subTab, type]);
+        search: debouncedSearch || undefined,
+    }), [debouncedSearch, severity, subTab, type]);
 
-    const { data: items = [], isLoading, refetch } = useNotifications(filter);
+    const { items, isLoading, isLoadingMore, hasMore, loadMore, refetch } = useNotificationsInfinite(filter);
     const { data: unread } = useUnreadNotificationCount();
     const detail = useNotificationDetail(selectedID);
     const markRead = useMarkNotificationRead();
@@ -130,6 +179,33 @@ export function Notification() {
     const deletePreference = useDeleteNotificationPreference();
 
     const selected = detail.data?.notification;
+
+    const canLoadMore = hasMore && !isLoading && !isLoadingMore && items.length > 0;
+    const handleReachEnd = useCallback(() => {
+        if (!canLoadMore) return;
+        void loadMore();
+    }, [canLoadMore, loadMore]);
+
+    const listFooter = useMemo(() => {
+        if (hasMore && (isLoading || isLoadingMore)) {
+            return (
+                <div className="flex justify-center py-6">
+                    <div className="flex items-center gap-2 rounded-full border border-border/50 bg-card/80 px-4 py-2 shadow-sm backdrop-blur">
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                        <span className="text-xs text-muted-foreground">{t('list.loadingMore')}</span>
+                    </div>
+                </div>
+            );
+        }
+        if (!hasMore && items.length > 0) {
+            return (
+                <div className="flex justify-center py-6">
+                    <span className="text-xs text-muted-foreground/60">{t('list.noMore')}</span>
+                </div>
+            );
+        }
+        return null;
+    }, [hasMore, isLoading, isLoadingMore, items.length, t]);
 
     const openGroup = (nextGroup: NotificationGroup) => {
         setGroup(nextGroup);
@@ -184,56 +260,93 @@ export function Notification() {
         });
     };
 
-
     const renderMessages = () => (
         <>
-            <div className="grid gap-3 rounded-2xl border bg-card p-3 md:grid-cols-[1fr_auto_auto]">
-                <div className="relative">
+            <div className="flex flex-wrap items-center gap-2">
+                <div className="relative flex-1 min-w-[12rem]">
                     <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('filters.search')} className="pl-9" />
+                    <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('filters.search')} className="h-9 pl-9" />
                 </div>
-                <select value={type} onChange={(e) => setType(e.target.value)} className="rounded-xl border bg-background px-3 py-2 text-sm">
+                <select value={type} onChange={(e) => setType(e.target.value)} className="h-9 rounded-xl border bg-background px-3 text-sm">
                     {TYPES.map((v) => <option key={v} value={v}>{v ? t(`type.${v}`) : t('filters.allTypes')}</option>)}
                 </select>
-                <select value={severity} onChange={(e) => setSeverity(e.target.value)} className="rounded-xl border bg-background px-3 py-2 text-sm">
+                <select value={severity} onChange={(e) => setSeverity(e.target.value)} className="h-9 rounded-xl border bg-background px-3 text-sm">
                     {SEVERITIES.map((v) => <option key={v} value={v}>{v ? t(`severity.${v}`) : t('filters.allSeverities')}</option>)}
                 </select>
             </div>
 
-            <div className="grid min-h-[32rem] gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
-                <div className="space-y-3">
-                    {isLoading ? <div className="rounded-2xl border bg-card p-8 text-center text-muted-foreground">{t('loading')}</div> : null}
-                    {!isLoading && items.length === 0 ? <div className="rounded-2xl border bg-card p-8 text-center text-muted-foreground">{t('empty')}</div> : null}
-                    {items.map((item) => <NotificationCard key={item.id} item={item} selected={selectedID === item.id} onSelect={() => setSelectedID(item.id)} />)}
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
+                <div className="flex min-h-0 flex-col">
+                    {isLoading ? (
+                        <div className="flex min-h-[24rem] items-center justify-center rounded-2xl border bg-card">
+                            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                        </div>
+                    ) : items.length === 0 ? (
+                        <div className="flex min-h-[24rem] items-center justify-center rounded-2xl border bg-card p-8 text-center text-sm text-muted-foreground">{t('empty')}</div>
+                    ) : (
+                        // 列表限定高度、内部滚动并虚拟化渲染，滚到底部按页加载更多，
+                        // 页面不再随通知数量无限变长。
+                        <div className="h-[calc(100dvh-24rem)] min-h-[24rem]">
+                            <VirtualizedGrid
+                                items={items}
+                                layout="list"
+                                columns={{ default: 1 }}
+                                estimateItemHeight={124}
+                                gap={12}
+                                overscan={6}
+                                getItemKey={(item) => `notification-${item.id}`}
+                                renderItem={(item) => <NotificationCard item={item} selected={selectedID === item.id} onSelect={() => setSelectedID(item.id)} />}
+                                footer={listFooter}
+                                onReachEnd={handleReachEnd}
+                                reachEndEnabled={canLoadMore}
+                                reachEndOffset={2}
+                                bottomPaddingClassName="pb-4"
+                            />
+                        </div>
+                    )}
                 </div>
 
-                <aside className="rounded-2xl border bg-card p-4">
+                <aside className="hidden self-start rounded-2xl border bg-card p-4 lg:sticky lg:top-4 lg:block">
                     {!selected ? (
-                        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{t('detail.placeholder')}</div>
+                        <div className="flex min-h-[16rem] items-center justify-center text-sm text-muted-foreground">{t('detail.placeholder')}</div>
                     ) : (
-                        <div className="space-y-4">
-                            <div>
-                                <div className="flex gap-2"><Badge>{t(`type.${selected.type}`)}</Badge><Badge variant="outline" className={severityClass(selected.severity)}>{t(`severity.${selected.severity}`)}</Badge></div>
-                                <h2 className="mt-3 text-lg font-semibold">{selected ? resolveNotifTitle(selected, tn) : ''}</h2>
-                                <p className="mt-1 text-xs text-muted-foreground">{formatTime(selected.created_at)}</p>
-                            </div>
-                            <p className="whitespace-pre-wrap text-sm text-muted-foreground">{selected ? resolveNotifContent(selected, tn) : ''}</p>
-                            <div className="flex flex-wrap gap-2">
-                                {selected.read_at ? <Button size="sm" variant="outline" onClick={() => markUnread.mutate([selected.id])}>{t('actions.markUnread')}</Button> : <Button size="sm" onClick={() => markRead.mutate([selected.id])}>{t('actions.markRead')}</Button>}
-                                {!selected.archived_at && <Button size="sm" variant="outline" onClick={() => archive.mutate([selected.id])}>{t('actions.archive')}</Button>}
-                                <Button size="sm" variant="destructive" onClick={() => deleteNotification.mutate(selected.id)}><Trash2 className="h-4 w-4" />{t('actions.delete')}</Button>
-                            </div>
-                            <div className="border-t pt-3">
-                                <h3 className="text-sm font-semibold">{t('detail.deliveries')}</h3>
-                                <div className="mt-2 space-y-2">
-                                    {(detail.data?.deliveries ?? []).length === 0 ? <p className="text-xs text-muted-foreground">{t('detail.noDeliveries')}</p> : null}
-                                    {(detail.data?.deliveries ?? []).map((d) => <div key={d.id} className="rounded-xl bg-muted p-2 text-xs"><b>{d.channel_name || d.channel_id}</b> · {d.status}{d.last_error ? ` · ${d.last_error}` : ''}</div>)}
-                                </div>
-                            </div>
-                        </div>
+                        <NotificationDetailContent
+                            selected={selected}
+                            deliveries={detail.data?.deliveries ?? []}
+                            onMarkRead={() => markRead.mutate([selected.id])}
+                            onMarkUnread={() => markUnread.mutate([selected.id])}
+                            onArchive={() => archive.mutate([selected.id])}
+                            onDelete={() => deleteNotification.mutate(selected.id)}
+                        />
                     )}
                 </aside>
             </div>
+
+            {/* 窄屏下详情以弹窗呈现，避免详情面板排在列表下方需要长距离滚动 */}
+            <Dialog open={isMobile && selectedID !== undefined} onOpenChange={(open) => { if (!open) setSelectedID(undefined); }}>
+                <DialogContent className="max-h-[85dvh] overflow-y-auto">
+                    {selected ? (
+                        <>
+                            <DialogHeader className="sr-only">
+                                <DialogTitle>{resolveNotifTitle(selected, tn)}</DialogTitle>
+                                <DialogDescription>{formatTime(selected.created_at)}</DialogDescription>
+                            </DialogHeader>
+                            <NotificationDetailContent
+                                selected={selected}
+                                deliveries={detail.data?.deliveries ?? []}
+                                onMarkRead={() => markRead.mutate([selected.id])}
+                                onMarkUnread={() => markUnread.mutate([selected.id])}
+                                onArchive={() => { archive.mutate([selected.id]); setSelectedID(undefined); }}
+                                onDelete={() => { deleteNotification.mutate(selected.id); setSelectedID(undefined); }}
+                            />
+                        </>
+                    ) : (
+                        <div className="flex items-center justify-center py-8">
+                            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
         </>
     );
 
@@ -295,12 +408,12 @@ export function Notification() {
     return (
         <PageWrapper>
             <div className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                        <h1 className="text-2xl font-bold tracking-tight">{t('title')}</h1>
-                        <p className="text-sm text-muted-foreground">{t('subtitle', { count: unread?.count ?? 0 })}</p>
+                <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
+                    <div className="min-w-0">
+                        <h1 className="text-xl font-bold tracking-tight sm:text-2xl">{t('title')}</h1>
+                        <p className="text-xs text-muted-foreground sm:text-sm">{t('subtitle', { count: unread?.count ?? 0 })}</p>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex shrink-0 gap-2">
                         <Button variant="outline" onClick={() => refetch()}><RefreshCw className="h-4 w-4" />{t('actions.refresh')}</Button>
                         <Button onClick={() => markAllRead.mutate()}><Check className="h-4 w-4" />{t('actions.markAllRead')}</Button>
                     </div>
@@ -312,23 +425,24 @@ export function Notification() {
                             {groupIcon(item)}{t(`groups.${item}`)}
                         </SectionButton>
                     ))}
-                </div>
-
-                <div className="flex items-center gap-2 overflow-x-auto scrollbar-none -mx-1 px-1">
                     {group === 'messages' && <>
+                        <div className="w-px h-8 bg-border mx-1" />
                         <SectionButton active={subTab === 'inbox'} onClick={() => setSubTab('inbox')}><Inbox className="h-4 w-4" />{t('tabs.inbox')}</SectionButton>
                         <SectionButton active={subTab === 'archived'} onClick={() => setSubTab('archived')}><Archive className="h-4 w-4" />{t('tabs.archived')}</SectionButton>
                     </>}
                     {group === 'alerts' && <>
+                        <div className="w-px h-8 bg-border mx-1" />
                         <SectionButton active={subTab === 'rules'} onClick={() => setSubTab('rules')}><Bell className="h-4 w-4" />{t('tabs.alertRules')}</SectionButton>
                         <SectionButton active={subTab === 'history'} onClick={() => setSubTab('history')}><Clock className="h-4 w-4" />{t('tabs.alertHistory')}</SectionButton>
                     </>}
                     {group === 'delivery' && <>
+                        <div className="w-px h-8 bg-border mx-1" />
                         <SectionButton active={subTab === 'channels'} onClick={() => setSubTab('channels')}><Megaphone className="h-4 w-4" />{t('tabs.channels')}</SectionButton>
                         <SectionButton active={subTab === 'policies'} onClick={() => setSubTab('policies')}><Bell className="h-4 w-4" />{t('tabs.policies')}</SectionButton>
                         <SectionButton active={subTab === 'preferences'} onClick={() => setSubTab('preferences')}><Check className="h-4 w-4" />{t('tabs.preferences')}</SectionButton>
                     </>}
                     {group === 'reports' && <>
+                        <div className="w-px h-8 bg-border mx-1" />
                         <SectionButton active={subTab === 'reportSchedules'} onClick={() => setSubTab('reportSchedules')}><Clock className="h-4 w-4" />{t('tabs.reportSchedules')}</SectionButton>
                         <SectionButton active={subTab === 'reportHistory'} onClick={() => setSubTab('reportHistory')}><Archive className="h-4 w-4" />{t('tabs.reportHistory')}</SectionButton>
                     </>}

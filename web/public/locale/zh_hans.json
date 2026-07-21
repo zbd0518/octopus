@@ -1306,8 +1306,7 @@
     "corsAllowOrigins": {
       "label": "CORS 跨域白名单",
       "hint": "为空禁止跨域，* 允许所有",
-      "example": "只允许指定域名: https://example.com,https://example2.com",
-      "removeAriaLabel": "移除 {origin}"
+      "example": "只允许指定域名: https://example.com,https://example2.com"
     },
     "trustedProxies": {
       "label": "可信反向代理",
@@ -2109,6 +2108,10 @@
         "label": "美元兑人民币汇率",
         "hint": "默认 7.2，可手动调整"
       }
+    },
+    "groupUpstreamMeta": {
+      "label": "分组上游渠道信息",
+      "description": "在分组编辑页展示上游价格、余额、今日收入与延迟/吞吐/状态"
     }
   },
   "group": {
@@ -3150,6 +3153,10 @@
     "unreadCount": "{count} 条未读",
     "empty": "暂无通知",
     "loading": "正在加载通知...",
+    "list": {
+      "loadingMore": "加载更多...",
+      "noMore": "没有更多通知了"
+    },
     "tabs": {
       "inbox": "收件箱",
       "archived": "已归档",

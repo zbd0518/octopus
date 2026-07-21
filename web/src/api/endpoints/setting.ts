@@ -97,6 +97,7 @@ export const SettingKey = {
     WebAuthnRPName: 'webauthn_rp_name',
     WebAuthnOrigins: 'webauthn_origins',
     TrustedProxies: 'trusted_proxies',
+    GroupUpstreamMetaDisplayEnabled: 'group_upstream_meta_display_enabled',
 } as const;
 
 /**
@@ -117,7 +118,6 @@ export function useSettingList() {
             return apiClient.get<Setting[]>('/api/v1/setting/list');
         },
         refetchInterval: REFETCH_INTERVAL_DEFAULT,
-        refetchOnMount: 'always',
     });
 }
 
@@ -379,7 +379,6 @@ export function useGetCacheConfig() {
         queryFn: async () => {
             return apiClient.get<CacheConfig>('/api/v1/setting/cache/config');
         },
-        refetchOnMount: 'always',
     });
 }
 

@@ -303,7 +303,11 @@ export function StatsChart() {
                         cursor={false}
                         content={
                             <ChartTooltipContent
-                                indicator="line"
+                                indicator="dot"
+                                labelFormatter={(_value, payload) => {
+                                    const date = payload?.[0]?.payload?.date;
+                                    return typeof date === 'string' ? date : '';
+                                }}
                                 formatter={(value) => {
                                     const primary = chartMetrics[0] ?? 'cost';
                                     if (primary === 'cost') return costAxisFormatter(Number(value));

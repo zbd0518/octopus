@@ -238,6 +238,19 @@ type SiteModel struct {
 	RouteRawPayload string               `json:"route_raw_payload"`
 	RouteUpdatedAt  *time.Time           `json:"route_updated_at"`
 	Disabled        bool                 `json:"disabled" gorm:"default:false;index"`
+	// 上游模型定价（仅展示，不参与本地计费目录）。同步 /api/pricing 时写入。
+	// PriceBillingMode: "" | "token" | "per_call"
+	PriceBillingMode string     `json:"price_billing_mode" gorm:"type:varchar(16);not null;default:''"`
+	PriceInput       float64    `json:"price_input" gorm:"not null;default:0"`
+	PriceOutput      float64    `json:"price_output" gorm:"not null;default:0"`
+	PriceCacheRead   float64    `json:"price_cache_read" gorm:"not null;default:0"`
+	PriceCacheWrite  float64    `json:"price_cache_write" gorm:"not null;default:0"`
+	PriceUpdatedAt   *time.Time `json:"price_updated_at"`
+	// 上游性能指标（NewAPI /api/perf-metrics/summary），仅展示。
+	PerfLatencyMs   int64      `json:"perf_latency_ms" gorm:"not null;default:0"`
+	PerfAvgTps      float64    `json:"perf_avg_tps" gorm:"not null;default:0"`
+	PerfSuccessRate float64    `json:"perf_success_rate" gorm:"not null;default:0"` // 0-1
+	PerfUpdatedAt   *time.Time `json:"perf_updated_at"`
 }
 
 // SiteModelNameKey 计算站点模型唯一键：md5(TrimSpace(原始 model_name)) 的 hex。

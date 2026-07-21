@@ -3,8 +3,8 @@ package gemini
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/lingyuins/octopus/internal/transformer"
 	"io"
 	"net/http"
 	"net/url"
@@ -27,7 +27,7 @@ func (o *MessagesOutbound) TransformRequest(ctx context.Context, request *model.
 	// Convert internal request to Gemini format
 	geminiReq := convertLLMToGeminiRequest(request)
 
-	body, err := json.Marshal(geminiReq)
+	body, err := transformer.Marshal(geminiReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal gemini request: %w", err)
 	}
@@ -94,7 +94,7 @@ func (o *MessagesOutbound) TransformResponse(ctx context.Context, response *http
 				Status  string `json:"status"`
 			} `json:"error"`
 		}
-		if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
+		if err := transformer.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
 			return nil, &model.ResponseError{
 				StatusCode: response.StatusCode,
 				Detail: model.ErrorDetail{
@@ -108,7 +108,7 @@ func (o *MessagesOutbound) TransformResponse(ctx context.Context, response *http
 	}
 
 	var geminiResp model.GeminiGenerateContentResponse
-	if err := json.Unmarshal(body, &geminiResp); err != nil {
+	if err := transformer.Unmarshal(body, &geminiResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal gemini response: %w", err)
 	}
 
@@ -126,7 +126,7 @@ func (o *MessagesOutbound) TransformStream(ctx context.Context, eventData []byte
 
 	// Parse Gemini streaming response
 	var geminiResp model.GeminiGenerateContentResponse
-	if err := json.Unmarshal(eventData, &geminiResp); err != nil {
+	if err := transformer.Unmarshal(eventData, &geminiResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal gemini stream chunk: %w", err)
 	}
 
@@ -282,7 +282,7 @@ func convertLLMToGeminiRequest(request *model.InternalLLMRequest) *model.GeminiG
 			if len(msg.ToolCalls) > 0 {
 				for _, toolCall := range msg.ToolCalls {
 					var args map[string]interface{}
-					if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
+					if err := transformer.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
 						log.Warnf("failed to unmarshal tool call arguments: %v", err)
 					}
 					content.Parts = append(content.Parts, &model.GeminiPart{
@@ -390,7 +390,7 @@ func convertLLMToGeminiRequest(request *model.InternalLLMRequest) *model.GeminiG
 	// Convert SafetySettings from metadata if present
 	if safetyJSON, ok := request.TransformerMetadata["gemini_safety_settings"]; ok {
 		var safetySettings []*model.GeminiSafetySetting
-		if err := json.Unmarshal([]byte(safetyJSON), &safetySettings); err == nil {
+		if err := transformer.Unmarshal([]byte(safetyJSON), &safetySettings); err == nil {
 			geminiReq.SafetySettings = safetySettings
 		}
 	}
@@ -406,7 +406,7 @@ func convertLLMToGeminiRequest(request *model.InternalLLMRequest) *model.GeminiG
 
 			var params map[string]any
 			if len(tool.Function.Parameters) > 0 {
-				if err := json.Unmarshal(tool.Function.Parameters, &params); err != nil {
+				if err := transformer.Unmarshal(tool.Function.Parameters, &params); err != nil {
 					log.Warnf("failed to unmarshal tool function parameters: %v", err)
 				}
 			}
@@ -464,7 +464,7 @@ func convertLLMToolResultToGeminiContent(msg *model.Message, toolCallIDToName ma
 
 	var responseData map[string]any
 	if msg.Content.Content != nil {
-		if err := json.Unmarshal([]byte(*msg.Content.Content), &responseData); err != nil {
+		if err := transformer.Unmarshal([]byte(*msg.Content.Content), &responseData); err != nil {
 			log.Warnf("failed to unmarshal tool result content: %v", err)
 		}
 	}
@@ -563,7 +563,7 @@ func convertGeminiToLLMResponse(geminiResp *model.GeminiGenerateContentResponse,
 					})
 				}
 				if part.FunctionCall != nil {
-					argsJSON, _ := json.Marshal(part.FunctionCall.Args)
+					argsJSON, _ := transformer.Marshal(part.FunctionCall.Args)
 					toolCall := model.ToolCall{
 						Index: idx,
 						ID:    fmt.Sprintf("call_%s_%d", part.FunctionCall.Name, idx),
@@ -668,7 +668,7 @@ func convertJSONSchemaToGeminiSchema(schema *model.ResponseFormatJSONSchema) (*m
 
 	// Parse JSON Schema to map
 	var raw map[string]any
-	if err := json.Unmarshal(schema.Schema, &raw); err != nil {
+	if err := transformer.Unmarshal(schema.Schema, &raw); err != nil {
 		return nil, fmt.Errorf("failed to parse JSON schema: %w", err)
 	}
 
@@ -796,8 +796,8 @@ func (t *geminiSchemaTransformer) transform(schemaNode any) {
 				}
 
 				var copied map[string]any
-				if b, err := json.Marshal(resolved); err == nil {
-					_ = json.Unmarshal(b, &copied)
+				if b, err := transformer.Marshal(resolved); err == nil {
+					_ = transformer.Unmarshal(b, &copied)
 				}
 				if copied == nil {
 					copied = make(map[string]any, len(resolved))
@@ -995,7 +995,7 @@ func (t *geminiSchemaTransformer) transform(schemaNode any) {
 		// 6) Default value -> description hint (then delete default)
 		if def, ok := node["default"]; ok {
 			if desc, ok := node["description"].(string); ok && desc != "" {
-				if b, err := json.Marshal(def); err == nil {
+				if b, err := transformer.Marshal(def); err == nil {
 					node["description"] = desc + " (Default: " + string(b) + ")"
 				}
 			}

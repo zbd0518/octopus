@@ -3,7 +3,7 @@ package relay
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+
 	"errors"
 	"io"
 	"mime/multipart"
@@ -291,7 +291,7 @@ func TestRewriteMusicRequestByProvider_NewAPI(t *testing.T) {
 		t.Fatalf("path = %q, want %q", gotPath, "/v1/music_generation")
 	}
 	var raw map[string]any
-	if err := json.Unmarshal(gotBody, &raw); err != nil {
+	if err := jsonAPI.Unmarshal(gotBody, &raw); err != nil {
 		t.Fatalf("unmarshal body: %v", err)
 	}
 	if _, ok := raw["prompt"]; ok {
@@ -341,7 +341,7 @@ func TestRewriteAudioSpeechRequestByProvider_MiMo(t *testing.T) {
 	}
 
 	var raw map[string]any
-	if err := json.Unmarshal(gotBody, &raw); err != nil {
+	if err := jsonAPI.Unmarshal(gotBody, &raw); err != nil {
 		t.Fatalf("unmarshal body: %v", err)
 	}
 	if raw["model"] != "mimo-v2.5-tts" {
@@ -388,7 +388,7 @@ func TestRewriteAudioSpeechRequestByProvider_Defaults(t *testing.T) {
 
 	gotBody, _ := rewriteAudioSpeechRequestByProvider(group, cfg, body)
 	var raw map[string]any
-	if err := json.Unmarshal(gotBody, &raw); err != nil {
+	if err := jsonAPI.Unmarshal(gotBody, &raw); err != nil {
 		t.Fatalf("unmarshal body: %v", err)
 	}
 	audio := raw["audio"].(map[string]any)
@@ -414,7 +414,7 @@ func TestRewriteAudioSpeechRequestByProvider_OpusClampedToMp3(t *testing.T) {
 	}
 
 	var raw map[string]any
-	if err := json.Unmarshal(gotBody, &raw); err != nil {
+	if err := jsonAPI.Unmarshal(gotBody, &raw); err != nil {
 		t.Fatalf("unmarshal body: %v", err)
 	}
 	audio := raw["audio"].(map[string]any)

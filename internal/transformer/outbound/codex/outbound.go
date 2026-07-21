@@ -3,8 +3,8 @@ package codex
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/lingyuins/octopus/internal/transformer"
 	"net/http"
 	"net/url"
 	"strings"
@@ -50,7 +50,7 @@ func parseOAuthKey(raw string) (*codexOAuthKey, error) {
 		return nil, fmt.Errorf("codex: key must be a JSON object containing access_token and account_id")
 	}
 	var key codexOAuthKey
-	if err := json.Unmarshal([]byte(raw), &key); err != nil {
+	if err := transformer.Unmarshal([]byte(raw), &key); err != nil {
 		return nil, fmt.Errorf("codex: invalid oauth key json: %w", err)
 	}
 	if strings.TrimSpace(key.AccessToken) == "" {
@@ -88,7 +88,7 @@ func (o *Outbound) TransformRequest(ctx context.Context, request *model.Internal
 		responsesReq.Instructions = ""
 	}
 
-	body, err := json.Marshal(responsesReq)
+	body, err := transformer.Marshal(responsesReq)
 	if err != nil {
 		return nil, fmt.Errorf("codex: failed to marshal request: %w", err)
 	}

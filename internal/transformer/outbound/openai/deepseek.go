@@ -1,7 +1,7 @@
 package openai
 
 import (
-	"encoding/json"
+	"github.com/lingyuins/octopus/internal/transformer"
 	"strings"
 
 	"github.com/lingyuins/octopus/internal/transformer/model"
@@ -96,13 +96,13 @@ func normalizeDeepSeekReasoningEffort(effort string) string {
 	}
 }
 
-func extractDeepSeekThinkingType(raw json.RawMessage) (string, bool) {
+func extractDeepSeekThinkingType(raw transformer.RawMessage) (string, bool) {
 	if len(raw) == 0 {
 		return "", false
 	}
 
 	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
+	if err := transformer.Unmarshal(raw, &payload); err != nil {
 		return "", false
 	}
 
@@ -130,10 +130,10 @@ func extractDeepSeekThinkingType(raw json.RawMessage) (string, bool) {
 	return normalized, normalized != ""
 }
 
-func mergeDeepSeekThinkingExtraBody(raw json.RawMessage, thinkingType string) json.RawMessage {
+func mergeDeepSeekThinkingExtraBody(raw transformer.RawMessage, thinkingType string) transformer.RawMessage {
 	payload := map[string]any{}
 	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &payload); err != nil {
+		if err := transformer.Unmarshal(raw, &payload); err != nil {
 			log.Warnf("failed to unmarshal deepseek extra body: %v", err)
 		}
 	}
@@ -142,7 +142,7 @@ func mergeDeepSeekThinkingExtraBody(raw json.RawMessage, thinkingType string) js
 		"type": thinkingType,
 	}
 
-	merged, err := json.Marshal(payload)
+	merged, err := transformer.Marshal(payload)
 	if err != nil {
 		return raw
 	}

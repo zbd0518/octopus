@@ -1,7 +1,6 @@
 package balancer
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +18,7 @@ var globalSession sync.Map // key: string -> value: *SessionEntry
 
 // sessionKey 生成会话键：apiKeyID:requestModel
 func sessionKey(apiKeyID int, requestModel string) string {
-	return fmt.Sprintf("%d:%s", apiKeyID, requestModel)
+	return buildKey2(apiKeyID, requestModel)
 }
 
 // GetSticky 获取粘性通道（ttl 内有效）
@@ -57,7 +56,7 @@ func SetSticky(apiKeyID int, requestModel string, channelID, keyID int) {
 // RemoveAPIKeySticky deletes all sticky session entries for the given API key.
 // Called when an API key is deleted to prevent globalSession from growing unbounded.
 func RemoveAPIKeySticky(apiKeyID int) {
-	prefix := fmt.Sprintf("%d:", apiKeyID)
+	prefix := buildKeyPrefix(apiKeyID)
 	globalSession.Range(func(key, _ any) bool {
 		if k, ok := key.(string); ok && len(k) > 0 && strings.HasPrefix(k, prefix) {
 			globalSession.Delete(key)

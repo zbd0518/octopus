@@ -2,8 +2,8 @@ package ops
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/lingyuins/octopus/internal/utils/json"
 	"runtime"
 	"sort"
 	"strings"
@@ -331,12 +331,13 @@ func buildOpsProviderPromptCacheSummaryFromLogs(
 	summary.SampledLogCount = int64(len(logs))
 
 	for _, relayLog := range logs {
-		usage, ok := parseOpsProviderPromptCacheUsage(relayLog.ResponseContent)
+		usage, ok := parseOpsProviderPromptCacheUsageFromLog(relayLog)
 		if !ok {
 			continue
 		}
 		summary.ParsedLogCount++
-		if signals, ok := cacheusage.ParseProviderPromptCacheUsageSignals(relayLog.ResponseContent); ok && signals.SemanticCacheHit {
+		if relayLog.SemanticCacheHit {
+			// 语义缓存命中不是上游 prompt cache，跳过以免污染指标。
 			continue
 		}
 		// Count as cached if provider returned cached_tokens (>0) or has cache_write tokens (Anthropic prompt cache)
@@ -432,7 +433,19 @@ func loadOpsProviderPromptCacheLogs(ctx context.Context, since time.Time) []mode
 		if relayLog.Time < since.Unix() {
 			continue
 		}
-		logs = append(logs, relayLog)
+		// 缓存条目可能仍带 ResponseContent；优先用落库列，避免后续路径依赖大字段。
+		logs = append(logs, model.RelayLog{
+			ID:               relayLog.ID,
+			Time:             relayLog.Time,
+			ChannelId:        relayLog.ChannelId,
+			ChannelName:      relayLog.ChannelName,
+			ActualModelName:  relayLog.ActualModelName,
+			InputTokens:      relayLog.InputTokens,
+			CacheReadTokens:  relayLog.CacheReadTokens,
+			SemanticCacheHit: relayLog.SemanticCacheHit,
+			// ResponseContent 仅作兼容回退（旧缓存条目未填 CacheReadTokens 时）。
+			ResponseContent: relayLog.ResponseContent,
+		})
 		seen[relayLog.ID] = struct{}{}
 	}
 	relayLogCacheLock.Unlock()
@@ -442,22 +455,63 @@ func loadOpsProviderPromptCacheLogs(ctx context.Context, since time.Time) []mode
 		return logs
 	}
 
-	var dbLogs []model.RelayLog
+	// 只选轻量列 + 已落库的 cache_read_tokens / semantic_cache_hit，禁止 response_content。
+	type promptCacheLogRow struct {
+		ID               int64  `gorm:"column:id"`
+		Time             int64  `gorm:"column:time"`
+		ChannelID        int    `gorm:"column:channel_id"`
+		ChannelName      string `gorm:"column:channel_name"`
+		ActualModelName  string `gorm:"column:actual_model_name"`
+		InputTokens      int    `gorm:"column:input_tokens"`
+		CacheReadTokens  int    `gorm:"column:cache_read_tokens"`
+		SemanticCacheHit bool   `gorm:"column:semantic_cache_hit"`
+	}
+	var dbRows []promptCacheLogRow
 	if err := db.GetLogDB().WithContext(ctx).
-		Select("id", "time", "channel_id", "channel_name", "actual_model_name", "response_content").
+		Table("relay_logs").
+		Select("id", "time", "channel_id", "channel_name", "actual_model_name", "input_tokens", "cache_read_tokens", "semantic_cache_hit").
 		Where("time >= ?", since.Unix()).
 		Order("time ASC").
-		Find(&dbLogs).Error; err != nil {
+		Find(&dbRows).Error; err != nil {
 		return logs
 	}
 
-	for _, relayLog := range dbLogs {
-		if _, ok := seen[relayLog.ID]; ok {
+	for _, row := range dbRows {
+		if _, ok := seen[row.ID]; ok {
 			continue
 		}
-		logs = append(logs, relayLog)
+		logs = append(logs, model.RelayLog{
+			ID:               row.ID,
+			Time:             row.Time,
+			ChannelId:        row.ChannelID,
+			ChannelName:      row.ChannelName,
+			ActualModelName:  row.ActualModelName,
+			InputTokens:      row.InputTokens,
+			CacheReadTokens:  row.CacheReadTokens,
+			SemanticCacheHit: row.SemanticCacheHit,
+		})
 	}
 	return logs
+}
+
+// parseOpsProviderPromptCacheUsageFromLog 优先使用落库列 CacheReadTokens/InputTokens，
+// 仅当落库列为空时才回退解析 ResponseContent（兼容内存缓存中的旧条目）。
+func parseOpsProviderPromptCacheUsageFromLog(relayLog model.RelayLog) (opsProviderPromptCacheUsage, bool) {
+	if relayLog.CacheReadTokens > 0 || relayLog.InputTokens > 0 {
+		usage := opsProviderPromptCacheUsage{
+			PromptTokens:     int64(relayLog.InputTokens),
+			CachedTokens:     int64(relayLog.CacheReadTokens),
+			TotalInputTokens: int64(relayLog.InputTokens),
+		}
+		if usage.TotalInputTokens <= 0 && usage.CachedTokens <= 0 {
+			return opsProviderPromptCacheUsage{}, false
+		}
+		return usage, true
+	}
+	if strings.TrimSpace(relayLog.ResponseContent) == "" {
+		return opsProviderPromptCacheUsage{}, false
+	}
+	return parseOpsProviderPromptCacheUsage(relayLog.ResponseContent)
 }
 
 func parseOpsProviderPromptCacheUsage(responseContent string) (opsProviderPromptCacheUsage, bool) {
@@ -937,7 +991,7 @@ func buildOpsTelemetryHeroMetrics(snap telemetry.Snapshot, total model.StatsTota
 	}
 }
 
-func buildOpsTelemetryRuntimeSignals(snap telemetry.Snapshot, logs []model.RelayLog, now time.Time) model.OpsTelemetryRuntimeSignals {
+func buildOpsTelemetryRuntimeSignals(snap telemetry.Snapshot, sample opsTelemetryLogSample, now time.Time) model.OpsTelemetryRuntimeSignals {
 	trends := make([]model.OpsTelemetryTrendPoint, 0, len(snap.TrendSnapshots))
 	for _, tp := range snap.TrendSnapshots {
 		trends = append(trends, model.OpsTelemetryTrendPoint{
@@ -951,16 +1005,21 @@ func buildOpsTelemetryRuntimeSignals(snap telemetry.Snapshot, logs []model.Relay
 
 	p95 := snap.P95LatencyMs
 	if p95 <= 0 {
-		p95 = opsTelemetryP95FromLogs(logs)
+		p95 = opsTelemetryP95FromSample(sample.Latencies)
 	}
 
-	throughput := opsTelemetryThroughputFromLogs(logs, now, time.Minute)
+	throughput := sample.ThroughputRPS
 	if throughput <= 0 {
 		throughput = snap.ThroughputRPS
 	}
 
-	if len(logs) > 0 {
-		trends = buildOpsTelemetryTrendFromLogs(logs, now, snap.MemoryMB)
+	if len(sample.Trend) > 0 {
+		trends = sample.Trend
+		for i := range trends {
+			if trends[i].MemoryMB == 0 {
+				trends[i].MemoryMB = snap.MemoryMB
+			}
+		}
 	}
 
 	return model.OpsTelemetryRuntimeSignals{
@@ -971,29 +1030,195 @@ func buildOpsTelemetryRuntimeSignals(snap telemetry.Snapshot, logs []model.Relay
 	}
 }
 
-func opsTelemetryP95FromLogs(logs []model.RelayLog) float64 {
-	latencies := make([]int, 0, len(logs))
+func opsTelemetryP95FromSample(latencies []int) float64 {
+	if len(latencies) == 0 {
+		return 0
+	}
+	sorted := append([]int(nil), latencies...)
+	sort.Ints(sorted)
+	idx := (95*len(sorted) + 99) / 100
+	if idx < 1 {
+		idx = 1
+	}
+	if idx > len(sorted) {
+		idx = len(sorted)
+	}
+	return float64(sorted[idx-1])
+}
+
+// opsTelemetryLogSample 是 telemetry 日志回退路径的有界采样结果。
+// 禁止把 1h 全量 relay_logs 行装入内存。
+type opsTelemetryLogSample struct {
+	Latencies     []int
+	ThroughputRPS float64
+	Trend         []model.OpsTelemetryTrendPoint
+}
+
+// telemetryLogsCache 缓存有界采样结果，避免 60s 轮询反复扫库。
+var (
+	telemetryLogsCacheMu  sync.RWMutex
+	telemetryLogsCache    opsTelemetryLogSample
+	telemetryLogsCacheKey int64
+	telemetryLogsCacheExp time.Time
+)
+
+const telemetryLogsCacheTTL = 60 * time.Second
+
+// opsTelemetryLatencySampleLimit 限制 p95 回退采样条数，避免高 QPS 下 O(n) 内存。
+const opsTelemetryLatencySampleLimit = 2000
+
+func loadOpsTelemetryLogs(ctx context.Context, since time.Time) opsTelemetryLogSample {
+	sinceUnix := since.Unix()
+	now := time.Now()
+
+	telemetryLogsCacheMu.RLock()
+	if now.Before(telemetryLogsCacheExp) && telemetryLogsCacheKey == sinceUnix {
+		cached := telemetryLogsCache
+		telemetryLogsCacheMu.RUnlock()
+		return cached
+	}
+	telemetryLogsCacheMu.RUnlock()
+
+	sample := opsTelemetryLogSample{}
+
+	// 内存缓存体量有界，直接采样。
+	cache, lock := relaylog.GetCacheAndLock()
+	lock.Lock()
+	cacheLogs := make([]model.RelayLog, 0, 64)
+	for _, logItem := range cache {
+		if logItem.Time < sinceUnix {
+			continue
+		}
+		cacheLogs = append(cacheLogs, logItem)
+	}
+	lock.Unlock()
+
+	sample.Latencies = opsTelemetryCollectLatencies(nil, cacheLogs, opsTelemetryLatencySampleLimit)
+	sample.ThroughputRPS = opsTelemetryThroughputFromCache(cacheLogs, now, time.Minute)
+	sample.Trend = buildOpsTelemetryTrendFromLogs(cacheLogs, now, 0)
+
+	keepEnabled, err := setting.GetBool(model.SettingKeyRelayLogKeepEnabled)
+	if err != nil || !keepEnabled || db.GetLogDB() == nil {
+		telemetryLogsCacheMu.Lock()
+		telemetryLogsCache = sample
+		telemetryLogsCacheKey = sinceUnix
+		telemetryLogsCacheExp = time.Now().Add(telemetryLogsCacheTTL)
+		telemetryLogsCacheMu.Unlock()
+		return sample
+	}
+
+	// DB：仅拉最近 N 条 use_time 做 p95 回退；吞吐与趋势用 SQL 聚合，不装全量行。
+	type latencyRow struct {
+		UseTime int `gorm:"column:use_time"`
+	}
+	var latencyRows []latencyRow
+	if err := db.GetLogDB().WithContext(ctx).
+		Table("relay_logs").
+		Select("use_time").
+		Where("time >= ? AND use_time > 0", sinceUnix).
+		Order("time DESC").
+		Limit(opsTelemetryLatencySampleLimit).
+		Scan(&latencyRows).Error; err == nil {
+		for _, row := range latencyRows {
+			if row.UseTime > 0 {
+				sample.Latencies = append(sample.Latencies, row.UseTime)
+			}
+		}
+		if len(sample.Latencies) > opsTelemetryLatencySampleLimit {
+			sample.Latencies = sample.Latencies[:opsTelemetryLatencySampleLimit]
+		}
+	}
+
+	// 最近 1 分钟吞吐：COUNT 聚合。
+	minuteSince := now.Add(-time.Minute).Unix()
+	var minuteCount int64
+	if err := db.GetLogDB().WithContext(ctx).
+		Table("relay_logs").
+		Where("time >= ? AND time <= ?", minuteSince, now.Unix()).
+		Count(&minuteCount).Error; err == nil && minuteCount > 0 {
+		sample.ThroughputRPS = float64(minuteCount) / 60.0
+	}
+
+	// 12×5min 趋势桶：DB 端按时间桶聚合，只返回 12 行。
+	const bucketCount = 12
+	const bucketDuration = 5 * time.Minute
+	start := now.Add(-time.Duration(bucketCount-1) * bucketDuration).Truncate(bucketDuration)
+	startUnix := start.Unix()
+	bucketSec := int64(bucketDuration / time.Second)
+	type trendAggRow struct {
+		Bucket       int64   `gorm:"column:bucket"`
+		RequestDelta int64   `gorm:"column:request_delta"`
+		FailedDelta  int64   `gorm:"column:failed_delta"`
+		AvgLatencyMs float64 `gorm:"column:avg_latency_ms"`
+	}
+	// SQLite/MySQL/Postgres 通用：用整数除法做桶。
+	var trendRows []trendAggRow
+	bucketExpr := fmt.Sprintf("((time - %d) / %d)", startUnix, bucketSec)
+	if err := db.GetLogDB().WithContext(ctx).
+		Table("relay_logs").
+		Select(bucketExpr+` AS bucket,
+			COUNT(*) AS request_delta,
+			COALESCE(SUM(CASE WHEN error <> '' THEN 1 ELSE 0 END), 0) AS failed_delta,
+			COALESCE(AVG(CASE WHEN use_time > 0 THEN use_time END), 0) AS avg_latency_ms`).
+		Where("time >= ?", startUnix).
+		Group(bucketExpr).
+		Scan(&trendRows).Error; err == nil && len(trendRows) > 0 {
+		points := make([]model.OpsTelemetryTrendPoint, bucketCount)
+		for i := 0; i < bucketCount; i++ {
+			points[i] = model.OpsTelemetryTrendPoint{
+				Timestamp: start.Add(time.Duration(i) * bucketDuration).Unix(),
+			}
+		}
+		for _, row := range trendRows {
+			if row.Bucket < 0 || int(row.Bucket) >= bucketCount {
+				continue
+			}
+			points[row.Bucket].RequestDelta = row.RequestDelta
+			points[row.Bucket].FailedDelta = row.FailedDelta
+			points[row.Bucket].AvgLatencyMs = row.AvgLatencyMs
+		}
+		// 合并内存缓存趋势（尚未落库的请求）。
+		if len(cacheLogs) > 0 {
+			cacheTrend := buildOpsTelemetryTrendFromLogs(cacheLogs, now, 0)
+			for i := range points {
+				if i < len(cacheTrend) {
+					points[i].RequestDelta += cacheTrend[i].RequestDelta
+					points[i].FailedDelta += cacheTrend[i].FailedDelta
+					// 缓存侧延迟样本少，仅在 DB 桶为空时回填 avg。
+					if points[i].AvgLatencyMs == 0 {
+						points[i].AvgLatencyMs = cacheTrend[i].AvgLatencyMs
+					}
+				}
+			}
+		}
+		sample.Trend = points
+	}
+
+	telemetryLogsCacheMu.Lock()
+	telemetryLogsCache = sample
+	telemetryLogsCacheKey = sinceUnix
+	telemetryLogsCacheExp = time.Now().Add(telemetryLogsCacheTTL)
+	telemetryLogsCacheMu.Unlock()
+	return sample
+}
+
+func opsTelemetryCollectLatencies(dst []int, logs []model.RelayLog, limit int) []int {
+	if limit <= 0 {
+		return dst
+	}
 	for _, logItem := range logs {
 		if logItem.UseTime <= 0 {
 			continue
 		}
-		latencies = append(latencies, logItem.UseTime)
+		dst = append(dst, logItem.UseTime)
+		if len(dst) >= limit {
+			break
+		}
 	}
-	if len(latencies) == 0 {
-		return 0
-	}
-	sort.Ints(latencies)
-	idx := (95*len(latencies) + 99) / 100
-	if idx < 1 {
-		idx = 1
-	}
-	if idx > len(latencies) {
-		idx = len(latencies)
-	}
-	return float64(latencies[idx-1])
+	return dst
 }
 
-func opsTelemetryThroughputFromLogs(logs []model.RelayLog, now time.Time, window time.Duration) float64 {
+func opsTelemetryThroughputFromCache(logs []model.RelayLog, now time.Time, window time.Duration) float64 {
 	if window <= 0 {
 		return 0
 	}
@@ -1003,6 +1228,9 @@ func opsTelemetryThroughputFromLogs(logs []model.RelayLog, now time.Time, window
 		if logItem.Time >= since && logItem.Time <= now.Unix() {
 			count++
 		}
+	}
+	if count == 0 {
+		return 0
 	}
 	return float64(count) / window.Seconds()
 }
@@ -1040,84 +1268,6 @@ func buildOpsTelemetryTrendFromLogs(logs []model.RelayLog, now time.Time, memory
 		}
 	}
 	return points
-}
-
-// telemetryLogsCache avoids redundant DB queries for telemetry log data.
-var (
-	telemetryLogsCacheMu  sync.RWMutex
-	telemetryLogsCache    []model.RelayLog
-	telemetryLogsCacheKey int64
-	telemetryLogsCacheExp time.Time
-)
-
-const telemetryLogsCacheTTL = 60 * time.Second
-
-func loadOpsTelemetryLogs(ctx context.Context, since time.Time) []model.RelayLog {
-	sinceUnix := since.Unix()
-
-	telemetryLogsCacheMu.RLock()
-	if time.Now().Before(telemetryLogsCacheExp) && telemetryLogsCacheKey == sinceUnix {
-		cached := telemetryLogsCache
-		telemetryLogsCacheMu.RUnlock()
-		return cached
-	}
-	telemetryLogsCacheMu.RUnlock()
-
-	logs := make([]model.RelayLog, 0)
-	seen := make(map[int64]struct{})
-
-	cache, lock := relaylog.GetCacheAndLock()
-	lock.Lock()
-	for _, logItem := range cache {
-		if logItem.Time < sinceUnix {
-			continue
-		}
-		logs = append(logs, logItem)
-		if logItem.ID != 0 {
-			seen[logItem.ID] = struct{}{}
-		}
-	}
-	lock.Unlock()
-
-	keepEnabled, err := setting.GetBool(model.SettingKeyRelayLogKeepEnabled)
-	if err != nil || !keepEnabled || db.GetLogDB() == nil {
-		telemetryLogsCacheMu.Lock()
-		telemetryLogsCache = logs
-		telemetryLogsCacheKey = sinceUnix
-		telemetryLogsCacheExp = time.Now().Add(telemetryLogsCacheTTL)
-		telemetryLogsCacheMu.Unlock()
-		return logs
-	}
-
-	var dbLogs []model.RelayLog
-	if err := db.GetLogDB().WithContext(ctx).
-		Select("id", "time", "use_time", "error").
-		Where("time >= ?", sinceUnix).
-		Order("time ASC").
-		Find(&dbLogs).Error; err != nil {
-		telemetryLogsCacheMu.Lock()
-		telemetryLogsCache = logs
-		telemetryLogsCacheKey = sinceUnix
-		telemetryLogsCacheExp = time.Now().Add(telemetryLogsCacheTTL)
-		telemetryLogsCacheMu.Unlock()
-		return logs
-	}
-	for _, logItem := range dbLogs {
-		if logItem.ID != 0 {
-			if _, ok := seen[logItem.ID]; ok {
-				continue
-			}
-		}
-		logs = append(logs, logItem)
-	}
-
-	telemetryLogsCacheMu.Lock()
-	telemetryLogsCache = logs
-	telemetryLogsCacheKey = sinceUnix
-	telemetryLogsCacheExp = time.Now().Add(telemetryLogsCacheTTL)
-	telemetryLogsCacheMu.Unlock()
-
-	return logs
 }
 
 func TelemetrySummaryGet(ctx context.Context) (*model.OpsTelemetrySummary, error) {

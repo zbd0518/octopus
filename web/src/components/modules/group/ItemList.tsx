@@ -1,20 +1,16 @@
 'use client';
 
-import { useEffect, useId, useRef, useState } from 'react';
-import { GripVertical, X, Trash2, Waves, Dot, CircleAlert, CircleCheck, Loader2 } from 'lucide-react';
-import {
-    DragDropContext,
-    Draggable,
-    Droppable,
-    type DraggableProvided,
-    type DropResult,
-} from '@hello-pangea/dnd';
-import { motion, AnimatePresence } from 'motion/react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { CircleAlert, CircleCheck, Dot, GripVertical, Loader2, Trash2, Waves, X } from 'lucide-react';
+import { DragDropContext, Draggable, Droppable, type DraggableProvided, type DropResult } from '@hello-pangea/dnd';
+import { AnimatePresence, motion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { getModelIcon } from '@/lib/model-icons';
 import type { LLMChannel } from '@/api/endpoints/model';
+import { SettingKey, useSettingList } from '@/api/endpoints/setting';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 import { useTranslations } from 'next-intl';
+import { UpstreamPerfBadges, UpstreamPriceBadges } from './UpstreamPriceBadges';
 
 export interface SelectedMember extends LLMChannel {
     id: string;
@@ -50,6 +46,7 @@ function MemberItem({
     index,
     showWeight = false,
     showConfirmDelete = true,
+    showUpstreamMeta = true,
     layoutScope,
     dnd,
     isDragging,
@@ -62,6 +59,7 @@ function MemberItem({
     index: number;
     showWeight?: boolean;
     showConfirmDelete?: boolean;
+    showUpstreamMeta?: boolean;
     layoutScope?: string;
     dnd: MemberItemDnd;
     isDragging: boolean;
@@ -120,12 +118,11 @@ function MemberItem({
                 <span className={cn('relative', isDisabled && 'opacity-70')}>
                     <ModelAvatar size={18} />
                 </span>
-
-                <div className="relative flex min-w-0 flex-1 flex-col">
+                <div className="relative flex min-w-0 flex-1 flex-col gap-0.5">
                     <div className="flex min-w-0 items-center gap-1.5 md:gap-2">
                         <Tooltip side="top" sideOffset={10} align="start">
                             <TooltipTrigger className={cn(
-                                'min-w-0 text-xs font-medium truncate leading-tight md:text-sm',
+                                'min-w-0 max-w-[55%] text-left text-xs font-medium truncate leading-tight md:text-sm',
                                 isDisabled && 'text-muted-foreground',
                                 availabilityStatus === 'unavailable' && 'text-destructive'
                             )}>
@@ -133,6 +130,9 @@ function MemberItem({
                             </TooltipTrigger>
                             <TooltipContent key={member.name}>{member.name}</TooltipContent>
                         </Tooltip>
+                        {showUpstreamMeta ? (
+                            <UpstreamPerfBadges metrics={member.upstream_metrics} />
+                        ) : null}
                         {availabilityStatus === 'testing' ? <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
                         {availabilityStatus === 'available' ? <CircleCheck className="size-3.5 shrink-0 text-emerald-500" /> : null}
                         {availabilityStatus === 'unavailable' ? (
@@ -147,9 +147,17 @@ function MemberItem({
                             </Tooltip>
                         ) : null}
                     </div>
-                    <span className="inline-flex items-center gap-1 truncate text-[10px] leading-tight text-muted-foreground">
-                        <Dot className="size-3 opacity-70" />
-                        {member.channel_name}
+                    {showUpstreamMeta ? (
+                        <UpstreamPriceBadges
+                            price={member.upstream_price}
+                            balance={member.channel_balance}
+                            todayIncome={member.channel_today_income}
+                            className="min-w-0"
+                        />
+                    ) : null}
+                    <span className="inline-flex min-w-0 items-center gap-1 truncate text-xs font-semibold leading-tight text-foreground">
+                        <Dot className="size-3 shrink-0 opacity-70" />
+                        <span className="truncate">{member.channel_name}</span>
                     </span>
                 </div>
 
@@ -239,6 +247,10 @@ export interface MemberListProps {
      * Defaults to true.
      */
     showConfirmDelete?: boolean;
+    /**
+     * 是否展示上游价格/余额。分组卡预览默认关闭，编辑页默认开启。
+     */
+    showUpstreamMeta?: boolean;
     layoutScope?: string;
     availabilityById?: Record<string, MemberAvailabilityMeta>;
 }
@@ -255,11 +267,18 @@ export function MemberList({
     removingIds = new Set(),
     showWeight = false,
     showConfirmDelete = true,
+    showUpstreamMeta = true,
     layoutScope: externalLayoutScope,
     availabilityById = {},
 }: MemberListProps) {
     const internalLayoutScope = useId();
     const layoutScope = externalLayoutScope ?? internalLayoutScope;
+    const { data: settings } = useSettingList();
+    // 外观设置默认开启；仅当显式 false 时关闭。分组卡仍可通过 prop 强制隐藏。
+    const settingEnabled =
+        settings?.find((item) => item.key === SettingKey.GroupUpstreamMetaDisplayEnabled)?.value !==
+        'false';
+    const effectiveShowUpstreamMeta = showUpstreamMeta && settingEnabled;
 
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
     const prevMemberCountRef = useRef<number>(0);
@@ -364,6 +383,7 @@ export function MemberList({
                                                 index={index}
                                                 showWeight={showWeight}
                                                 showConfirmDelete={showConfirmDelete}
+                                                showUpstreamMeta={effectiveShowUpstreamMeta}
                                                 layoutScope={layoutScope}
                                                 dnd={{
                                                     innerRef: draggableProvided.innerRef,

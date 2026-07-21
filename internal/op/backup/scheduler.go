@@ -295,6 +295,7 @@ func DeleteWebDAVBackup(filename string) error {
 }
 
 // cleanupOldBackups removes old backup files, keeping only the newest maxBackups.
+// Returns an error describing any failed deletions (joined with semicolons).
 func cleanupOldBackups(client *WebDAVClient, remotePath string, maxBackups int) error {
 	files, err := client.List(remotePath)
 	if err != nil {
@@ -316,13 +317,19 @@ func cleanupOldBackups(client *WebDAVClient, remotePath string, maxBackups int) 
 		return backups[i].Name > backups[j].Name
 	})
 
+	var deleteErrors []string
 	for _, f := range backups[maxBackups:] {
 		if err := client.Delete(f.Path); err != nil {
+			errMsg := fmt.Sprintf("%s: %v", f.Name, err)
 			log.Warnf("failed to delete old backup %s: %v", f.Name, err)
+			deleteErrors = append(deleteErrors, errMsg)
 		} else {
 			log.Infof("deleted old webdav backup: %s", f.Name)
 		}
 	}
 
+	if len(deleteErrors) > 0 {
+		return fmt.Errorf("failed to delete %d old backups: %s", len(deleteErrors), strings.Join(deleteErrors, "; "))
+	}
 	return nil
 }

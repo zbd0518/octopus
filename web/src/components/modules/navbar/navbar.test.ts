@@ -16,3 +16,19 @@ test('active navbar item uses a visible accent color', () => {
         'active navbar items should not use the near-white sidebar foreground token',
     );
 });
+
+test('mobile nav labels escape overflow-x clipping via fixed anchors', () => {
+    // Labels must not be absolute children of the overflow-x-auto nav.
+    assert.match(source, /fixed z-\[60\]/);
+    assert.match(source, /getBoundingClientRect/);
+    assert.match(
+        source,
+        /overflow-x-auto[\s\S]*md:overflow-visible/,
+        'nav strip still scrolls horizontally on mobile',
+    );
+    assert.equal(
+        /absolute -top-7/.test(source),
+        false,
+        'legacy absolute -top-7 labels are clipped by overflow-x-auto',
+    );
+});

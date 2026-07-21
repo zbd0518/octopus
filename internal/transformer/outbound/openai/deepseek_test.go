@@ -1,7 +1,7 @@
 package openai
 
 import (
-	"encoding/json"
+	"github.com/lingyuins/octopus/internal/transformer"
 	"strings"
 	"testing"
 
@@ -96,17 +96,17 @@ func TestDeepSeekReasoningContentPreserved(t *testing.T) {
 		normalizeMessageForOpenAICompat(&compatRequest.Messages[i])
 	}
 
-	body, err := json.Marshal(compatRequest)
+	body, err := transformer.Marshal(compatRequest)
 	if err != nil {
 		t.Fatalf("marshal failed: %v", err)
 	}
 
 	var parsed map[string]interface{}
-	if err := json.Unmarshal(body, &parsed); err != nil {
+	if err := transformer.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("unmarshal failed: %v", err)
 	}
 
-	prettyJSON, _ := json.MarshalIndent(parsed, "", "  ")
+	prettyJSON, _ := transformer.MarshalIndent(parsed, "", "  ")
 	t.Logf("Request JSON:\n%s", string(prettyJSON))
 
 	messages, ok := parsed["messages"].([]interface{})
@@ -203,17 +203,17 @@ func TestDeepSeekReasoningEffortEnablesThinking(t *testing.T) {
 	compatRequest := cloneRequestForOpenAICompat(request)
 	sanitizeRequestForOpenAICompat(compatRequest, "https://api.deepseek.com/v1", false)
 
-	body, err := json.Marshal(compatRequest)
+	body, err := transformer.Marshal(compatRequest)
 	if err != nil {
 		t.Fatalf("marshal failed: %v", err)
 	}
 
 	var parsed map[string]interface{}
-	if err := json.Unmarshal(body, &parsed); err != nil {
+	if err := transformer.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("unmarshal failed: %v", err)
 	}
 
-	prettyJSON, _ := json.MarshalIndent(parsed, "", "  ")
+	prettyJSON, _ := transformer.MarshalIndent(parsed, "", "  ")
 	t.Logf("Request JSON:\n%s", string(prettyJSON))
 
 	extraBody, ok := parsed["extra_body"].(map[string]interface{})
@@ -248,13 +248,13 @@ func TestDeepSeekNoThinkingWhenNotDetected(t *testing.T) {
 	compatRequest := cloneRequestForOpenAICompat(request)
 	sanitizeRequestForOpenAICompat(compatRequest, "https://api.openai.com/v1", false)
 
-	body, err := json.Marshal(compatRequest)
+	body, err := transformer.Marshal(compatRequest)
 	if err != nil {
 		t.Fatalf("marshal failed: %v", err)
 	}
 
 	var parsed map[string]interface{}
-	if err := json.Unmarshal(body, &parsed); err != nil {
+	if err := transformer.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("unmarshal failed: %v", err)
 	}
 
@@ -301,13 +301,13 @@ func TestDeepSeekDistinctReasoningPerTurn(t *testing.T) {
 		normalizeMessageForOpenAICompat(&compatRequest.Messages[i])
 	}
 
-	body, err := json.Marshal(compatRequest)
+	body, err := transformer.Marshal(compatRequest)
 	if err != nil {
 		t.Fatalf("marshal failed: %v", err)
 	}
 
 	var parsed map[string]interface{}
-	if err := json.Unmarshal(body, &parsed); err != nil {
+	if err := transformer.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("unmarshal failed: %v", err)
 	}
 
@@ -363,13 +363,13 @@ func TestMimoReasoningContentPreservedForXiaomiModel(t *testing.T) {
 		normalizeMessageForOpenAICompat(&compatRequest.Messages[i])
 	}
 
-	body, err := json.Marshal(compatRequest)
+	body, err := transformer.Marshal(compatRequest)
 	if err != nil {
 		t.Fatalf("marshal failed: %v", err)
 	}
 
 	var parsed map[string]interface{}
-	if err := json.Unmarshal(body, &parsed); err != nil {
+	if err := transformer.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("unmarshal failed: %v", err)
 	}
 
@@ -407,8 +407,8 @@ func TestMimoReasoningPreservedByChannelTypeEvenWhenGroupLooksChat(t *testing.T)
 			{Role: "user", Content: model.MessageContent{Content: strPtr("hello")}},
 			{Role: "assistant", ReasoningContent: &reasoningContent},
 			{Role: "assistant", ToolCalls: []model.ToolCall{{
-				ID:   "call_mimo_chat_group",
-				Type: "function",
+				ID:       "call_mimo_chat_group",
+				Type:     "function",
 				Function: model.FunctionCall{Name: "plan", Arguments: `{}`},
 			}}},
 		},
@@ -423,13 +423,13 @@ func TestMimoReasoningPreservedByChannelTypeEvenWhenGroupLooksChat(t *testing.T)
 		normalizeMessageForOpenAICompat(&compatRequest.Messages[i])
 	}
 
-	body, err := json.Marshal(compatRequest)
+	body, err := transformer.Marshal(compatRequest)
 	if err != nil {
 		t.Fatalf("marshal failed: %v", err)
 	}
 
 	var parsed map[string]interface{}
-	if err := json.Unmarshal(body, &parsed); err != nil {
+	if err := transformer.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("unmarshal failed: %v", err)
 	}
 

@@ -500,7 +500,7 @@ export function AppContainer() {
                             "[&_.header-action-icon]:max-[380px]:hidden [&_.header-action-icon]:max-[380px]:size-0",
                             "[&_.header-action-label]:max-[520px]:sr-only"
                         )}>
-                            <NotificationBell />
+                            {activeItem !== 'notification' && <NotificationBell />}
                             <Toolbar />
                         </div>
                     </div>

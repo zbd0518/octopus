@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -207,7 +206,7 @@ func TestSemanticCacheHitPayload_AddsSemanticHitMarkerAndRemovesProviderCachedTo
 		} `json:"octopus"`
 		Usage map[string]any `json:"usage"`
 	}
-	if err := json.Unmarshal(normalized, &parsed); err != nil {
+	if err := jsonAPI.Unmarshal(normalized, &parsed); err != nil {
 		t.Fatalf("unmarshal normalized payload: %v", err)
 	}
 	if !parsed.Octopus.SemanticCache.Hit {

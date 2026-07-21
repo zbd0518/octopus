@@ -33,10 +33,10 @@ func TestClassifyGroupMutationError(t *testing.T) {
 			wantOK:     true,
 		},
 		{
-			name:       "duplicate group name",
-			err:        errors.New("UNIQUE constraint failed: groups.name"),
+			name:       "duplicate group name (composite index)",
+			err:        errors.New("constraint failed: UNIQUE constraint failed: groups.endpoint_type, groups.name (2067)"),
 			wantStatus: http.StatusConflict,
-			wantMsg:    "group name already exists",
+			wantMsg:    "already exists",
 			wantOK:     true,
 		},
 		{

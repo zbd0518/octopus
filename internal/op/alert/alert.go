@@ -106,6 +106,8 @@ func RuleDelete(ctx context.Context, id int) error {
 		return fmt.Errorf("alert rule not found")
 	}
 	invalidateRulesCache()
+	// 清理已删除规则的状态缓存，防止无界增长（issue #149）。
+	stateCache.Delete(id)
 	return nil
 }
 

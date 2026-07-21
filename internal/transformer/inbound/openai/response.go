@@ -2,8 +2,8 @@ package openai
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/lingyuins/octopus/internal/transformer"
 	"strings"
 
 	"github.com/samber/lo"
@@ -53,7 +53,7 @@ type ResponseInbound struct {
 
 func (i *ResponseInbound) TransformRequest(ctx context.Context, body []byte) (*model.InternalLLMRequest, error) {
 	var req ResponsesRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+	if err := transformer.Unmarshal(body, &req); err != nil {
 		return nil, fmt.Errorf("failed to decode responses api request: %w", err)
 	}
 
@@ -75,7 +75,7 @@ func (i *ResponseInbound) TransformResponse(ctx context.Context, response *model
 	// Convert to Responses API format
 	resp := convertToResponsesAPIResponse(response)
 
-	body, err := json.Marshal(resp)
+	body, err := transformer.Marshal(resp)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal responses api response: %w", err)
 	}
@@ -211,7 +211,7 @@ func (i *ResponseInbound) enqueueEvent(ev *ResponsesStreamEvent) []byte {
 	ev.SequenceNumber = i.sequenceNumber
 	i.sequenceNumber++
 
-	data, err := json.Marshal(ev)
+	data, err := transformer.Marshal(ev)
 	if err != nil {
 		return nil
 	}
@@ -724,19 +724,19 @@ type ResponsesInput struct {
 
 func (i ResponsesInput) MarshalJSON() ([]byte, error) {
 	if i.Text != nil {
-		return json.Marshal(i.Text)
+		return transformer.Marshal(i.Text)
 	}
-	return json.Marshal(i.Items)
+	return transformer.Marshal(i.Items)
 }
 
 func (i *ResponsesInput) UnmarshalJSON(data []byte) error {
 	var text string
-	if err := json.Unmarshal(data, &text); err == nil {
+	if err := transformer.Unmarshal(data, &text); err == nil {
 		i.Text = &text
 		return nil
 	}
 	var items []ResponsesItem
-	if err := json.Unmarshal(data, &items); err == nil {
+	if err := transformer.Unmarshal(data, &items); err == nil {
 		i.Items = items
 		return nil
 	}
@@ -847,14 +847,14 @@ type ResponsesToolChoice struct {
 
 func (t *ResponsesToolChoice) UnmarshalJSON(data []byte) error {
 	var mode string
-	if err := json.Unmarshal(data, &mode); err == nil {
+	if err := transformer.Unmarshal(data, &mode); err == nil {
 		t.Mode = &mode
 		return nil
 	}
 
 	type Alias ResponsesToolChoice
 	var alias Alias
-	if err := json.Unmarshal(data, &alias); err == nil {
+	if err := transformer.Unmarshal(data, &alias); err == nil {
 		*t = ResponsesToolChoice(alias)
 		return nil
 	}
@@ -868,9 +868,9 @@ type ResponsesTextOptions struct {
 }
 
 type ResponsesTextFormat struct {
-	Type   string          `json:"type,omitempty"`
-	Name   string          `json:"name,omitempty"`
-	Schema json.RawMessage `json:"schema,omitempty"`
+	Type   string                 `json:"type,omitempty"`
+	Name   string                 `json:"name,omitempty"`
+	Schema transformer.RawMessage `json:"schema,omitempty"`
 }
 
 type ResponsesReasoning struct {
@@ -1210,7 +1210,7 @@ func convertToolsToInternal(tools []ResponsesTool) ([]model.Tool, error) {
 	for _, tool := range tools {
 		switch tool.Type {
 		case "function":
-			params, err := json.Marshal(tool.Parameters)
+			params, err := transformer.Marshal(tool.Parameters)
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal function parameters: %w", err)
 			}

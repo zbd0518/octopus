@@ -370,8 +370,13 @@ func TestBuildOpsTelemetryRuntimeSignals_FallsBackToRecentLogs(t *testing.T) {
 		{Time: now.Add(-40 * time.Second).Unix(), UseTime: 200, Error: "upstream error"},
 		{Time: now.Add(-30 * time.Second).Unix(), UseTime: 900},
 	}
+	sample := opsTelemetryLogSample{
+		Latencies:     []int{100, 200, 900},
+		ThroughputRPS: float64(3) / 60,
+		Trend:         buildOpsTelemetryTrendFromLogs(logs, now, 0),
+	}
 
-	got := buildOpsTelemetryRuntimeSignals(snap, logs, now)
+	got := buildOpsTelemetryRuntimeSignals(snap, sample, now)
 
 	if got.P95LatencyMs != 900 {
 		t.Fatalf("P95LatencyMs = %v, want 900", got.P95LatencyMs)
