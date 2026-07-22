@@ -2,11 +2,15 @@ package relay
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestClassifyRelayError_Success(t *testing.T) {
@@ -405,6 +409,84 @@ func TestExtractUpstreamErrorDetail(t *testing.T) {
 				t.Errorf("extractUpstreamErrorDetail() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestExtractUpstreamErrorDetailFromWrappedAttemptError(t *testing.T) {
+	// attempt() 会把 forward 错误再包一层 "channel X adapter=Y attempt N/M: ..."
+	// 透传逻辑必须仍能抽出上游 body。
+	err := errors.New(`channel foo adapter=openai-chat attempt 1/4: upstream error: 400: {"error":{"message":"输入内容过长","type":"invalid_request_error","code":"context_length_exceeded"}}`)
+	got := extractUpstreamErrorDetail(err)
+	want := `400: {"error":{"message":"输入内容过长","type":"invalid_request_error","code":"context_length_exceeded"}}`
+	if got != want {
+		t.Fatalf("extractUpstreamErrorDetail() = %q, want %q", got, want)
+	}
+}
+
+func TestWriteClientTerminalErrorPassesUpstreamJSONBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	upstreamBody := `{"error":{"message":"输入内容过长，已超过当前模型的上下文限制，请减少历史消息、文件内容或提示词后重试。","type":"invalid_request_error","param":"","code":"context_length_exceeded"}}`
+	err := fmt.Errorf("channel demo adapter=openai-chat attempt 1/4: upstream error: 400: %s", upstreamBody)
+
+	writeClientTerminalError(c, http.StatusBadRequest, err)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("content-type = %q, want application/json", ct)
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != upstreamBody {
+		t.Fatalf("body = %s, want %s", got, upstreamBody)
+	}
+	if !strings.Contains(w.Body.String(), "context_length_exceeded") {
+		t.Fatalf("body missing context_length_exceeded: %s", w.Body.String())
+	}
+}
+
+func TestWriteClientTerminalErrorWrapsPlainTextBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	err := errors.New("upstream error: 400: prompt is too long")
+	writeClientTerminalError(c, http.StatusBadRequest, err)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	var payload struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	if err := jsonAPI.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal body: %v; body=%s", err, w.Body.String())
+	}
+	if payload.Error.Message != "prompt is too long" {
+		t.Fatalf("message = %q, want prompt is too long", payload.Error.Message)
+	}
+	if payload.Error.Type != "invalid_request_error" {
+		t.Fatalf("type = %q, want invalid_request_error", payload.Error.Type)
+	}
+}
+
+func TestWriteClientTerminalErrorFallsBackToBadGatewayWithoutHTTPStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	writeClientTerminalError(c, 0, errors.New("connection refused"))
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusBadGateway, w.Body.String())
 	}
 }
 

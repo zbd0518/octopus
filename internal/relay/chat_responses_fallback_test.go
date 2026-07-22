@@ -240,3 +240,15 @@ func TestShouldTryAdapterFallbackAllowsNextChannelFailures(t *testing.T) {
 		t.Fatal("expected route-scoped failure to allow adapter fallback")
 	}
 }
+
+func TestShouldTryAdapterFallbackSkipsClientErrorScopeNone(t *testing.T) {
+	result := attemptResult{
+		Success:  false,
+		Written:  false,
+		Decision: RetryDecision{Scope: ScopeNone, Reason: "bad request, client error", Code: 400, IsError: true},
+	}
+
+	if shouldTryAdapterFallback(result, 0, 2) {
+		t.Fatal("expected client error ScopeNone to skip adapter fallback so upstream body can be returned immediately")
+	}
+}

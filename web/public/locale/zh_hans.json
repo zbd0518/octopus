@@ -1399,6 +1399,17 @@
         "notifyCooldown": "通知冷却（秒）",
         "notifyEnabled": "失败通知",
         "recoveryNotify": "恢复通知"
+      },
+      "logQueueDropPolicy": {
+        "label": "日志队列丢弃策略",
+        "hint": "高 QPS 时内存日志队列满的处理策略。「丢弃最旧」（推荐）保留最新诊断数据；「丢弃最新」保留历史序列完整性；「禁用」阻塞触发刷盘（高负载下可能拖慢转发）。",
+        "disabled": "禁用（满时刷盘）",
+        "oldest": "丢弃最旧（推荐）",
+        "newest": "丢弃最新"
+      },
+      "streamReplay": {
+        "label": "流重连重放",
+        "hint": "启用流式请求的断线重连缓冲功能。关闭后立即释放流事件缓冲区以降低内存占用（见 OOM 诊断报告），但客户端无法重连恢复流。"
       }
     },
     "autoStrategy": {
@@ -1989,7 +2000,9 @@
         "addFailed": "Passkey 添加失败",
         "deleteSuccess": "Passkey 已删除",
         "deleteFailed": "删除失败",
-        "insecureContext": "当前页面非安全上下文（非 HTTPS 且非 localhost）。Passkey 要求安全上下文，请通过 HTTPS 或 localhost 访问后再添加。"
+        "insecureContext": "当前页面非安全上下文（非 HTTPS 且非 localhost）。Passkey 要求安全上下文，请通过 HTTPS 或 localhost 访问后再添加。",
+        "currentOrigin": "当前访问地址",
+        "originHint": "确保此地址已配置在「设置 → Passkey(WebAuthn) → 允许的 Origin」中"
       }
     },
     "info": {
@@ -2595,7 +2608,7 @@
     },
     "viewOptions": {
       "title": "显示字段",
-      "endpointType": "接口类型",
+      "endpointType": "出站协议",
       "channelName": "渠道名称",
       "actualModel": "实际模型",
       "apiKeyName": "密钥名称",
@@ -2603,7 +2616,9 @@
       "cost": "费用",
       "reset": "重置",
       "tps": "TPS",
-      "cacheHitRate": "缓存命中率"
+      "cacheHitRate": "缓存命中率",
+      "reasoningEffort": "思考强度",
+      "reasoningTokens": "思考量"
     },
     "card": {
       "error": "错误",
@@ -2646,7 +2661,23 @@
         "volcengine": "Volcengine"
       },
       "tps": "TPS",
-      "cacheHitRate": "缓存命中率"
+      "cacheHitRate": "缓存命中率",
+      "reasoningEffort": "思考强度",
+      "reasoningTokens": "思考",
+      "adapterLabels": {
+        "chat": "Chat Completions",
+        "response": "Responses",
+        "anthropic": "Anthropic",
+        "gemini": "Gemini",
+        "volcengine": "Volcengine",
+        "embedding": "Embedding",
+        "mimo": "MiMo",
+        "cloudflare": "Cloudflare",
+        "passthrough": "Passthrough",
+        "codex": "Codex"
+      },
+      "reasoningChars": "思考",
+      "reasoningCharsUnit": "字"
     }
   },
   "channel": {

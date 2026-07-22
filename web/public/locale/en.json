@@ -1443,6 +1443,17 @@
         "notifyCooldown": "Notify cooldown (sec)",
         "notifyEnabled": "Failure notification",
         "recoveryNotify": "Recovery notification"
+      },
+      "logQueueDropPolicy": {
+        "label": "Log queue drop policy",
+        "hint": "When the in-memory log queue is full during high QPS, drop old/new logs or trigger immediate flush. 'oldest' (recommended) keeps recent diagnostics; 'newest' preserves historical sequence; 'disabled' blocks to flush (may stall high-load relay).",
+        "disabled": "Disabled (flush on full)",
+        "oldest": "Drop oldest (recommended)",
+        "newest": "Drop newest"
+      },
+      "streamReplay": {
+        "label": "Stream reconnect replay",
+        "hint": "Enable buffering for streaming reconnect & replay. Disabling immediately frees stream event buffers to reduce memory (see OOM diagnostics report), but clients cannot reconnect to resume streams."
       }
     },
     "autoStrategy": {
@@ -2033,7 +2044,9 @@
         "addFailed": "Failed to add Passkey",
         "deleteSuccess": "Passkey removed",
         "deleteFailed": "Failed to remove",
-        "insecureContext": "This page is not a secure context (not HTTPS and not localhost). Passkey requires a secure context — please access via HTTPS or localhost to add a passkey."
+        "insecureContext": "This page is not a secure context (not HTTPS and not localhost). Passkey requires a secure context — please access via HTTPS or localhost to add a passkey.",
+        "currentOrigin": "Current Origin",
+        "originHint": "Ensure this URL is configured in Settings → Passkey(WebAuthn) → Allowed Origin"
       }
     },
     "info": {
@@ -2639,7 +2652,7 @@
     },
     "viewOptions": {
       "title": "Display Fields",
-      "endpointType": "Endpoint Type",
+      "endpointType": "Outbound Protocol",
       "channelName": "Channel Name",
       "actualModel": "Actual Model",
       "apiKeyName": "API Key Name",
@@ -2647,7 +2660,9 @@
       "cost": "Cost",
       "reset": "Reset",
       "tps": "TPS",
-      "cacheHitRate": "Cache Hit Rate"
+      "cacheHitRate": "Cache Hit Rate",
+      "reasoningEffort": "Reasoning Effort",
+      "reasoningTokens": "Reasoning Size"
     },
     "card": {
       "error": "Error",
@@ -2690,7 +2705,23 @@
         "volcengine": "Volcengine"
       },
       "tps": "TPS",
-      "cacheHitRate": "Cache Hit Rate"
+      "cacheHitRate": "Cache Hit Rate",
+      "reasoningEffort": "Reasoning Effort",
+      "reasoningTokens": "Reasoning",
+      "adapterLabels": {
+        "chat": "Chat Completions",
+        "response": "Responses",
+        "anthropic": "Anthropic",
+        "gemini": "Gemini",
+        "volcengine": "Volcengine",
+        "embedding": "Embedding",
+        "mimo": "MiMo",
+        "cloudflare": "Cloudflare",
+        "passthrough": "Passthrough",
+        "codex": "Codex"
+      },
+      "reasoningChars": "Reasoning",
+      "reasoningCharsUnit": " chars"
     }
   },
   "channel": {

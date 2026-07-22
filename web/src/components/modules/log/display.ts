@@ -48,6 +48,23 @@ function lastAttemptChannelId(attempts: ChannelAttempt[] | undefined) {
     return 0;
 }
 
+/** 取最终成功 attempt 的 adapter_type；无成功则取最后一个非空 adapter_type。 */
+function resolveOutboundAdapterType(attempts: ChannelAttempt[] | undefined): string {
+    if (!attempts?.length) return '';
+    for (let i = attempts.length - 1; i >= 0; i--) {
+        const a = attempts[i];
+        if (a.status === 'success' && a.adapter_type?.trim()) {
+            return a.adapter_type.trim();
+        }
+    }
+    for (let i = attempts.length - 1; i >= 0; i--) {
+        const t = attempts[i].adapter_type?.trim();
+        if (t) return t;
+    }
+    return '';
+}
+
+
 function isStreamRequest(requestContent?: string | null) {
     if (!requestContent) return false;
     try {
@@ -142,6 +159,7 @@ export function resolveLogDisplayFields(
         actualModelName,
         endpointType,
         requestTypeKey: inferRequestTypeKey(endpointType, [actualModelName, requestModelName], requestContent),
+        outboundAdapterType: resolveOutboundAdapterType(mergedAttempts),
         channelId,
         channelName,
         semanticCacheHit: detail?.semantic_cache_hit ?? log.semantic_cache_hit ?? false,

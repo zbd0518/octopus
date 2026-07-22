@@ -306,6 +306,16 @@ export function SettingAccount() {
                             </p>
                         </div>
                     )}
+                    <div className="mb-4 flex items-start gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2.5">
+                        <ShieldAlert className="size-4 shrink-0 text-blue-600 dark:text-blue-400 mt-0.5" />
+                        <div className="text-xs leading-relaxed text-blue-700 dark:text-blue-300">
+                            <div className="font-medium mb-1">{t('account.passkey.currentOrigin')}</div>
+                            <div className="font-mono text-[11px] break-all">
+                                {typeof window !== 'undefined' ? window.location.origin : ''}
+                            </div>
+                            <div className="mt-1.5 opacity-90">{t('account.passkey.originHint')}</div>
+                        </div>
+                    </div>
 
                     <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
                         <Input

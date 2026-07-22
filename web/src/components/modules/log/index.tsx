@@ -299,7 +299,7 @@ function LogFilterBar({
                 <PopoverContent align="end" className="w-52 p-3">
                     <p className="text-xs font-medium text-muted-foreground mb-2">{tView('title')}</p>
                     <div className="flex flex-col gap-1">
-                        {(['endpointType', 'channelName', 'actualModel', 'apiKeyName', 'clientIP', 'cost', 'tps', 'cacheHitRate'] as LogFieldName[]).map((field) => (
+                        {(['endpointType', 'channelName', 'actualModel', 'apiKeyName', 'clientIP', 'cost', 'tps', 'cacheHitRate', 'reasoningEffort', 'reasoningTokens'] as LogFieldName[]).map((field) => (
                             <label key={field} className="flex items-center gap-2 cursor-pointer rounded px-1.5 py-1 text-xs hover:bg-muted transition-colors">
                                 <input
                                     type="checkbox"

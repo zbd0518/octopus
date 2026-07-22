@@ -296,6 +296,20 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 		relayLog.InputTokens = int(m.InternalResponse.Usage.PromptTokens)
 		relayLog.OutputTokens = int(m.InternalResponse.Usage.CompletionTokens)
 		relayLog.Cost = m.Stats.InputCost + m.Stats.OutputCost
+		if m.InternalResponse.Usage.CompletionTokensDetails != nil {
+			relayLog.ReasoningTokens = int(m.InternalResponse.Usage.CompletionTokensDetails.ReasoningTokens)
+		}
+	}
+
+	// 出站最终思考强度：以 InternalRequest 当前值为准（出站 sanitize/normalize 后写回）。
+	if m.InternalRequest != nil {
+		relayLog.ReasoningEffort = strings.TrimSpace(m.InternalRequest.ReasoningEffort)
+	}
+
+	// 无官方 reasoning_tokens 时，回退统计思考文本字符数（UTF-8 rune，中英等统一按字计）。
+	// 有官方 token 时不写 chars，避免前端同时出现两种口径。
+	if relayLog.ReasoningTokens <= 0 {
+		relayLog.ReasoningChars = reasoningCharsFromResponse(m.InternalResponse)
 	}
 
 	// 大字段（请求/响应内容）记录开关。关闭时跳过 JSON 构造与存储，可大幅
@@ -382,6 +396,25 @@ func cacheReadTokensFromUsage(resp *transformerModel.InternalLLMResponse) int {
 		return int(resp.Usage.PromptTokensDetails.CachedTokens)
 	}
 	return 0
+}
+
+// reasoningCharsFromResponse 统计响应里思考文本的字符数（UTF-8 rune）。
+// 一个中文/英文/其他字符都计 1，用于 Anthropic 等无官方 reasoning_tokens 的回退展示。
+func reasoningCharsFromResponse(resp *transformerModel.InternalLLMResponse) int {
+	if resp == nil {
+		return 0
+	}
+	total := 0
+	for i := range resp.Choices {
+		choice := &resp.Choices[i]
+		if choice.Message != nil {
+			total += utf8.RuneCountInString(choice.Message.GetReasoningContent())
+		}
+		if choice.Delta != nil {
+			total += utf8.RuneCountInString(choice.Delta.GetReasoningContent())
+		}
+	}
+	return total
 }
 
 func filterMessageForLog(msg *transformerModel.Message) *transformerModel.Message {

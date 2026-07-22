@@ -11,7 +11,9 @@ export type LogFieldName =
     | 'clientIP'
     | 'cost'
     | 'tps'
-    | 'cacheHitRate';
+    | 'cacheHitRate'
+    | 'reasoningEffort'
+    | 'reasoningTokens';
 
 export type LogFieldVisibility = Record<LogFieldName, boolean>;
 
@@ -24,6 +26,8 @@ export const DEFAULT_LOG_FIELD_VISIBILITY: LogFieldVisibility = {
     cost: true,
     tps: true,
     cacheHitRate: true,
+    reasoningEffort: true,
+    reasoningTokens: true,
 };
 
 type LogFieldVisibilityState = {

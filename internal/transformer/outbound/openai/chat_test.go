@@ -1378,3 +1378,70 @@ func TestChatOutboundTransformResponse_ParsesMimoExtendedFields(t *testing.T) {
 		t.Fatalf("prompt_tokens_details not parsed as expected: %+v", got.Usage.PromptTokensDetails)
 	}
 }
+
+func TestChatOutboundTransformRequest_PreservesOpenAIMaxReasoningEffort(t *testing.T) {
+	outbound := &ChatOutbound{}
+	request := &model.InternalLLMRequest{
+		Model:           "gpt-5.5",
+		ReasoningEffort: "max",
+		Messages: []model.Message{{
+			Role: "user",
+			Content: model.MessageContent{
+				Content: loPtr("hello"),
+			},
+		}},
+	}
+
+	httpReq, err := outbound.TransformRequest(context.Background(), request, "https://api.openai.com/v1", "sk-test")
+	if err != nil {
+		t.Fatalf("TransformRequest() error = %v", err)
+	}
+	body, err := io.ReadAll(httpReq.Body)
+	if err != nil {
+		t.Fatalf("failed to read request body: %v", err)
+	}
+	var got struct {
+		ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	}
+	if err := transformer.Unmarshal(body, &got); err != nil {
+		t.Fatalf("failed to unmarshal outbound body: %v", err)
+	}
+	if got.ReasoningEffort != "max" {
+		t.Fatalf("expected openai reasoning_effort max, got %q", got.ReasoningEffort)
+	}
+	if request.ReasoningEffort != "max" {
+		t.Fatalf("expected in-memory request effort max after sanitize, got %q", request.ReasoningEffort)
+	}
+}
+
+func TestChatOutboundTransformRequest_PreservesOpenAIXHighReasoningEffort(t *testing.T) {
+	outbound := &ChatOutbound{}
+	request := &model.InternalLLMRequest{
+		Model:           "gpt-5.5",
+		ReasoningEffort: "xhigh",
+		Messages: []model.Message{{
+			Role: "user",
+			Content: model.MessageContent{
+				Content: loPtr("hello"),
+			},
+		}},
+	}
+
+	httpReq, err := outbound.TransformRequest(context.Background(), request, "https://api.openai.com/v1", "sk-test")
+	if err != nil {
+		t.Fatalf("TransformRequest() error = %v", err)
+	}
+	body, err := io.ReadAll(httpReq.Body)
+	if err != nil {
+		t.Fatalf("failed to read request body: %v", err)
+	}
+	var got struct {
+		ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	}
+	if err := transformer.Unmarshal(body, &got); err != nil {
+		t.Fatalf("failed to unmarshal outbound body: %v", err)
+	}
+	if got.ReasoningEffort != "xhigh" {
+		t.Fatalf("expected openai reasoning_effort xhigh, got %q", got.ReasoningEffort)
+	}
+}

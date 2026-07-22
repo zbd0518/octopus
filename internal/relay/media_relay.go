@@ -315,7 +315,8 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					lastErr = fwdErr
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
 					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP)
-					resp.Error(c, http.StatusBadGateway, lastErr.Error())
+					// 与 LLM relay 一致：客户端错误原样回给下游，不吞成 502。
+					writeClientTerminalError(c, decision.Code, fwdErr)
 					return
 				case ScopeAbortAll:
 					lastErr = fwdErr

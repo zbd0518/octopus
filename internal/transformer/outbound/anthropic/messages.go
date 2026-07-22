@@ -250,10 +250,27 @@ func (o *MessageOutbound) TransformStream(ctx context.Context, eventData []byte)
 		if streamEvent.Usage != nil {
 			usage := convertAnthropicUsage(streamEvent.Usage)
 			if o.streamUsage != nil {
-				usage.PromptTokens = o.streamUsage.PromptTokens
-				usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+				// message_start 通常只有 input/cache；message_delta 补 output。
+				if usage.PromptTokens == 0 && o.streamUsage.PromptTokens > 0 {
+					usage.PromptTokens = o.streamUsage.PromptTokens
+				}
+				if usage.PromptTokensDetails == nil && o.streamUsage.PromptTokensDetails != nil {
+					usage.PromptTokensDetails = o.streamUsage.PromptTokensDetails
+				}
+				if usage.CacheCreationInputTokens == 0 && o.streamUsage.CacheCreationInputTokens > 0 {
+					usage.CacheCreationInputTokens = o.streamUsage.CacheCreationInputTokens
+				}
+				usage.AnthropicUsage = true
 			}
+			usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+			if usage.PromptTokensDetails != nil {
+				usage.TotalTokens += usage.PromptTokensDetails.CachedTokens
+			}
+			usage.TotalTokens += usage.CacheCreationInputTokens
 			o.streamUsage = usage
+			// 必须写到本 chunk：入站聚合只认 chunk.Usage；仅更新 streamUsage
+			// 而等 message_stop 时，部分网关可能不发 stop 或 stop 被丢弃，导致日志 usage 全 0。
+			resp.Usage = usage
 		}
 
 		if streamEvent.Delta != nil && streamEvent.Delta.StopReason != nil {
@@ -311,19 +328,21 @@ func convertToAnthropicRequest(req *model.InternalLLMRequest) *anthropicModel.Me
 	}
 
 	// Convert thinking/reasoning
-	if req.ReasoningEffort != "" {
-		if req.AdaptiveThinking {
-			result.Thinking = &anthropicModel.Thinking{
-				Type: anthropicModel.ThinkingTypeAdaptive,
-			}
-			result.OutputConfig = &anthropicModel.OutputConfig{
-				Effort: req.ReasoningEffort,
-			}
-		} else {
-			result.Thinking = &anthropicModel.Thinking{
-				Type:         anthropicModel.ThinkingTypeEnabled,
-				BudgetTokens: getThinkingBudget(req.ReasoningEffort, req.ReasoningBudget),
-			}
+	// 优先级：
+	// 1) 客户端显式 budget_tokens（ReasoningBudget）→ 保留 enabled+budget，兼容老请求
+	// 2) 有 reasoning effort（含 AdaptiveThinking / OpenAI reasoning_effort）→
+	//    与 Claude Code 一致：adaptive + output_config.effort 原样透传，不再猜 budget
+	if req.ReasoningBudget != nil {
+		result.Thinking = &anthropicModel.Thinking{
+			Type:         anthropicModel.ThinkingTypeEnabled,
+			BudgetTokens: getThinkingBudget(req.ReasoningEffort, req.ReasoningBudget),
+		}
+	} else if effort := strings.TrimSpace(req.ReasoningEffort); effort != "" {
+		result.Thinking = &anthropicModel.Thinking{
+			Type: anthropicModel.ThinkingTypeAdaptive,
+		}
+		result.OutputConfig = &anthropicModel.OutputConfig{
+			Effort: effort,
 		}
 	}
 
@@ -757,13 +776,18 @@ func getThinkingBudget(effort string, budget *int64) *int64 {
 	}
 
 	var result int64
-	switch effort {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
 	case anthropicModel.EffortLow:
 		result = 1024
 	case anthropicModel.EffortMedium:
 		result = 8192
 	case anthropicModel.EffortHigh:
 		result = 32768
+	case anthropicModel.EffortXHigh:
+		// 扩展高强度：介于 high 与 max 之间，给更大 budget。
+		result = 65536
+	case anthropicModel.EffortMax:
+		result = 128000
 	default:
 		result = 8192
 	}

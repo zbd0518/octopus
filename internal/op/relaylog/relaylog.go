@@ -267,19 +267,42 @@ func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) error {
 	}
 
 	relayLogCacheLock.Lock()
-	relayLogCache = append(relayLogCache, relayLog)
+	defer relayLogCacheLock.Unlock()
+
+	// 应用队列丢弃策略，防止高 QPS 下内存无界增长（见 issue OOM 诊断报告）。
 	if len(relayLogCache) >= maxSize {
-		if enabled {
-			relayLogCacheLock.Unlock()
-			triggerFlush()
-			return nil
+		dropPolicy, _ := setting.GetString(model.SettingKeyRelayLogQueueDropPolicy)
+		if dropPolicy == "" {
+			dropPolicy = "oldest" // 默认丢弃最旧
 		}
-		keepSize := maxSize / 2
-		if len(relayLogCache) > keepSize {
-			relayLogCache = relayLogCache[len(relayLogCache)-keepSize:]
+
+		switch dropPolicy {
+		case "disabled":
+			// 阻塞触发刷盘（旧行为：满 200 触发异步 flush，本次直接返回）
+			if enabled {
+				relayLogCacheLock.Unlock()
+				triggerFlush()
+				return nil
+			}
+			// 不保存到数据库时，保留最近一半
+			keepSize := maxSize / 2
+			if len(relayLogCache) > keepSize {
+				relayLogCache = relayLogCache[len(relayLogCache)-keepSize:]
+			}
+		case "oldest":
+			// 丢弃最旧日志（推荐：保留最新的诊断数据）
+			relayLogCache = relayLogCache[1:]
+		case "newest":
+			// 丢弃最新日志（保留历史序列完整性，但可能丢失最新错误）
+			// 不追加新日志，直接返回
+			return nil
+		default:
+			// 未知策略，回退到丢弃最旧
+			relayLogCache = relayLogCache[1:]
 		}
 	}
-	relayLogCacheLock.Unlock()
+
+	relayLogCache = append(relayLogCache, relayLog)
 	return nil
 }
 
@@ -707,6 +730,7 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 					"client_ip",
 					"endpoint_type", "channel_id", "channel_name", "actual_model_name",
 					"input_tokens", "output_tokens", "semantic_cache_hit", "cache_read_tokens",
+					"reasoning_effort", "reasoning_tokens", "reasoning_chars",
 					"ftut", "use_time",
 					"cost", "error", "attempts", "total_attempts", "is_test")
 			if filter.StartTime != nil {

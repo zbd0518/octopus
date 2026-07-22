@@ -226,3 +226,57 @@ test('formatJsonForCopy returns empty string for empty or missing input', () => 
 
 
 
+
+test('resolveLogDisplayFields prefers successful attempt adapter_type as outbound protocol', () => {
+    const log = buildLog({
+        attempts: [
+            {
+                channel_id: 1,
+                channel_name: 'A',
+                model_name: 'gpt-5.5',
+                adapter_type: 'chat',
+                attempt_num: 1,
+                status: 'failed',
+                duration: 5,
+            },
+            {
+                channel_id: 2,
+                channel_name: 'B',
+                model_name: 'gpt-5.5',
+                adapter_type: 'response',
+                attempt_num: 2,
+                status: 'success',
+                duration: 8,
+            },
+        ],
+    });
+    const result = resolveLogDisplayFields(log);
+    assert.equal(result.outboundAdapterType, 'response');
+});
+
+test('resolveLogDisplayFields falls back to last non-empty adapter_type when no success', () => {
+    const log = buildLog({
+        attempts: [
+            {
+                channel_id: 1,
+                channel_name: 'A',
+                model_name: 'claude',
+                adapter_type: 'anthropic',
+                attempt_num: 1,
+                status: 'failed',
+                duration: 5,
+            },
+            {
+                channel_id: 2,
+                channel_name: 'B',
+                model_name: 'claude',
+                adapter_type: '',
+                attempt_num: 2,
+                status: 'failed',
+                duration: 5,
+            },
+        ],
+    });
+    const result = resolveLogDisplayFields(log);
+    assert.equal(result.outboundAdapterType, 'anthropic');
+});

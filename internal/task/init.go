@@ -87,7 +87,7 @@ func Init() {
 		}
 	}
 
-	Register(TaskRelayLogSave, 10*time.Minute, false, func() {
+	Register(TaskRelayLogSave, 2*time.Minute, false, func() {
 		// 清理过期的 SSE 流 token（issue #149 内存优化补充）
 		relaylog.PurgeExpiredStreamTokens()
 

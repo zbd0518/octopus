@@ -139,15 +139,14 @@ func isLLMRequestFormat(request *model.InternalLLMRequest) bool {
 }
 
 func shouldTryAdapterFallback(result attemptResult, adapterIndex, attemptCount int) bool {
-	if result.Success || result.Written || result.Decision.Scope == ScopeAbortAll || adapterIndex >= attemptCount-1 {
+	if result.Success || result.Written || adapterIndex >= attemptCount-1 {
 		return false
 	}
-	// Key-scoped failures use the same credential across adapter formats, so
-	// trying another adapter only adds latency before the normal key retry path.
-	if result.Decision.Scope == ScopeSameChannel {
-		return false
-	}
-	return true
+	// 只有路由级失败（换候选）才值得尝试另一种出站 adapter 格式。
+	// 客户端错误 ScopeNone（如 context_length_exceeded 的 400）与 Key 级失败
+	// ScopeSameChannel 都不该再换 adapter：前者必须立刻把上游错误体回给下游，
+	// 后者换 adapter 只会用同一把 Key 多打一次，徒增延迟。
+	return result.Decision.Scope == ScopeNextChannel
 }
 func isZenCandidateChannelAllowed(requestModel string, channelType outbound.OutboundType, isEmbeddingRequest bool) bool {
 	preferred := detectZenPreferredChannelTypes(requestModel, isEmbeddingRequest)
@@ -693,16 +692,97 @@ const upstreamErrorDetailPrefix = "upstream error: "
 // 原样展示上游响应，而不是只看到笼统的决策摘要（issue #93）。
 //
 // 错误形如 "upstream error: 429: {\"error\":...}"，这里返回 "429: {\"error\":...}"；
+// 若外层再包了一层 channel/attempt 前缀，也会定位到 "upstream error: " 后截取。
 // 非 HTTP 错误（如网络错误、transformer 错误）则直接返回错误文本本身。
 func extractUpstreamErrorDetail(err error) string {
 	if err == nil {
 		return ""
 	}
 	s := err.Error()
-	if trimmed, ok := strings.CutPrefix(s, upstreamErrorDetailPrefix); ok {
-		return trimmed
+	if idx := strings.Index(s, upstreamErrorDetailPrefix); idx >= 0 {
+		return s[idx+len(upstreamErrorDetailPrefix):]
 	}
 	return s
+}
+
+// clientErrorType 为非 JSON 上游错误体合成 OpenAI 兼容 envelope 时选择 type。
+func clientErrorType(statusCode int) string {
+	switch statusCode {
+	case http.StatusBadRequest:
+		return "invalid_request_error"
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "authentication_error"
+	case http.StatusTooManyRequests:
+		return "rate_limit_error"
+	default:
+		return "api_error"
+	}
+}
+
+// writeClientTerminalError 在 ScopeNone 等「不再重试」的终态下，把上游错误尽量原样
+// 回给下游客户端，而不是吞成管理端风格的 502 "upstream service unavailable"。
+//
+// 这样下游（如 omp/oh-my-pi）才能识别 context_length_exceeded / prompt is too long
+// 等溢出信号并自动触发上下文压缩，而不是被网关伪装错误挡住。
+//
+// 策略：
+//  1. statusCode>=400 且错误中带有上游 JSON body → 原样 HTTP 状态 + 原样 body；
+//  2. 有上游纯文本 body → 包成 OpenAI 兼容 {"error":{...}}，状态码仍用上游；
+//  3. 没有可用 body → 合成最小 OpenAI 兼容错误；
+//  4. 非 HTTP 错误 / 无效状态 → 回退 BadGateway。
+func writeClientTerminalError(c *gin.Context, statusCode int, err error) {
+	if c == nil || c.Writer.Written() {
+		return
+	}
+	if statusCode < 400 {
+		resp.BadGateway(c)
+		return
+	}
+
+	detail := extractUpstreamErrorDetail(err)
+	bodyText := strings.TrimSpace(detail)
+	if prefix := fmt.Sprintf("%d: ", statusCode); strings.HasPrefix(bodyText, prefix) {
+		bodyText = strings.TrimSpace(bodyText[len(prefix):])
+	}
+
+	if bodyText != "" && bodyText != "response body too large" {
+		body := []byte(bodyText)
+		if jsonAPI.Valid(body) {
+			c.Data(statusCode, "application/json", body)
+			c.Abort()
+			return
+		}
+		if payload, mErr := jsonAPI.Marshal(map[string]any{
+			"error": map[string]any{
+				"message": bodyText,
+				"type":    clientErrorType(statusCode),
+				"code":    "",
+				"param":   "",
+			},
+		}); mErr == nil {
+			c.Data(statusCode, "application/json", payload)
+			c.Abort()
+			return
+		}
+	}
+
+	message := http.StatusText(statusCode)
+	if message == "" {
+		message = "request failed"
+	}
+	if payload, mErr := jsonAPI.Marshal(map[string]any{
+		"error": map[string]any{
+			"message": message,
+			"type":    clientErrorType(statusCode),
+			"code":    "",
+			"param":   "",
+		},
+	}); mErr == nil {
+		c.Data(statusCode, "application/json", payload)
+		c.Abort()
+		return
+	}
+	resp.Error(c, statusCode, message)
 }
 
 // copyHeaders 复制请求头，过滤 hop-by-hop 头
@@ -1157,6 +1237,7 @@ func handleClientDisconnect(req *relayRequest, allAttempts []dbmodel.ChannelAtte
 func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, maxKeyRetriesPerRoute int, maxRouteRetries int, ratelimitCooldown int, maxTotalAttempts int) (*inflightRelayResult, error) {
 	var allAttempts []dbmodel.ChannelAttempt
 	var lastErr error
+	rateLimitHoldCfg := getRateLimitHoldConfig()
 
 	// forwardedBase 记录进入当前路由轮次之前已经发生的真实转发次数（跨轮次累加）。
 	// 最大总尝试次数的检查使用 forwardedBase + 当前迭代器的 ForwardedAttempts()，
@@ -1250,6 +1331,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 
 			req.internalRequest.Model = resolvedModelName
 			var failedKeyIDs []int
+			rateLimitHoldWaited := time.Duration(0)
 			for keyRound := 1; keyRound <= maxKeyRetriesPerRoute; keyRound++ {
 				if reachedMaxTotalAttempts(routeIter) {
 					lastErr = fmt.Errorf("reached relay max total attempts: %d", maxTotalAttempts)
@@ -1356,7 +1438,9 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				case ScopeNone:
 					lastErr = result.Err
 					req.metrics.Save(false, lastErr, currentAttempts)
-					resp.BadGateway(req.c)
+					// 400 类客户端错误不再重试，把上游错误体原样回给下游，
+					// 避免吞成 502 导致客户端无法识别 context_length_exceeded。
+					writeClientTerminalError(req.c, result.Decision.Code, result.Err)
 					return nil, result.Err
 				case ScopeAbortAll:
 					lastErr = result.Err
@@ -1365,6 +1449,21 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				case ScopeSameChannel:
 					lastErr = result.Err
 					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
+					// 429 渠道内延时重试：符合条件时等待后清除冷却再重试下一个 Key
+					if result.Decision.Code == http.StatusTooManyRequests &&
+						rateLimitHoldCfg.Enabled &&
+						rateLimitHoldWaited < rateLimitHoldCfg.MaxWait &&
+						keyRound < maxKeyRetriesPerRoute {
+						waitDuration := rateLimitHoldCfg.Interval
+						if waitDuration > rateLimitHoldCfg.MaxWait-rateLimitHoldWaited {
+							waitDuration = rateLimitHoldCfg.MaxWait - rateLimitHoldWaited
+						}
+						log.Infof("429 rate-limit hold: waiting %v before retry (channel %s key %d model %s)",
+							waitDuration, channel.Name, usedKey.ID, resolvedModelName)
+						time.Sleep(waitDuration)
+						rateLimitHoldWaited += waitDuration
+						balancer.ClearKeyCooldown(channel.ID, usedKey.ID, resolvedModelName)
+					}
 				case ScopeNextChannel:
 					lastErr = result.Err
 					failedKeyIDs = append(failedKeyIDs, usedKey.ID)

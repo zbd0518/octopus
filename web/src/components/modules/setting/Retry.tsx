@@ -27,6 +27,8 @@ export function SettingRetry() {
         }, {});
         nextValues[SettingKey.KeySelectionStrategy] = settings.find((item) => item.key === SettingKey.KeySelectionStrategy)?.value ?? 'cost';
         nextValues[SettingKey.RetryEmptyOutput] = settings.find((item) => item.key === SettingKey.RetryEmptyOutput)?.value ?? 'true';
+        nextValues[SettingKey.RelayLogQueueDropPolicy] = settings.find((item) => item.key === SettingKey.RelayLogQueueDropPolicy)?.value ?? 'oldest';
+        nextValues[SettingKey.StreamSessionReplayEnabled] = settings.find((item) => item.key === SettingKey.StreamSessionReplayEnabled)?.value ?? 'true';
         nextValues[SettingKey.KeyHealthCheckEnabled] = settings.find((item) => item.key === SettingKey.KeyHealthCheckEnabled)?.value ?? 'false';
         nextValues[SettingKey.KeyHealthCheckInterval] = settings.find((item) => item.key === SettingKey.KeyHealthCheckInterval)?.value ?? '30';
         nextValues[SettingKey.KeyHealthCheckFailThreshold] = settings.find((item) => item.key === SettingKey.KeyHealthCheckFailThreshold)?.value ?? '3';
@@ -147,6 +149,65 @@ export function SettingRetry() {
                         <SelectItem className="rounded-lg" value="priority">{t('retry.keySelectionStrategy.priority')}</SelectItem>
                     </SelectContent>
                 </Select>
+            </div>
+            {/* 高 QPS 内存优化（日志队列丢弃策略 + 流重连功能开关） */}
+            <div className="flex min-w-0 flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
+                <div className="min-w-0 flex flex-col gap-1">
+                    <span className="text-sm font-medium">{t('retry.logQueueDropPolicy.label')}</span>
+                    <span className="text-xs text-muted-foreground">{t('retry.logQueueDropPolicy.hint')}</span>
+                </div>
+                <Select
+                    value={values[SettingKey.RelayLogQueueDropPolicy] || 'oldest'}
+                    onValueChange={(value) => {
+                        setValues((prev) => ({ ...prev, [SettingKey.RelayLogQueueDropPolicy]: value }));
+                        setSetting.mutate(
+                            { key: SettingKey.RelayLogQueueDropPolicy, value },
+                            {
+                                onSuccess: () => {
+                                    toast.success(t('saved'));
+                                    initialValues.current = {
+                                        ...initialValues.current,
+                                        [SettingKey.RelayLogQueueDropPolicy]: value,
+                                    };
+                                },
+                            },
+                        );
+                    }}
+                >
+                    <SelectTrigger className="w-full rounded-xl md:w-48">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-xl">
+                        <SelectItem className="rounded-lg" value="disabled">{t('retry.logQueueDropPolicy.disabled')}</SelectItem>
+                        <SelectItem className="rounded-lg" value="oldest">{t('retry.logQueueDropPolicy.oldest')}</SelectItem>
+                        <SelectItem className="rounded-lg" value="newest">{t('retry.logQueueDropPolicy.newest')}</SelectItem>
+                    </SelectContent>
+                </Select>
+            </div>
+            <div className="flex min-w-0 flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
+                <div className="min-w-0 flex flex-col gap-1">
+                    <span className="text-sm font-medium">{t('retry.streamReplay.label')}</span>
+                    <span className="text-xs text-muted-foreground">{t('retry.streamReplay.hint')}</span>
+                </div>
+                <Switch
+                    checked={values[SettingKey.StreamSessionReplayEnabled] === 'true'}
+                    onCheckedChange={(checked) => {
+                        const value = checked ? 'true' : 'false';
+                        setValues((prev) => ({ ...prev, [SettingKey.StreamSessionReplayEnabled]: value }));
+                        setSetting.mutate(
+                            { key: SettingKey.StreamSessionReplayEnabled, value },
+                            {
+                                onSuccess: () => {
+                                    toast.success(t('saved'));
+                                    initialValues.current = {
+                                        ...initialValues.current,
+                                        [SettingKey.StreamSessionReplayEnabled]: value,
+                                    };
+                                },
+                            },
+                        );
+                    }}
+                />
             </div>
             {/* 定时 Key 可用性巡检（issue #142） */}
             <div className="space-y-4 rounded-lg border-border/30 bg-card p-4 shadow-sm">

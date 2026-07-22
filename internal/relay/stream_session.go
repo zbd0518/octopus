@@ -419,8 +419,14 @@ func (s *relayStreamSession) Finish(err error) {
 	s.err = err
 	s.updatedAt = time.Now()
 
-	// 不在此处清空 events：完成的会话其 replay 缓冲仍需支持断线重连重放
-	// （客户端重连后先重放已缓冲事件，再收到 terminal error）。内存控制改由
+	// 根据设置决定是否清空 events：关闭重连重放功能可立即释放大缓冲，
+	// 降低内存占用（见 OOM 诊断报告）。开启时保留缓冲支持断线重连重放
+	// （客户端重连后先重放已缓冲事件，再收到 terminal error）。
+	replayEnabled, err := setting.GetBool(dbmodel.SettingKeyStreamSessionReplayEnabled)
+	if err == nil && !replayEnabled {
+		s.events = nil // 立即释放缓冲区
+	}
+	// 若启用重连重放（或读取设置失败，保守保留），内存控制改由
 	// 缩短的保留窗口实现——见 relayStreamDoneRetention：done 会话最多保留 2 分钟
 	// （而非完整 TTL 30 分钟）即被清理，把大缓冲的驻留时间压缩一个数量级
 	// （见 issue #46 的内存暴涨）。

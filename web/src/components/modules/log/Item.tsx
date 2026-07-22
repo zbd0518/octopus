@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useMemo, useState, useEffect } from 'react';
-import { Clock, Cpu, Gauge, Zap, AlertCircle, ArrowDownToLine, ArrowUpFromLine, DollarSign, JapaneseYen, ArrowRight, ArrowDown, Send, MessageSquare, Loader2, Percent, RotateCw, ChevronDown, ChevronUp, Pin, KeyRound, Globe, ChevronsDownUp, ChevronsUpDown, TestTube2, Sigma } from 'lucide-react';
+import { Clock, Cpu, Gauge, Zap, AlertCircle, ArrowDownToLine, ArrowUpFromLine, DollarSign, JapaneseYen, ArrowRight, ArrowDown, Send, MessageSquare, Loader2, Percent, RotateCw, ChevronDown, ChevronUp, Pin, KeyRound, Globe, ChevronsDownUp, ChevronsUpDown, TestTube2, Sigma, Brain, Type } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'motion/react';
 import JsonView from '@uiw/react-json-view';
@@ -312,16 +312,24 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
     const inputLabel = cacheReadTokens > 0 ? t('realInput') : t('input');
     const displayChannelName = displayFields.channelName || '-';
     const displayEndpointType = useMemo(() => {
+        const adapter = displayFields.outboundAdapterType;
+        if (adapter) {
+            const label = t(`adapterLabels.${adapter}`);
+            // next-intl 缺 key 时可能回传 key 路径；有专用文案用文案，否则用原始 adapter
+            if (label && !label.includes('adapterLabels.')) return label;
+            return adapter;
+        }
+        // 旧日志无 adapter_type 时回退 endpoint/request type，避免整块空白
         const reqTypeKey = displayFields.requestTypeKey;
         if (reqTypeKey) {
             const label = t(`requestTypeLabels.${reqTypeKey}`);
-            if (label) return label;
+            if (label && !label.includes('requestTypeLabels.')) return label;
         }
         const rawEndpointType = displayFields.endpointType;
-        if (!rawEndpointType) return '-';
+        if (!rawEndpointType) return '';
         const labelKey = endpointTypeLabelKey(rawEndpointType);
         return labelKey ? tGroup(labelKey) : rawEndpointType;
-    }, [displayFields.endpointType, displayFields.requestTypeKey, t, tGroup]);
+    }, [displayFields.endpointType, displayFields.outboundAdapterType, displayFields.requestTypeKey, t, tGroup]);
     const displayActualModelName = displayFields.actualModelName || '-';
     const displayRequestModelName = displayFields.requestModelName || log.request_model_name;
 
@@ -392,7 +400,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                     </Badge>
                                 )}
                                 <ArrowRight className="size-3.5 shrink-0 text-muted-foreground/50" />
-                                {vis.endpointType && (
+                                {vis.endpointType && displayEndpointType && (
                                     <Badge
                                         variant="secondary"
                                         className="max-w-full shrink-0 text-xs px-1.5 py-0"
@@ -504,6 +512,24 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                         </span>
                                     </div>
                                 )}
+                                {vis.reasoningEffort && !!log.reasoning_effort && (
+                                    <div className="flex items-center gap-1.5">
+                                        <Brain className="size-3.5 shrink-0 text-violet-500" />
+                                        <span>{t('reasoningEffort')} {log.reasoning_effort}</span>
+                                    </div>
+                                )}
+                                {vis.reasoningTokens && (log.reasoning_tokens ?? 0) > 0 && (
+                                    <div className="flex items-center gap-1.5">
+                                        <Brain className="size-3.5 shrink-0 text-indigo-500" />
+                                        <span>{t('reasoningTokens')} {fmt(formatCount(log.reasoning_tokens ?? 0).formatted)}t</span>
+                                    </div>
+                                )}
+                                {vis.reasoningTokens && (log.reasoning_tokens ?? 0) <= 0 && (log.reasoning_chars ?? 0) > 0 && (
+                                    <div className="flex items-center gap-1.5">
+                                        <Type className="size-3.5 shrink-0 text-indigo-500" />
+                                        <span>{t('reasoningChars')} {fmt(formatCount(log.reasoning_chars ?? 0).formatted)}{t('reasoningCharsUnit')}</span>
+                                    </div>
+                                )}
                             </div>
                             {hasError && (
                                 <div className="p-2.5 rounded-xl bg-destructive/10 border border-destructive/20 overflow-hidden">
@@ -530,7 +556,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                 </Badge>
                             )}
                             <ArrowRight className="size-3.5 text-muted-foreground/50" />
-                            {vis.endpointType && (
+                            {vis.endpointType && displayEndpointType && (
                                 <Badge
                                     variant="secondary"
                                     className="max-w-full shrink-0 text-xs px-1.5 py-0"
@@ -839,6 +865,24 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                     <span className="font-medium text-emerald-600 dark:text-emerald-400">
                                         {t('cost')}: {costDisplay}
                                     </span>
+                                </div>
+                            )}
+                            {vis.reasoningEffort && !!log.reasoning_effort && (
+                                <div className="flex items-center gap-1.5">
+                                    <Brain className="size-3.5 text-violet-500" />
+                                    <span>{t('reasoningEffort')}: {log.reasoning_effort}</span>
+                                </div>
+                            )}
+                            {vis.reasoningTokens && (log.reasoning_tokens ?? 0) > 0 && (
+                                <div className="flex items-center gap-1.5">
+                                    <Brain className="size-3.5 text-indigo-500" />
+                                    <span>{t('reasoningTokens')}: {fmt(formatCount(log.reasoning_tokens ?? 0).formatted)}t</span>
+                                </div>
+                            )}
+                            {vis.reasoningTokens && (log.reasoning_tokens ?? 0) <= 0 && (log.reasoning_chars ?? 0) > 0 && (
+                                <div className="flex items-center gap-1.5">
+                                    <Type className="size-3.5 text-indigo-500" />
+                                    <span>{t('reasoningChars')}: {fmt(formatCount(log.reasoning_chars ?? 0).formatted)}{t('reasoningCharsUnit')}</span>
                                 </div>
                             )}
                             </div>

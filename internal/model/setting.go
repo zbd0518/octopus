@@ -13,26 +13,32 @@ import (
 type SettingKey string
 
 const (
-	SettingKeyProxyURL                             SettingKey = "proxy_url"
-	SettingKeyStatsSaveInterval                    SettingKey = "stats_save_interval"                      // 将统计信息写入数据库的周期(分钟)
-	SettingKeyModelInfoUpdateInterval              SettingKey = "model_info_update_interval"               // 模型信息更新间隔(小时)
-	SettingKeySyncLLMInterval                      SettingKey = "sync_llm_interval"                        // LLM 同步间隔(小时)
-	SettingKeyRelayLogKeepPeriod                   SettingKey = "relay_log_keep_period"                    // 日志保存时间范围(天)
-	SettingKeyRelayLogKeepCount                    SettingKey = "relay_log_keep_count"                     // 日志保留条数(0=不按条数)
-	SettingKeyRelayLogKeepEnabled                  SettingKey = "relay_log_keep_enabled"                   // 是否保留历史日志
-	SettingKeyRelayLogContentEnabled               SettingKey = "relay_log_content_enabled"                // 是否记录请求/响应内容大字段（关闭可大幅降低写入量与磁盘 IO）
-	SettingKeyCORSAllowOrigins                     SettingKey = "cors_allow_origins"                       // 跨域白名单(逗号分隔, 如 "example.com,example2.com"). 为空不允许跨域, "*"允许所有
-	SettingKeyRelayRetryCount                      SettingKey = "relay_retry_count"                        // 单个候选渠道内 Key 级最大重试次数
-	SettingKeyRelayRouteRetries                    SettingKey = "relay_route_retries"                      // 路由级最大重试次数（全部渠道遍历一轮算一次）
-	SettingKeyCircuitBreakerThreshold              SettingKey = "circuit_breaker_threshold"                // 熔断触发阈值（连续失败次数）
-	SettingKeyCircuitBreakerCooldown               SettingKey = "circuit_breaker_cooldown"                 // 熔断基础冷却时间（秒）
-	SettingKeyCircuitBreakerMaxCooldown            SettingKey = "circuit_breaker_max_cooldown"             // 熔断最大冷却时间（秒），指数退避上限
-	SettingKeyPublicAPIBaseURL                     SettingKey = "public_api_base_url"                      // 对外可访问的 API 基础地址，用于生成示例
-	SettingKeyAlertNotifyLanguage                  SettingKey = "alert_notify_language"                    // 告警通知发送语言
-	SettingKeyRatelimitCooldown                    SettingKey = "ratelimit_cooldown"                       // Key 错误冷却时间（秒），0=关闭
-	SettingKeyKeySelectionStrategy                 SettingKey = "key_selection_strategy"                   // Key 选择策略：cost(默认) | availability | priority
-	SettingKeyRelayMaxTotalAttempts                SettingKey = "relay_max_total_attempts"                 // 所有候选渠道的最大总尝试次数，0 表示不限制
-	SettingKeyRetryEmptyOutput                     SettingKey = "retry_empty_output"                       // 输出为空(CompletionTokens=0 且内容为空)时自动重试，仅非流式
+	SettingKeyProxyURL                   SettingKey = "proxy_url"
+	SettingKeyStatsSaveInterval          SettingKey = "stats_save_interval"           // 将统计信息写入数据库的周期(分钟)
+	SettingKeyModelInfoUpdateInterval    SettingKey = "model_info_update_interval"    // 模型信息更新间隔(小时)
+	SettingKeySyncLLMInterval            SettingKey = "sync_llm_interval"             // LLM 同步间隔(小时)
+	SettingKeyRelayLogKeepPeriod         SettingKey = "relay_log_keep_period"         // 日志保存时间范围(天)
+	SettingKeyRelayLogKeepCount          SettingKey = "relay_log_keep_count"          // 日志保留条数(0=不按条数)
+	SettingKeyRelayLogKeepEnabled        SettingKey = "relay_log_keep_enabled"        // 是否保留历史日志
+	SettingKeyRelayLogContentEnabled     SettingKey = "relay_log_content_enabled"     // 是否记录请求/响应内容大字段（关闭可大幅降低写入量与磁盘 IO）
+	SettingKeyRelayLogQueueDropPolicy    SettingKey = "relay_log_queue_drop_policy"   // 日志队列满时的丢弃策略：disabled(阻塞触发刷盘) | oldest(丢弃最旧) | newest(丢弃最新)
+	SettingKeyStreamSessionReplayEnabled SettingKey = "stream_session_replay_enabled" // 是否保留完成会话的缓冲区以支持断线重连重放（关闭可降低内存占用）
+	SettingKeyCORSAllowOrigins           SettingKey = "cors_allow_origins"            // 跨域白名单(逗号分隔, 如 "example.com,example2.com"). 为空不允许跨域, "*"允许所有
+	SettingKeyRelayRetryCount            SettingKey = "relay_retry_count"             // 单个候选渠道内 Key 级最大重试次数
+	SettingKeyRelayRouteRetries          SettingKey = "relay_route_retries"           // 路由级最大重试次数（全部渠道遍历一轮算一次）
+	SettingKeyCircuitBreakerThreshold    SettingKey = "circuit_breaker_threshold"     // 熔断触发阈值（连续失败次数）
+	SettingKeyCircuitBreakerCooldown     SettingKey = "circuit_breaker_cooldown"      // 熔断基础冷却时间（秒）
+	SettingKeyCircuitBreakerMaxCooldown  SettingKey = "circuit_breaker_max_cooldown"  // 熔断最大冷却时间（秒），指数退避上限
+	SettingKeyPublicAPIBaseURL           SettingKey = "public_api_base_url"           // 对外可访问的 API 基础地址，用于生成示例
+	SettingKeyAlertNotifyLanguage        SettingKey = "alert_notify_language"         // 告警通知发送语言
+	SettingKeyRatelimitCooldown          SettingKey = "ratelimit_cooldown"            // Key 错误冷却时间（秒），0=关闭
+	SettingKeyKeySelectionStrategy       SettingKey = "key_selection_strategy"        // Key 选择策略：cost(默认) | availability | priority
+	SettingKeyRelayMaxTotalAttempts      SettingKey = "relay_max_total_attempts"      // 所有候选渠道的最大总尝试次数，0 表示不限制
+	SettingKeyRetryEmptyOutput           SettingKey = "retry_empty_output"            // 输出为空(CompletionTokens=0 且内容为空)时自动重试，仅非流式
+	SettingKeyRateLimitHoldEnabled       SettingKey = "rate_limit_hold_enabled"       // 429 限流时是否在当前渠道内延时重试（默认关闭，保持立即换 Key/渠道）
+	SettingKeyRateLimitHoldInterval      SettingKey = "rate_limit_hold_interval"      // 429 渠道内延时重试间隔（秒）
+	SettingKeyRateLimitHoldMaxWait       SettingKey = "rate_limit_hold_max_wait"      // 429 渠道内延时重试总等待上限（秒），超时后才换下一渠道
+
 	SettingKeyAutoStrategyMinSamples               SettingKey = "auto_strategy_min_samples"                // Auto策略最小样本数阈值
 	SettingKeyAutoStrategyTimeWindow               SettingKey = "auto_strategy_time_window"                // Auto策略时间窗口（秒）
 	SettingKeyAutoStrategySampleThreshold          SettingKey = "auto_strategy_sample_threshold"           // Auto策略滑动窗口大小
@@ -109,23 +115,29 @@ type Setting struct {
 func DefaultSettings() []Setting {
 	return []Setting{
 		{Key: SettingKeyProxyURL, Value: ""},
-		{Key: SettingKeyStatsSaveInterval, Value: "10"},          // 默认10分钟保存一次统计信息
-		{Key: SettingKeyCORSAllowOrigins, Value: ""},             // CORS 默认不允许跨域，设置为 "*" 才允许所有来源
-		{Key: SettingKeyModelInfoUpdateInterval, Value: "24"},    // 默认24小时更新一次模型信息
-		{Key: SettingKeySyncLLMInterval, Value: "24"},            // 默认24小时同步一次LLM
-		{Key: SettingKeyRelayLogKeepPeriod, Value: "7"},          // 默认日志保存7天
-		{Key: SettingKeyRelayLogKeepCount, Value: "0"},           // 默认不按条数保留(0=禁用)
-		{Key: SettingKeyRelayLogKeepEnabled, Value: "true"},      // 默认保留历史日志
-		{Key: SettingKeyRelayLogContentEnabled, Value: "true"},   // 默认记录请求/响应内容，保持兼容；高负载可关闭以降低 IO
-		{Key: SettingKeyRelayRetryCount, Value: "3"},             // 默认单个渠道内 Key 级重试3次
-		{Key: SettingKeyRelayRouteRetries, Value: "2"},           // 默认路由级重试2次（全部渠道遍历两轮）
-		{Key: SettingKeyCircuitBreakerThreshold, Value: "5"},     // 默认连续失败5次触发熔断
-		{Key: SettingKeyCircuitBreakerCooldown, Value: "60"},     // 默认基础冷却60秒
-		{Key: SettingKeyCircuitBreakerMaxCooldown, Value: "600"}, // 默认最大冷却600秒（10分钟）
-		{Key: SettingKeyRatelimitCooldown, Value: "300"},         // 默认 Key 错误冷却300秒（5分钟），0=关闭
-		{Key: SettingKeyKeySelectionStrategy, Value: "cost"},     // 默认 Key 选择策略：成本最低优先；可选 availability（可用度优先）
-		{Key: SettingKeyRelayMaxTotalAttempts, Value: "0"},       // 默认不限制所有候选渠道的总尝试次数
-		{Key: SettingKeyRetryEmptyOutput, Value: "true"},         // 默认启用空输出重试
+		{Key: SettingKeyStatsSaveInterval, Value: "10"},            // 默认10分钟保存一次统计信息
+		{Key: SettingKeyCORSAllowOrigins, Value: ""},               // CORS 默认不允许跨域，设置为 "*" 才允许所有来源
+		{Key: SettingKeyModelInfoUpdateInterval, Value: "24"},      // 默认24小时更新一次模型信息
+		{Key: SettingKeySyncLLMInterval, Value: "24"},              // 默认24小时同步一次LLM
+		{Key: SettingKeyRelayLogKeepPeriod, Value: "7"},            // 默认日志保存7天
+		{Key: SettingKeyRelayLogKeepCount, Value: "0"},             // 默认不按条数保留(0=禁用)
+		{Key: SettingKeyRelayLogContentEnabled, Value: "true"},     // 默认记录请求/响应内容，保持兼容；高负载可关闭以降低 IO
+		{Key: SettingKeyRelayLogQueueDropPolicy, Value: "oldest"},  // 默认丢弃最旧日志，防止队列溢出 OOM（高 QPS 下推荐）
+		{Key: SettingKeyStreamSessionReplayEnabled, Value: "true"}, // 默认启用重连重放，保持兼容；内存受限可关闭
+		{Key: SettingKeyRelayLogKeepEnabled, Value: "true"},        // 默认保留历史日志
+		{Key: SettingKeyRelayRetryCount, Value: "3"},               // 默认单个渠道内 Key 级重试3次
+		{Key: SettingKeyRelayRouteRetries, Value: "2"},             // 默认路由级重试2次（全部渠道遍历两轮）
+		{Key: SettingKeyCircuitBreakerThreshold, Value: "5"},       // 默认连续失败5次触发熔断
+		{Key: SettingKeyCircuitBreakerCooldown, Value: "60"},       // 默认基础冷却60秒
+		{Key: SettingKeyCircuitBreakerMaxCooldown, Value: "600"},   // 默认最大冷却600秒（10分钟）
+		{Key: SettingKeyRatelimitCooldown, Value: "300"},           // 默认 Key 错误冷却300秒（5分钟），0=关闭
+		{Key: SettingKeyKeySelectionStrategy, Value: "cost"},       // 默认 Key 选择策略：成本最低优先；可选 availability（可用度优先）
+		{Key: SettingKeyRelayMaxTotalAttempts, Value: "0"},         // 默认不限制所有候选渠道的总尝试次数
+		{Key: SettingKeyRetryEmptyOutput, Value: "true"},           // 默认启用空输出重试
+		{Key: SettingKeyRateLimitHoldEnabled, Value: "false"},      // 默认关闭：429 仍立即换 Key/渠道
+		{Key: SettingKeyRateLimitHoldInterval, Value: "10"},        // 默认每 10 秒重试一次
+		{Key: SettingKeyRateLimitHoldMaxWait, Value: "60"},         // 默认最多坚持 60 秒
+
 		{Key: SettingKeyPublicAPIBaseURL, Value: ""},
 		{Key: SettingKeyAlertNotifyLanguage, Value: "en"},
 		{Key: SettingKeyAutoStrategyMinSamples, Value: "10"},       // 默认最小样本数10次
@@ -186,13 +198,13 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyWebAuthnRPID, Value: ""},
 		{Key: SettingKeyWebAuthnRPName, Value: "Octopus"},
 		{Key: SettingKeyWebAuthnOrigins, Value: ""},
-		{Key: SettingKeyTrustedProxies, Value: ""},                   // 默认不信任任何代理（安全默认，防 XFF 伪造）；反代/Docker 部署需配置实际代理网段
-		{Key: SettingKeyKeyHealthCheckEnabled, Value: "false"},       // 默认关闭定时 Key 巡检（issue #142）
-		{Key: SettingKeyKeyHealthCheckInterval, Value: "30"},         // 默认 30 分钟
-		{Key: SettingKeyKeyHealthCheckFailThreshold, Value: "3"},     // 默认连续失败 3 次标记异常
-		{Key: SettingKeyKeyHealthCheckNotifyEnabled, Value: "true"},  // 默认发送失败通知
-		{Key: SettingKeyKeyHealthCheckRecoveryNotify, Value: "true"}, // 默认发送恢复通知
-		{Key: SettingKeyKeyHealthCheckNotifyCooldown, Value: "300"},  // 默认通知冷却 5 分钟
+		{Key: SettingKeyTrustedProxies, Value: ""},                      // 默认不信任任何代理（安全默认，防 XFF 伪造）；反代/Docker 部署需配置实际代理网段
+		{Key: SettingKeyKeyHealthCheckEnabled, Value: "false"},          // 默认关闭定时 Key 巡检（issue #142）
+		{Key: SettingKeyKeyHealthCheckInterval, Value: "30"},            // 默认 30 分钟
+		{Key: SettingKeyKeyHealthCheckFailThreshold, Value: "3"},        // 默认连续失败 3 次标记异常
+		{Key: SettingKeyKeyHealthCheckNotifyEnabled, Value: "true"},     // 默认发送失败通知
+		{Key: SettingKeyKeyHealthCheckRecoveryNotify, Value: "true"},    // 默认发送恢复通知
+		{Key: SettingKeyKeyHealthCheckNotifyCooldown, Value: "300"},     // 默认通知冷却 5 分钟
 		{Key: SettingKeyGroupUpstreamMetaDisplayEnabled, Value: "true"}, // 默认开启分组上游元信息展示
 	}
 }
@@ -212,6 +224,7 @@ func (s *Setting) Validate() error {
 		SettingKeySiteSyncInterval, SettingKeySiteCheckinInterval,
 		SettingKeyRelayRetryCount, SettingKeyRelayRouteRetries, SettingKeyCircuitBreakerThreshold, SettingKeyCircuitBreakerCooldown,
 		SettingKeyCircuitBreakerMaxCooldown, SettingKeyRatelimitCooldown, SettingKeyRelayMaxTotalAttempts,
+		SettingKeyRateLimitHoldInterval, SettingKeyRateLimitHoldMaxWait,
 		SettingKeySemanticCacheTTL, SettingKeySemanticCacheThreshold, SettingKeySemanticCacheMaxEntries,
 		SettingKeySemanticCacheEmbeddingTimeoutSeconds,
 		SettingKeyAutoStrategyMinSamples, SettingKeyAutoStrategyTimeWindow, SettingKeyAutoStrategySampleThreshold,
@@ -236,6 +249,9 @@ func (s *Setting) Validate() error {
 		}
 		if (s.Key == SettingKeyRatelimitCooldown || s.Key == SettingKeyRelayMaxTotalAttempts) && v < 0 {
 			return fmt.Errorf("setting value must be greater than or equal to 0")
+		}
+		if (s.Key == SettingKeyRateLimitHoldInterval || s.Key == SettingKeyRateLimitHoldMaxWait) && v < 1 {
+			return fmt.Errorf("rate limit hold setting must be greater than 0")
 		}
 		if (s.Key == SettingKeyAutoStrategyMinSamples || s.Key == SettingKeyAutoStrategyTimeWindow || s.Key == SettingKeyAutoStrategySampleThreshold) && v < 1 {
 			return fmt.Errorf("auto strategy setting must be greater than 0")
@@ -278,7 +294,7 @@ func (s *Setting) Validate() error {
 				return fmt.Errorf("setting value must be greater than 0")
 			}
 		}
-	case SettingKeyRelayLogKeepEnabled, SettingKeyRelayLogContentEnabled, SettingKeySemanticCacheEnabled, SettingKeyModelNormalizeMarketDedupeDefault, SettingKeyRetryEmptyOutput, SettingKeyKeyHealthCheckEnabled, SettingKeyKeyHealthCheckNotifyEnabled, SettingKeyKeyHealthCheckRecoveryNotify:
+	case SettingKeyRelayLogKeepEnabled, SettingKeyRelayLogContentEnabled, SettingKeyStreamSessionReplayEnabled, SettingKeySemanticCacheEnabled, SettingKeyModelNormalizeMarketDedupeDefault, SettingKeyRetryEmptyOutput, SettingKeyRateLimitHoldEnabled, SettingKeyKeyHealthCheckEnabled, SettingKeyKeyHealthCheckNotifyEnabled, SettingKeyKeyHealthCheckRecoveryNotify:
 		if s.Value != "true" && s.Value != "false" {
 			return fmt.Errorf("setting value must be true or false")
 		}
@@ -286,6 +302,11 @@ func (s *Setting) Validate() error {
 	case SettingKeyKeySelectionStrategy:
 		if s.Value != "cost" && s.Value != "availability" && s.Value != "speed" && s.Value != "priority" {
 			return fmt.Errorf("key selection strategy must be cost, availability, speed or priority")
+		}
+		return nil
+	case SettingKeyRelayLogQueueDropPolicy:
+		if s.Value != "disabled" && s.Value != "oldest" && s.Value != "newest" {
+			return fmt.Errorf("relay log queue drop policy must be disabled, oldest or newest")
 		}
 		return nil
 	case SettingKeyProxyURL, SettingKeySemanticCacheEmbeddingBaseURL, SettingKeyAIRouteBaseURL:
