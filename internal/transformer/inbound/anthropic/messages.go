@@ -24,8 +24,12 @@ type MessagesInbound struct {
 	modelName                 string
 	contentIndex              int64
 	stopReason                *string
-	toolCallIndices           map[int]bool // Track which tool call indices we've seen
-	inputToken                int64
+	// toolCallBlockIndex maps upstream tool-call index (e.g. OpenAI Responses
+	// output_index) to the Anthropic content block index. Upstream indices may
+	// start at 1 or skip values when reasoning/message items occupy earlier
+	// slots — never assume 0-based contiguous OpenAI indices.
+	toolCallBlockIndex map[int]int64
+	inputToken         int64
 
 	// Stream chunks storage for aggregation
 	streamChunks []*model.InternalLLMResponse
@@ -533,9 +537,26 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 
 		// Handle reasoning content (thinking) delta
 		if choice.Delta != nil && choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
-			// If the tool content has started before the thinking content, we need to stop it
+			// Close any open non-thinking blocks before starting/continuing thinking.
+			// Claude Code rejects content_block_delta/stop against a missing block
+			// with "Content block not found" and aborts the stream.
 			if i.hasToolContentStarted {
 				i.hasToolContentStarted = false
+
+				stopEvent := StreamEvent{
+					Type:  "content_block_stop",
+					Index: &i.contentIndex,
+				}
+				data, err := transformer.Marshal(stopEvent)
+				if err != nil {
+					return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
+				}
+				events = append(events, formatSSEEvent("content_block_stop", data))
+
+				i.contentIndex++
+			}
+			if i.hasTextContentStarted {
+				i.hasTextContentStarted = false
 
 				stopEvent := StreamEvent{
 					Type:  "content_block_stop",
@@ -586,8 +607,10 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 			events = append(events, formatSSEEvent("content_block_delta", data))
 		}
 
-		// Add signature delta if signature is available
-		if choice.Delta != nil && choice.Delta.ReasoningSignature != nil && *choice.Delta.ReasoningSignature != "" {
+		// Add signature delta only while a thinking block is open. Emitting a
+		// signature_delta without a matching content_block_start causes Claude
+		// Code to fail with "Content block not found".
+		if choice.Delta != nil && choice.Delta.ReasoningSignature != nil && *choice.Delta.ReasoningSignature != "" && i.hasThinkingContentStarted {
 			sigEvent := StreamEvent{
 				Type:  "content_block_delta",
 				Index: &i.contentIndex,
@@ -711,17 +734,21 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 			}
 
 			// Initialize tool call index tracking if needed
-			if i.toolCallIndices == nil {
-				i.toolCallIndices = make(map[int]bool)
+			if i.toolCallBlockIndex == nil {
+				i.toolCallBlockIndex = make(map[int]int64)
 			}
 
 			for _, deltaToolCall := range choice.Delta.ToolCalls {
 				toolCallIndex := deltaToolCall.Index
 
 				// Initialize tool call if it doesn't exist
-				if !i.toolCallIndices[toolCallIndex] {
-					// Start a new tool use block, we should stop the previous tool use block
-					if toolCallIndex > 0 {
+				if _, seen := i.toolCallBlockIndex[toolCallIndex]; !seen {
+					// Only stop a previous tool block when one is actually open.
+					// Do NOT use `toolCallIndex > 0`: Responses API output_index
+					// commonly starts at 1 after a reasoning/message item, and a
+					// spurious content_block_stop makes Claude Code abort with
+					// "Content block not found".
+					if i.hasToolContentStarted {
 						stopEvent := StreamEvent{
 							Type:  "content_block_stop",
 							Index: &i.contentIndex,
@@ -735,12 +762,13 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 						i.contentIndex++
 					}
 
-					i.toolCallIndices[toolCallIndex] = true
 					i.hasToolContentStarted = true
+					i.toolCallBlockIndex[toolCallIndex] = i.contentIndex
+					blockIndex := i.contentIndex
 
 					startEvent := StreamEvent{
 						Type:  "content_block_start",
-						Index: &i.contentIndex,
+						Index: &blockIndex,
 						ContentBlock: &MessageContentBlock{
 							Type:  "tool_use",
 							ID:    deltaToolCall.ID,
@@ -758,7 +786,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 					if deltaToolCall.Function.Arguments != "" {
 						deltaEvent := StreamEvent{
 							Type:  "content_block_delta",
-							Index: &i.contentIndex,
+							Index: &blockIndex,
 							Delta: &StreamDelta{
 								Type:        lo.ToPtr("input_json_delta"),
 								PartialJSON: &deltaToolCall.Function.Arguments,
@@ -770,11 +798,14 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 						}
 						events = append(events, formatSSEEvent("content_block_delta", data))
 					}
-				} else {
-					// Generate content_block_delta for input_json_delta
+				} else if deltaToolCall.Function.Arguments != "" {
+					// Continue on the Anthropic block that was started for this
+					// upstream tool index — not necessarily the current contentIndex
+					// if another block was interleaved (defensive).
+					blockIndex := i.toolCallBlockIndex[toolCallIndex]
 					deltaEvent := StreamEvent{
 						Type:  "content_block_delta",
-						Index: &i.contentIndex,
+						Index: &blockIndex,
 						Delta: &StreamDelta{
 							Type:        lo.ToPtr("input_json_delta"),
 							PartialJSON: &deltaToolCall.Function.Arguments,

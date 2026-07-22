@@ -30,6 +30,13 @@ func (o *ResponseOutbound) TransformRequest(ctx context.Context, request *model.
 
 	// Convert to Responses API request format
 	responsesReq := ConvertToResponsesRequest(request)
+	// Third-party OpenAI-compatible Responses endpoints (free relays, Grok
+	// proxies, etc.) often reject OpenAI-only optional fields. Claude Code's
+	// Anthropic metadata.user_id is mapped into Metadata and commonly triggers:
+	//   400 Argument not supported: metadata
+	// Inference does not require metadata, so drop it on the wire.
+	// Official OpenAI accepts metadata; omitting it is always safe.
+	responsesReq.Metadata = nil
 
 	body, err := transformer.Marshal(responsesReq)
 	if err != nil {
