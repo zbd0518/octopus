@@ -44,7 +44,8 @@ type codexOAuthKey struct {
 func parseOAuthKey(raw string) (*codexOAuthKey, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return nil, fmt.Errorf("codex: empty oauth key")
+		// Allow empty key - return zero-value oauth key
+		return &codexOAuthKey{}, nil
 	}
 	if !strings.HasPrefix(raw, "{") {
 		return nil, fmt.Errorf("codex: key must be a JSON object containing access_token and account_id")
@@ -99,9 +100,12 @@ func (o *Outbound) TransformRequest(ctx context.Context, request *model.Internal
 	}
 
 	// Codex-specific headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+oauthKey.AccessToken)
-	req.Header.Set("chatgpt-account-id", oauthKey.AccountID)
+	if oauthKey.AccessToken != "" {
+		req.Header.Set("Authorization", "Bearer "+oauthKey.AccessToken)
+	}
+	if oauthKey.AccountID != "" {
+		req.Header.Set("chatgpt-account-id", oauthKey.AccountID)
+	}
 	req.Header.Set("originator", "codex_cli_rs")
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
 	if request.Stream != nil && *request.Stream {

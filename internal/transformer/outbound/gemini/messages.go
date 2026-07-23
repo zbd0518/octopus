@@ -52,9 +52,11 @@ func (o *MessagesOutbound) TransformRequest(ctx context.Context, request *model.
 	}
 	parsedUrl.Path = fmt.Sprintf("%s/%s:%s", parsedUrl.Path, modelName, method)
 
-	// Add API key as query parameter
+	// Add API key as query parameter (skip if empty)
 	q := parsedUrl.Query()
-	q.Set("key", key)
+	if key != "" {
+		q.Set("key", key)
+	}
 	if isStream {
 		q.Set("alt", "sse")
 	}

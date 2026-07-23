@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 const dbDumpVersion = 1
 const maxRelayLogsExport = 500_000
 const maxAuditLogsExport = 500_000
+const batchInsertSize = 1000 // 分批插入：每批最多 1000 行（避免 SQLite 参数限制）
 
 func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDump, error) {
 	conn := db.GetDB().WithContext(ctx)
@@ -193,26 +195,54 @@ func (c *importConfig) doNothing(table string, rows any, count int) error {
 	if count == 0 {
 		return nil
 	}
-	result := c.conn.Table(table).Clauses(clause.OnConflict{DoNothing: true}).Create(rows)
-	appendStep(c.res, table, "insert", result.RowsAffected, result.Error)
-	if result.Error != nil {
-		return fmt.Errorf("%s: %w", table, result.Error)
-	}
-	return nil
+	return c.batchInsert(table, rows, count, clause.OnConflict{DoNothing: true}, "insert")
 }
 
 func (c *importConfig) upsertAll(table string, rows any, count int, conflictColumns []clause.Column) error {
 	if count == 0 {
 		return nil
 	}
-	result := c.conn.Table(table).Clauses(clause.OnConflict{
+	return c.batchInsert(table, rows, count, clause.OnConflict{
 		Columns:   conflictColumns,
 		UpdateAll: true,
-	}).Create(rows)
-	appendStep(c.res, table, "upsert", result.RowsAffected, result.Error)
-	if result.Error != nil {
-		return fmt.Errorf("%s: %w", table, result.Error)
+	}, "upsert")
+}
+
+// batchInsert 将大批量数据分批插入，避免单次事务过大导致超时或内存溢出。
+// rows 必须是指向切片的指针（如 *[]model.Channel）。
+func (c *importConfig) batchInsert(table string, rows any, count int, conflict clause.OnConflict, mode string) error {
+	if count == 0 {
+		return nil
 	}
+
+	// 反射获取切片
+	rv := reflect.ValueOf(rows)
+	if rv.Kind() != reflect.Ptr || rv.Elem().Kind() != reflect.Slice {
+		return fmt.Errorf("%s: rows must be *[]T, got %T", table, rows)
+	}
+	slice := rv.Elem()
+	totalRows := slice.Len()
+	if totalRows == 0 {
+		return nil
+	}
+
+	var totalAffected int64
+	for offset := 0; offset < totalRows; offset += batchInsertSize {
+		end := offset + batchInsertSize
+		if end > totalRows {
+			end = totalRows
+		}
+		batch := slice.Slice(offset, end).Interface()
+
+		result := c.conn.Table(table).Clauses(conflict).Create(batch)
+		if result.Error != nil {
+			appendStep(c.res, table, mode, totalAffected, result.Error)
+			return fmt.Errorf("%s: batch [%d:%d]: %w", table, offset, end, result.Error)
+		}
+		totalAffected += result.RowsAffected
+	}
+
+	appendStep(c.res, table, mode, totalAffected, nil)
 	return nil
 }
 

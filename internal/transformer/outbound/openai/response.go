@@ -51,8 +51,10 @@ func (o *ResponseOutbound) TransformRequest(ctx context.Context, request *model.
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+key)
-	req.Header.Set("api-key", key)
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+		req.Header.Set("api-key", key)
+	}
 
 	// Parse and set URL
 	upstreamURL, err := BuildOpenAIUpstreamURL(baseUrl, "/v1/responses")

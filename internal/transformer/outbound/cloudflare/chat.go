@@ -77,7 +77,9 @@ func (o *ChatOutbound) TransformRequest(ctx context.Context, request *transforme
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+key)
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
 	return req, nil
 }
 

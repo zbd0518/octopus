@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 🚀 Features
 - **Log**: show effective outbound reasoning effort and upstream reasoning tokens on log cards (hidden when empty; field toggles default on).
 - **Log**: when official reasoning tokens are absent, fall back to thinking text character count (UTF-8 runes) and display as "思考 XXt" / "思考 XX字".
+- **Backup (issue #158)**: 数据导入性能优化——大表分批插入（每批 1000 行），避免单次超大事务超时/内存溢出；导入大小上限从 64 MB 提升至 256 MB，前端导入页增加大小提示。
 
 ### 🐛 Bug Fixes
 - **Relay**: 上游 400 类客户端错误（如 `context_length_exceeded`）不再被 adapter 回退链路改写成换渠道，也不再吞成管理端 502；原样把上游状态码与错误体回给下游，便于 omp 等客户端识别溢出并自动压缩上下文。

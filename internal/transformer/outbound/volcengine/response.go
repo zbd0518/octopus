@@ -59,7 +59,9 @@ func (o *ResponseOutbound) TransformRequest(ctx context.Context, request *model.
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+key)
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
 
 	// Parse and set URL
 	parsedUrl, err := url.Parse(strings.TrimSuffix(baseUrl, "/"))

@@ -365,6 +365,7 @@ export function SettingBackup() {
                     onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
                     className="rounded-xl w-full"
                 />
+                <div className="text-xs text-muted-foreground">{t('backup.import.sizeHint')}</div>
 
                 <Button
                     type="button"

@@ -34,7 +34,7 @@ const (
 	SettingKeyRatelimitCooldown          SettingKey = "ratelimit_cooldown"            // Key 错误冷却时间（秒），0=关闭
 	SettingKeyKeySelectionStrategy       SettingKey = "key_selection_strategy"        // Key 选择策略：cost(默认) | availability | priority
 	SettingKeyRelayMaxTotalAttempts      SettingKey = "relay_max_total_attempts"      // 所有候选渠道的最大总尝试次数，0 表示不限制
-	SettingKeyRetryEmptyOutput           SettingKey = "retry_empty_output"            // 输出为空(CompletionTokens=0 且内容为空)时自动重试，仅非流式
+	SettingKeyRetryEmptyOutput           SettingKey = "retry_empty_output"            // 输出为空(无可见内容)时自动重试，流式与非流式均适用（issue #106/#155）
 	SettingKeyRateLimitHoldEnabled       SettingKey = "rate_limit_hold_enabled"       // 429 限流时是否在当前渠道内延时重试（默认关闭，保持立即换 Key/渠道）
 	SettingKeyRateLimitHoldInterval      SettingKey = "rate_limit_hold_interval"      // 429 渠道内延时重试间隔（秒）
 	SettingKeyRateLimitHoldMaxWait       SettingKey = "rate_limit_hold_max_wait"      // 429 渠道内延时重试总等待上限（秒），超时后才换下一渠道

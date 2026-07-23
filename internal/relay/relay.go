@@ -33,7 +33,6 @@ import (
 
 var errClientDisconnected = errors.New("client disconnected")
 var errResponseFilterBlocked = errors.New("response filter blocked by keyword")
-var errEmptyOutput = errors.New("upstream returned empty output (completion_tokens=0, no content)")
 
 func resolveRequestedUpstreamModel(requestModel string) (string, bool) {
 	trimmed := strings.TrimSpace(requestModel)
@@ -853,6 +852,8 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	}
 
 	firstToken := true
+	hasVisibleContent := false   // 是否已产生可见内容（issue #155 流式空输出检测）
+	var reasoningBuffer [][]byte // 暂存仅含 reasoning 的 chunk，待可见内容到达后 flush
 	clientDone := ra.clientCtx.Done()
 	clientDisconnected := false
 	clientDisconnectLogged := false
@@ -947,11 +948,11 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 					ra.streamSession.Finish(nil)
 				}
 				log.Infof("stream end")
-				// 空流检测（issue #106）：整个流式响应没有产生任何有效数据（firstToken 仍为 true），
-				// 说明上游返回了空 SSE 流。此时客户端尚未收到任何数据（Written()=false），
+				// 空输出检测（issue #106/#155）：整个流式响应没有产生任何可见内容。
+				// reasoning-only chunk 被暂存到 reasoningBuffer，未写入客户端（Written()=false），
 				// 可以安全重试。仅当启用空输出重试时触发。
-				if isRetryEmptyOutputEnabled() && firstToken {
-					log.Infof("channel %s returned empty stream (no data chunks), will retry", ra.channel.Name)
+				if isRetryEmptyOutputEnabled() && !hasVisibleContent {
+					log.Infof("channel %s returned empty stream (no visible content), will retry", ra.channel.Name)
 					if ra.streamSession != nil {
 						ra.streamSession.Finish(nil)
 					}
@@ -965,11 +966,16 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 				return fmt.Errorf("failed to read stream event: %w", r.err)
 			}
 
-			data, err := ra.transformStreamData(ctx, r.data)
+			data, chunkHasVisible, err := ra.transformStreamData(ctx, r.data)
 			if err != nil {
 				if errors.Is(err, errResponseFilterBlocked) {
 					// 关键词拦截：发送错误 SSE 事件并终止流
 					filterCfg := ra.getResponseFilterConfig()
+					// 先 flush 暂存的 reasoning buffer，再发送错误事件
+					if len(reasoningBuffer) > 0 {
+						writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
+						reasoningBuffer = nil
+					}
 					if ra.streamSession != nil {
 						errPayload, _ := jsonAPI.Marshal(map[string]any{
 							"error": map[string]any{
@@ -1009,6 +1015,20 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 				}
 			}
 
+			// issue #155：仅含 reasoning 的 chunk 暂存到 buffer，不立即写入客户端。
+			// 待可见内容到达后统一 flush；若整个流式响应仅含 reasoning 则触发重试。
+			if !chunkHasVisible && !hasVisibleContent {
+				reasoningBuffer = append(reasoningBuffer, data)
+				continue
+			}
+
+			// 可见内容到达，先 flush 暂存的 reasoning buffer
+			if len(reasoningBuffer) > 0 {
+				writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
+				reasoningBuffer = nil
+			}
+			hasVisibleContent = true
+
 			if ra.streamSession != nil {
 				sessionEvents := ra.streamSession.AddPayload(data)
 				if clientDisconnected {
@@ -1040,31 +1060,65 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	}
 }
 
-// transformStreamData 转换流式数据
-func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([]byte, error) {
+// writeReasoningBuffer flushes buffered reasoning-only chunks to the client.
+// Used when visible content finally arrives (or on response-filter block) to
+// release the reasoning that was buffered for retry-safety (issue #155).
+func writeReasoningBuffer(ra *relayAttempt, buffer [][]byte, clientDisconnected *bool,
+	markClientDisconnected func(), logClientDisconnected func()) {
+	for _, data := range buffer {
+		if *clientDisconnected {
+			logClientDisconnected()
+			return
+		}
+		if ra.streamSession != nil {
+			sessionEvents := ra.streamSession.AddPayload(data)
+			for _, event := range sessionEvents {
+				if _, err := ra.c.Writer.Write(formatRelaySSEEvent(event.Sequence, event.Payload)); err != nil {
+					markClientDisconnected()
+					logClientDisconnected()
+					return
+				}
+				ra.c.Writer.Flush()
+			}
+			continue
+		}
+		if _, err := ra.c.Writer.Write(data); err != nil {
+			markClientDisconnected()
+			logClientDisconnected()
+			return
+		}
+		ra.c.Writer.Flush()
+	}
+}
+
+// transformStreamData 转换流式数据，返回转换后的 SSE 字节、该 chunk 是否包含可见内容、以及错误。
+// hasVisibleContent 用于流式空输出检测：仅含 reasoning 的 chunk 不算可见内容（issue #155）。
+func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([]byte, bool, error) {
 	internalStream, err := ra.outAdapter.TransformStream(ctx, []byte(data))
 	if err != nil {
 		logRelayErrorfByContext(err, "failed to transform stream: %v", err)
-		return nil, err
+		return nil, false, err
 	}
 	if internalStream == nil {
-		return nil, nil
+		return nil, false, nil
 	}
+
+	hasVisible := streamChunkHasVisibleContent(internalStream)
 
 	// 输出结果关键词拦截（流式）
 	filterCfg := ra.getResponseFilterConfig()
 	if blocked, keyword := applyResponseFilter(internalStream, filterCfg); blocked {
 		log.Infof("response filter blocked streaming chunk with keyword %q", keyword)
-		return nil, errResponseFilterBlocked
+		return nil, false, errResponseFilterBlocked
 	}
 
 	inStream, err := ra.inAdapter.TransformStream(ctx, internalStream)
 	if err != nil {
 		logRelayErrorfByContext(err, "failed to transform stream: %v", err)
-		return nil, err
+		return nil, false, err
 	}
 
-	return inStream, nil
+	return inStream, hasVisible, nil
 }
 
 // handleResponse 处理非流式响应
@@ -1094,10 +1148,10 @@ func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Respo
 
 	applyReasoningExhaustedHeader(ra.c, internalResponse)
 
-	// 空输出检测（issue #106）：上游返回 200 但 CompletionTokens=0 且内容为空。
-	// 仅非流式请求，且需在写入客户端之前判定，以便安全重试。
+	// 空输出检测（issue #106/#155）：上游返回 200 但无可见内容。
+	// 不依赖 CompletionTokens 判断——推理模型可能 CompletionTokens > 0 但无可见内容。
 	if isRetryEmptyOutputEnabled() && isEmptyOutputResponse(internalResponse) {
-		log.Infof("channel %s returned empty output (completion_tokens=0, no content), will retry", ra.channel.Name)
+		log.Infof("channel %s returned empty output (no visible content), will retry", ra.channel.Name)
 		return errEmptyOutput
 	}
 

@@ -1544,6 +1544,7 @@
         "success": "导入成功",
         "failed": "导入失败",
         "result": "导入结果",
+        "sizeHint": "支持最大 256 MB 的备份文件；大文件导入可能需要较长时间，请耐心等待。",
         "mode": {
           "label": "导入模式",
           "incremental": "增量导入",

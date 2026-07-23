@@ -45,12 +45,14 @@ func (o *Outbound) TransformRequest(ctx context.Context, request *model.Internal
 		req.Header.Set("Accept", "application/json")
 	}
 
-	if request.RawAPIFormat == model.APIFormatAnthropicMessage {
-		req.Header.Set("Anthropic-Version", "2023-06-01")
-		req.Header.Set("X-API-Key", key)
-	} else {
-		req.Header.Set("Authorization", "Bearer "+key)
-		req.Header.Set("api-key", key)
+	if key != "" {
+		if request.RawAPIFormat == model.APIFormatAnthropicMessage {
+			req.Header.Set("Anthropic-Version", "2023-06-01")
+			req.Header.Set("X-API-Key", key)
+		} else {
+			req.Header.Set("Authorization", "Bearer "+key)
+			req.Header.Set("api-key", key)
+		}
 	}
 
 	upstreamURL, err := buildPassthroughURL(baseUrl, endpointPath, request.Query, request.RawAPIFormat)

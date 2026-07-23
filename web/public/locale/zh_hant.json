@@ -1544,6 +1544,7 @@
         "success": "匯入成功",
         "failed": "匯入失敗",
         "result": "匯入結果",
+        "sizeHint": "支援最大 256 MB 的備份檔案；大檔案匯入可能需要較長時間，請耐心等候。",
         "mode": {
           "label": "匯入模式",
           "incremental": "增量匯入",

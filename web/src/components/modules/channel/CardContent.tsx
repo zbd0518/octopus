@@ -248,8 +248,8 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         const keys_to_delete = originalKeys.filter((k) => !nextIDs.has(k.id)).map((k) => k.id);
 
         const keys_to_add = nextKeys
-            .filter((k) => !k.id && k.channel_key.trim())
-            .map((k) => ({ enabled: k.enabled, channel_key: k.channel_key, priority: Number(k.priority ?? 0), remark: k.remark ?? '' }));
+            .filter((k) => !k.id)
+            .map((k) => ({ enabled: k.enabled, channel_key: k.channel_key.trim(), priority: Number(k.priority ?? 0), remark: k.remark ?? '' }));
 
         const keys_to_update = nextKeys
             .filter((k) => typeof k.id === 'number' && originalByID.has(k.id as number))

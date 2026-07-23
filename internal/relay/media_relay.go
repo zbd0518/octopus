@@ -778,7 +778,9 @@ func copyMediaForwardHeaders(req *http.Request, c *gin.Context, channel *dbmodel
 	if streamRequested {
 		req.Header.Set("Accept", "text/event-stream")
 	}
-	req.Header.Set("Authorization", "Bearer "+key)
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
 	applyChannelHeaders(req, channel)
 }
 

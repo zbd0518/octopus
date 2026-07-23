@@ -54,7 +54,9 @@ func (o *MessageOutbound) TransformRequest(ctx context.Context, request *model.I
 		req.Header.Set("Accept", "application/json")
 	}
 	req.Header.Set("Anthropic-Version", "2023-06-01")
-	req.Header.Set("X-API-Key", key)
+	if key != "" {
+		req.Header.Set("X-API-Key", key)
+	}
 
 	// Parse and set URL
 	parsedUrl, err := url.Parse(strings.TrimSuffix(baseUrl, "/"))

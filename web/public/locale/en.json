@@ -1588,6 +1588,7 @@
         "success": "Import successful",
         "failed": "Import failed",
         "result": "Import result",
+        "sizeHint": "Backup files up to 256 MB are supported. Large files may take a while to import — please be patient.",
         "mode": {
           "label": "Import mode",
           "incremental": "Incremental",

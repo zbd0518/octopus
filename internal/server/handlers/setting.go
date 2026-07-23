@@ -31,7 +31,7 @@ import (
 )
 
 var (
-	maxDBImportBytes               int64 = 64 << 20
+	maxDBImportBytes               int64 = 256 << 20 // 256 MiB：支持大备份导入（issue #158）
 	maxDBImportMultipartExtraBytes int64 = 1 << 20
 )
 

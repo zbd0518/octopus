@@ -459,7 +459,7 @@ func (c *Channel) GetChannelKeyExcludingWithCooldown(excludeKeyIDs []int, modelN
 	// 先收集通过 Enabled/排除/冷却三关的候选。
 	candidates := make([]ChannelKey, 0, len(c.Keys))
 	for _, k := range c.Keys {
-		if !k.Enabled || k.ChannelKey == "" {
+		if !k.Enabled {
 			continue
 		}
 		if _, excluded := excludeSet[k.ID]; excluded {

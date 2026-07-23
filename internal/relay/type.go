@@ -32,6 +32,8 @@ const (
 	maxErrorBodyBytes           = 64 << 10 // 64 KiB — upstream error responses should be concise
 )
 
+var errEmptyOutput = errors.New("upstream returned empty output (no visible content)")
+
 func init() {
 	if raw := strings.TrimSpace(os.Getenv(strings.ToUpper(conf.APP_NAME) + "_RELAY_MAX_SSE_EVENT_SIZE")); raw != "" {
 		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
@@ -79,7 +81,8 @@ func getMaxTotalAttempts() int {
 }
 
 // isRetryEmptyOutputEnabled 返回是否启用空输出重试。
-// 当上游返回 200 但 CompletionTokens=0 且内容为空时，自动触发重试（仅非流式）。
+// 当上游返回 200 但输出为空（无可见内容：无文本、无工具调用、无多模态、无音频）时自动重试。
+// 适用于流式与非流式。issue #155：推理模型消耗大量 reasoning tokens 但不产生可见内容时也应重试。
 func isRetryEmptyOutputEnabled() bool {
 	v, err := setting.GetBool(dbmodel.SettingKeyRetryEmptyOutput)
 	if err != nil {
@@ -88,9 +91,31 @@ func isRetryEmptyOutputEnabled() bool {
 	return v
 }
 
+// messageHasVisibleContent 检查 Message 是否包含可见内容（文本、多模态、工具调用、音频）。
+// reasoning_content / reasoning 不算可见内容（issue #155）。
+func messageHasVisibleContent(msg *model.Message) bool {
+	if msg == nil {
+		return false
+	}
+	if msg.Content.Content != nil && strings.TrimSpace(*msg.Content.Content) != "" {
+		return true
+	}
+	if len(msg.Content.MultipleContent) > 0 {
+		return true
+	}
+	if len(msg.ToolCalls) > 0 {
+		return true
+	}
+	if msg.Audio != nil {
+		return true
+	}
+	return false
+}
+
 // isEmptyOutputResponse 判断非流式响应是否为"空输出"：
-// CompletionTokens=0 且所有 Choices 的内容均为空（无文本、无工具调用、无多模态内容）。
-// 用于 issue #106：模型输出结果为空/Token=0 时自动重试。
+// 所有 Choices 的 Message 均无可见内容（无文本、无工具调用、无多模态、无音频）。
+// 不依赖 CompletionTokens 判断——推理模型可能消耗大量 reasoning tokens
+// 但 CompletionTokens > 0 却不产生任何可见内容（issue #155）。
 func isEmptyOutputResponse(resp *model.InternalLLMResponse) bool {
 	if resp == nil {
 		return false
@@ -99,29 +124,26 @@ func isEmptyOutputResponse(resp *model.InternalLLMResponse) bool {
 	if len(resp.Choices) == 0 {
 		return false
 	}
-	// CompletionTokens > 0 说明有实际输出
-	if resp.Usage != nil && resp.Usage.CompletionTokens > 0 {
-		return false
-	}
-	// 检查所有 choice 的内容是否为空
 	for _, choice := range resp.Choices {
-		if choice.Message == nil {
-			continue
-		}
-		// 有文本内容
-		if choice.Message.Content.Content != nil && strings.TrimSpace(*choice.Message.Content.Content) != "" {
-			return false
-		}
-		// 有多模态内容
-		if len(choice.Message.Content.MultipleContent) > 0 {
-			return false
-		}
-		// 有工具调用
-		if len(choice.Message.ToolCalls) > 0 {
+		if messageHasVisibleContent(choice.Message) {
 			return false
 		}
 	}
 	return true
+}
+
+// streamChunkHasVisibleContent 检查流式 chunk（Delta）是否包含可见内容。
+// 用于流式空输出检测：当整个流式响应仅包含 reasoning chunks 而无可见内容时触发重试（issue #155）。
+func streamChunkHasVisibleContent(resp *model.InternalLLMResponse) bool {
+	if resp == nil {
+		return false
+	}
+	for _, choice := range resp.Choices {
+		if messageHasVisibleContent(choice.Delta) {
+			return true
+		}
+	}
+	return false
 }
 
 // hopByHopHeaders 定义不应转发的 HTTP 头

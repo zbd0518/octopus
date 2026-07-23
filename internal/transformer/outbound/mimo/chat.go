@@ -49,8 +49,10 @@ func (o *ChatOutbound) TransformRequest(ctx context.Context, request *transforme
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+key)
-	req.Header.Set("api-key", key)
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+		req.Header.Set("api-key", key)
+	}
 
 	upstreamURL, err := openaioutbound.BuildOpenAIUpstreamURL(baseURL, "/v1/chat/completions")
 	if err != nil {

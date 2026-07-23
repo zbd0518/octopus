@@ -402,9 +402,7 @@ type channelKeyRequestPayload struct {
 func (p channelRequestPayload) toChannel() model.Channel {
 	keys := make([]model.ChannelKey, 0, len(p.Keys))
 	for _, key := range p.Keys {
-		if strings.TrimSpace(key.ChannelKey) == "" {
-			continue
-		}
+		// 空 key 也允许保留（issue #157：支持无 key 渠道）
 		keys = append(keys, model.ChannelKey{
 			Enabled:    key.Enabled,
 			ChannelKey: key.ChannelKey,
