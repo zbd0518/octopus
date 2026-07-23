@@ -2414,7 +2414,12 @@
           "responsesOnly": "仅 Responses",
           "messagesOnly": "仅 Anthropic Messages"
         }
-      }
+      },
+      "showDisabledChannels": "显示已禁用渠道",
+      "channelGroupFilter": "渠道分组",
+      "channelGroupAll": "全部分组",
+      "channelDisabledBadge": "渠道已禁用",
+      "disabledMembersCount": "{count} 个成员渠道已禁用"
     },
     "mode": {
       "roundRobin": "轮询",

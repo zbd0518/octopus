@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Check, ChevronDownIcon, Plus, Search, Sparkles, Trash2, Waves, Orbit, SlidersHorizontal, FlaskConical } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { Accordion as AccordionPrimitive } from 'radix-ui';
 import { useModelChannelList, type LLMChannel } from '@/api/endpoints/model';
+import { useChannelGroupList, useChannelList, type ChannelGroup } from '@/api/endpoints/channel';
 import { Button } from '@/components/ui/button';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -14,6 +15,13 @@ import { getModelIcon } from '@/lib/model-icons';
 import { GroupMode } from '@/api/endpoints/group';
 import type { SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
+import { getChannelGroupDisplayName } from '@/components/modules/channel/GroupManager';
+import {
+    countDisabledMembers,
+    filterMatchedForAutoAdd,
+    filterModelChannelsForPicker,
+    syncMembersChannelEnabled,
+} from './editor-filters';
 import { CHAT_ENDPOINT_PROVIDER_OPTIONS, OUTBOUND_FORMAT_OPTIONS, matchesGroupName, memberKey, MODE_LABELS, MUSIC_ENDPOINT_PROVIDER_OPTIONS, VIDEO_ENDPOINT_PROVIDER_OPTIONS, AUDIO_SPEECH_ENDPOINT_PROVIDER_OPTIONS, ENDPOINT_TYPE_OPTIONS, normalizeEndpointProvider, normalizeEndpointType, normalizeOutboundFormat, normalizeKey } from './utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 import { HelpCircle } from 'lucide-react';
@@ -57,25 +65,37 @@ function ModelPickerSection({
     onAdd,
     onAutoAdd,
     autoAddDisabled,
+    showDisabledChannels,
+    onShowDisabledChannelsChange,
+    channelGroupId,
+    onChannelGroupIdChange,
+    channelGroups,
 }: {
     modelChannels: LLMChannel[];
     selectedMembers: SelectedMember[];
     onAdd: (channel: LLMChannel) => void;
     onAutoAdd: () => void;
     autoAddDisabled: boolean;
+    showDisabledChannels: boolean;
+    onShowDisabledChannelsChange: (value: boolean) => void;
+    channelGroupId: number | null;
+    onChannelGroupIdChange: (value: number | null) => void;
+    channelGroups: ChannelGroup[];
 }) {
     const t = useTranslations('group');
+    const tChannel = useTranslations('channel.groupManager');
     const [searchKeyword, setSearchKeyword] = useState('');
 
     const selectedKeys = useMemo(() => new Set(selectedMembers.map(memberKey)), [selectedMembers]);
     const normalizedSearch = searchKeyword.trim().toLowerCase();
+    const defaultGroupName = tChannel('defaultName');
 
     const channels = useMemo(() => {
-        const byId = new Map<number, { id: number; name: string; models: LLMChannel[] }>();
+        const byId = new Map<number, { id: number; name: string; enabled: boolean; models: LLMChannel[] }>();
         modelChannels.forEach((mc) => {
             const existing = byId.get(mc.channel_id);
             if (existing) existing.models.push(mc);
-            else byId.set(mc.channel_id, { id: mc.channel_id, name: mc.channel_name, models: [mc] });
+            else byId.set(mc.channel_id, { id: mc.channel_id, name: mc.channel_name, enabled: mc.enabled, models: [mc] });
         });
 
         return Array.from(byId.values())
@@ -124,7 +144,7 @@ function ModelPickerSection({
                 </button>
             </div>
 
-            <div className="border-b border-border/15 px-4 py-3">
+            <div className="space-y-2 border-b border-border/15 px-4 py-3">
                 <div className="relative w-full">
                     <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                     <Input
@@ -133,6 +153,33 @@ function ModelPickerSection({
                         className="h-9 rounded-lg border-border/35 bg-card pl-8 pr-3 text-sm focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/20"
                         aria-label={t('form.searchAriaLabel')}
                     />
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <select
+                        value={channelGroupId ?? ''}
+                        onChange={(event) => {
+                            const raw = event.target.value;
+                            onChannelGroupIdChange(raw === '' ? null : Number.parseInt(raw, 10));
+                        }}
+                        className="h-9 w-full rounded-lg border border-border/35 bg-card px-2 text-xs shadow-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/20 sm:min-w-[10rem] sm:flex-1"
+                        aria-label={t('form.channelGroupFilter')}
+                    >
+                        <option value="">{t('form.channelGroupAll')}</option>
+                        {channelGroups.map((group) => (
+                            <option key={group.id} value={group.id}>
+                                {getChannelGroupDisplayName(group, defaultGroupName)}
+                            </option>
+                        ))}
+                    </select>
+                    <label className="inline-flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+                        <input
+                            type="checkbox"
+                            className="size-3.5 rounded border-border"
+                            checked={showDisabledChannels}
+                            onChange={(event) => onShowDisabledChannelsChange(event.target.checked)}
+                        />
+                        <span>{t('form.showDisabledChannels')}</span>
+                    </label>
                 </div>
             </div>
 
@@ -145,12 +192,21 @@ function ModelPickerSection({
                             0
                         );
                         const available = total - selectedCount;
+                        const channelDisabled = channel.enabled === false;
 
                         return (
                             <AccordionItem key={channel.id} value={`channel-${channel.id}`}>
-                                <AccordionPrimitive.Header className="sticky top-0 z-10 flex overflow-hidden rounded-lg border border-border/25 bg-card px-3">
+                                <AccordionPrimitive.Header className={cn(
+                                    'sticky top-0 z-10 flex overflow-hidden rounded-lg border border-border/25 bg-card px-3',
+                                    channelDisabled && 'opacity-70'
+                                )}>
                                     <AccordionPrimitive.Trigger className="flex min-w-0 flex-1 items-center gap-4 py-3.5 text-left text-sm transition-all outline-none focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50 [&[data-state=open]>svg]:rotate-180">
                                         <span className="truncate">{channel.name}</span>
+                                        {channelDisabled ? (
+                                            <span className="shrink-0 rounded-full border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                                                {t('form.channelDisabledBadge')}
+                                            </span>
+                                        ) : null}
                                         <span className="text-xs text-muted-foreground shrink-0">
                                             {available}/{total}
                                         </span>
@@ -170,7 +226,8 @@ function ModelPickerSection({
                                                     disabled={isSelected}
                                                     className={cn(
                                                         'w-full flex items-center justify-between gap-2 rounded-lg border border-border/30 bg-card px-3 py-2.5 text-left transition-[transform,border-color,background-color,box-shadow] duration-300',
-                                                        isSelected ? 'cursor-not-allowed opacity-60' : 'hover:-translate-y-0.5 hover:border-primary/18 hover:bg-card'
+                                                        isSelected ? 'cursor-not-allowed opacity-60' : 'hover:-translate-y-0.5 hover:border-primary/18 hover:bg-card',
+                                                        channelDisabled && !isSelected && 'opacity-70'
                                                     )}
                                                 >
                                                     <span className="flex items-center gap-2 min-w-0">
@@ -217,6 +274,7 @@ function SortSection({
     onClear: () => void;
 }) {
     const t = useTranslations('group');
+    const disabledCount = countDisabledMembers(members);
 
     return (
         <div className="flex min-h-[28rem] flex-col rounded-lg border border-border/30 bg-card lg:min-h-0">
@@ -246,6 +304,12 @@ function SortSection({
                     <span>{t('form.clear')}</span>
                 </button>
             </div>
+
+            {disabledCount > 0 ? (
+                <div className="border-b border-amber-500/20 bg-amber-500/5 px-4 py-2 text-xs font-medium text-amber-800 dark:text-amber-300">
+                    {t('form.disabledMembersCount', { count: disabledCount })}
+                </div>
+            ) : null}
 
             <div className="flex-1 min-h-0">
                 <MemberList
@@ -281,6 +345,8 @@ export function GroupEditor({
 }) {
     const t = useTranslations('group');
     const { data: modelChannels = [] } = useModelChannelList();
+    const { data: channelList = [] } = useChannelList();
+    const { data: channelGroups = [] } = useChannelGroupList();
     const conditionPlaceholder = '[{"key":"model","op":"contains","value":"gpt-4"}]';
 
     const [groupName, setGroupName] = useState(initial?.name ?? '');
@@ -296,9 +362,34 @@ export function GroupEditor({
     const [condition, setCondition] = useState(initial?.condition ?? '');
     const [selectedMembers, setSelectedMembers] = useState<SelectedMember[]>(dedupeSelectedMembers(initial?.members ?? []));
     const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
+    const [showDisabledChannels, setShowDisabledChannels] = useState(false);
+    const [channelGroupFilterId, setChannelGroupFilterId] = useState<number | null>(null);
 
     const groupKey = normalizeKey(groupName);
     const regexKey = matchRegex.trim();
+
+    const groupIdByChannelId = useMemo(() => {
+        const map = new Map<number, number>();
+        for (const item of channelList) {
+            map.set(item.raw.id, item.raw.group_id);
+        }
+        return map;
+    }, [channelList]);
+
+    const pickerModelChannels = useMemo(
+        () =>
+            filterModelChannelsForPicker(modelChannels, {
+                showDisabled: showDisabledChannels,
+                channelGroupId: channelGroupFilterId,
+                groupIdByChannelId,
+            }),
+        [modelChannels, showDisabledChannels, channelGroupFilterId, groupIdByChannelId],
+    );
+
+    // 已选成员：保留历史项，但用最新渠道 enabled 刷新，便于标明「渠道已禁用」
+    useEffect(() => {
+        setSelectedMembers((prev) => syncMembersChannelEnabled(prev, modelChannels));
+    }, [modelChannels]);
 
     const { matchedModelChannels, regexError } = useMemo(() => {
         const parseRegex = (input: string): RegExp => {
@@ -312,17 +403,18 @@ export function GroupEditor({
             return new RegExp(input);
         };
 
+        // 自动添加与候选列表共用同一过滤口径（禁用渠道 / 渠道分组）
         if (regexKey) {
             try {
                 const re = parseRegex(regexKey);
-                return { matchedModelChannels: modelChannels.filter((mc) => re.test(mc.name)), regexError: '' };
+                return { matchedModelChannels: pickerModelChannels.filter((mc) => re.test(mc.name)), regexError: '' };
             } catch (e) {
                 return { matchedModelChannels: [], regexError: (e as Error)?.message ?? 'Invalid regex' };
             }
         }
         if (!groupKey) return { matchedModelChannels: [], regexError: '' };
-        return { matchedModelChannels: modelChannels.filter((mc) => matchesGroupName(mc.name, groupKey)), regexError: '' };
-    }, [groupKey, regexKey, modelChannels]);
+        return { matchedModelChannels: pickerModelChannels.filter((mc) => matchesGroupName(mc.name, groupKey)), regexError: '' };
+    }, [groupKey, regexKey, pickerModelChannels]);
 
     const handleAddMember = useCallback((channel: LLMChannel) => {
         const key = memberKey(channel);
@@ -332,22 +424,27 @@ export function GroupEditor({
         });
     }, []);
 
+    const autoAddCandidates = useMemo(
+        () => filterMatchedForAutoAdd(matchedModelChannels, showDisabledChannels),
+        [matchedModelChannels, showDisabledChannels],
+    );
+
     const autoAddDisabled = useMemo(() => {
-        if ((!regexKey && !groupKey) || regexError || matchedModelChannels.length === 0) return true;
+        if ((!regexKey && !groupKey) || regexError || autoAddCandidates.length === 0) return true;
         const existing = new Set(selectedMembers.map((m) => m.id));
-        return matchedModelChannels.every((mc) => existing.has(memberKey(mc)));
-    }, [groupKey, regexKey, regexError, matchedModelChannels, selectedMembers]);
+        return autoAddCandidates.every((mc) => existing.has(memberKey(mc)));
+    }, [groupKey, regexKey, regexError, autoAddCandidates, selectedMembers]);
 
     const handleAutoAdd = useCallback(() => {
-        if (matchedModelChannels.length === 0) return;
+        if (autoAddCandidates.length === 0) return;
         setSelectedMembers((prev) => {
             const existing = new Set(prev.map((m) => m.id));
-            const toAdd = matchedModelChannels
+            const toAdd = autoAddCandidates
                 .filter((mc) => !existing.has(memberKey(mc)))
                 .map((mc) => ({ ...mc, id: memberKey(mc), weight: 1 }));
             return toAdd.length ? dedupeSelectedMembers([...prev, ...toAdd]) : prev;
         });
-    }, [matchedModelChannels]);
+    }, [autoAddCandidates]);
 
     const handleWeightChange = useCallback((id: string, weight: number) => {
         setSelectedMembers((prev) => prev.map((m) => m.id === id ? { ...m, weight } : m));
@@ -731,11 +828,16 @@ export function GroupEditor({
 
                             <div className="grid min-w-0 grid-cols-1 gap-3 xl:flex-1 xl:min-h-0 2xl:grid-cols-[minmax(18rem,0.92fr)_minmax(20rem,1.18fr)] 2xl:gap-4">
                                 <ModelPickerSection
-                                    modelChannels={modelChannels}
+                                    modelChannels={pickerModelChannels}
                                     selectedMembers={selectedMembers}
                                     onAdd={handleAddMember}
                                     onAutoAdd={handleAutoAdd}
                                     autoAddDisabled={autoAddDisabled}
+                                    showDisabledChannels={showDisabledChannels}
+                                    onShowDisabledChannelsChange={setShowDisabledChannels}
+                                    channelGroupId={channelGroupFilterId}
+                                    onChannelGroupIdChange={setChannelGroupFilterId}
+                                    channelGroups={channelGroups}
                                 />
                                 <SortSection
                                     members={selectedMembers}

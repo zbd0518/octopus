@@ -135,6 +135,11 @@ function MemberItem({
                         ) : null}
                         {availabilityStatus === 'testing' ? <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
                         {availabilityStatus === 'available' ? <CircleCheck className="size-3.5 shrink-0 text-emerald-500" /> : null}
+                        {isDisabled ? (
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                                {t('form.channelDisabledBadge')}
+                            </span>
+                        ) : null}
                         {availabilityStatus === 'unavailable' ? (
                             <Tooltip side="top" sideOffset={10} align="center">
                                 <TooltipTrigger asChild>

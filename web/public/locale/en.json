@@ -2458,7 +2458,12 @@
           "responsesOnly": "Responses only",
           "messagesOnly": "Anthropic Messages only"
         }
-      }
+      },
+      "showDisabledChannels": "Show disabled channels",
+      "channelGroupFilter": "Channel group",
+      "channelGroupAll": "All groups",
+      "channelDisabledBadge": "Channel disabled",
+      "disabledMembersCount": "{count, plural, one {# member channel disabled} other {# member channels disabled}}"
     },
     "mode": {
       "roundRobin": "Round Robin",

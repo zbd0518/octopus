@@ -2407,7 +2407,12 @@
           "responsesOnly": "僅 Responses",
           "messagesOnly": "僅 Anthropic Messages"
         }
-      }
+      },
+      "showDisabledChannels": "顯示已停用渠道",
+      "channelGroupFilter": "渠道分組",
+      "channelGroupAll": "全部分組",
+      "channelDisabledBadge": "渠道已停用",
+      "disabledMembersCount": "{count} 個成員渠道已停用"
     },
     "mode": {
       "roundRobin": "輪詢",
