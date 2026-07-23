@@ -21,11 +21,13 @@ type StatsMetrics struct {
 	FtutP99 int64 `json:"ftut_p99" gorm:"bigint"`
 
 	// 延迟直方图（请求计数）
-	HistogramLt100    int64 `json:"histogram_lt_100" gorm:"bigint"`
-	Histogram100to500 int64 `json:"histogram_100_500" gorm:"bigint"`
-	Histogram500to1k  int64 `json:"histogram_500_1k" gorm:"bigint"`
-	Histogram1kto5k   int64 `json:"histogram_1k_5k" gorm:"bigint"`
-	HistogramGt5k     int64 `json:"histogram_gt_5k" gorm:"bigint"`
+	// 必须显式 column：GORM 默认蛇形化会生成 histogram_lt100 / histogram100to500，
+	// 与 upsert SQL、Redis hash field、前端 JSON 使用的 histogram_lt_100 等不一致。
+	HistogramLt100    int64 `json:"histogram_lt_100" gorm:"column:histogram_lt_100;type:bigint"`
+	Histogram100to500 int64 `json:"histogram_100_500" gorm:"column:histogram_100_500;type:bigint"`
+	Histogram500to1k  int64 `json:"histogram_500_1k" gorm:"column:histogram_500_1k;type:bigint"`
+	Histogram1kto5k   int64 `json:"histogram_1k_5k" gorm:"column:histogram_1k_5k;type:bigint"`
+	HistogramGt5k     int64 `json:"histogram_gt_5k" gorm:"column:histogram_gt_5k;type:bigint"`
 }
 
 type StatsTotal struct {
