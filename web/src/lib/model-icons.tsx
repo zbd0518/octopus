@@ -139,3 +139,5 @@ export function getModelIcon(modelName: string): { Avatar: AvatarComponent; colo
     return DEFAULT_CONFIG;
 }
 
+export { brandBadgeStyle } from './brand-badge-style.ts';
+

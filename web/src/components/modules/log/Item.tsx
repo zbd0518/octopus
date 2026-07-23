@@ -9,6 +9,7 @@ import { githubDarkTheme } from '@uiw/react-json-view/githubDark';
 import { githubLightTheme } from '@uiw/react-json-view/githubLight';
 import { useTheme } from 'next-themes';
 import { type RelayLog, type ChannelAttempt, useLogDetail } from '@/api/endpoints/log';
+import { brandBadgeStyle } from '@/lib/brand-badge-style';
 import { getModelIcon } from '@/lib/model-icons';
 import { Badge } from '@/components/ui/badge';
 import { cn, formatCount, formatMoney } from '@/lib/utils';
@@ -139,6 +140,8 @@ interface RetryBadgeWithTooltipProps {
 
 function RetryBadgeWithTooltip({ channelName, brandColor, attempts, channelNameById }: RetryBadgeWithTooltipProps) {
     const t = useTranslations('log.card');
+    const { resolvedTheme } = useTheme();
+    const badgeStyle = brandBadgeStyle(brandColor, resolvedTheme === 'dark');
 
     return (
         <Tooltip>
@@ -146,7 +149,7 @@ function RetryBadgeWithTooltip({ channelName, brandColor, attempts, channelNameB
                 <Badge
                     variant="secondary"
                     className="shrink-0 text-xs px-1.5 py-0.5 cursor-help font-medium"
-                    style={{ backgroundColor: `${brandColor}15`, color: brandColor }}
+                    style={badgeStyle}
                 >
                     <RotateCw className="size-3 mr-1 opacity-80" />
                     {channelName}
@@ -284,6 +287,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
     const t = useTranslations('log.card');
     const tCommon = useTranslations('common');
     const tGroup = useTranslations('group');
+    const { resolvedTheme } = useTheme();
     const { detail, isLoading: isDetailLoading, fetchDetail, reset: resetDetail } = useLogDetail();
     const hasError = !!log.error;
     const hasMultipleAttempts = log.attempts && log.attempts.length > 1;
@@ -303,6 +307,11 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
     const { Avatar: ModelAvatar, color: brandColor } = useMemo(
         () => getModelIcon(displayFields.actualModelName),
         [displayFields.actualModelName]
+    );
+    // 渠道名称 / 渠道类型 Badge 使用品牌色；Grok/Kimi 等近黑色在夜间模式下需提亮文字色
+    const channelBadgeStyle = useMemo(
+        () => brandBadgeStyle(brandColor, resolvedTheme === 'dark'),
+        [brandColor, resolvedTheme],
     );
     const requestAPIKeyName = displayFields.requestAPIKeyName;
 	const clientIP = log.client_ip || '';
@@ -404,7 +413,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                     <Badge
                                         variant="secondary"
                                         className="max-w-full shrink-0 text-xs px-1.5 py-0"
-                                        style={{ backgroundColor: `${brandColor}15`, color: brandColor }}
+                                        style={channelBadgeStyle}
                                         title={displayEndpointType}
                                     >
                                         <span className="block max-w-[10rem] truncate">{displayEndpointType}</span>
@@ -424,7 +433,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                             <Badge
                                                 variant="secondary"
                                                 className="max-w-full shrink-0 text-xs px-1.5 py-0"
-                                                style={{ backgroundColor: `${brandColor}15`, color: brandColor }}
+                                                style={channelBadgeStyle}
                                                 title={displayChannelName}
                                             >
                                                 <span className="block max-w-[18rem] truncate">{displayChannelName}</span>
@@ -560,7 +569,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                 <Badge
                                     variant="secondary"
                                     className="max-w-full shrink-0 text-xs px-1.5 py-0"
-                                    style={{ backgroundColor: `${brandColor}15`, color: brandColor }}
+                                    style={channelBadgeStyle}
                                     title={displayEndpointType}
                                 >
                                     <span className="block max-w-[10rem] truncate">{displayEndpointType}</span>
@@ -580,7 +589,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                         <Badge
                                             variant="secondary"
                                             className="max-w-full text-xs px-1.5 py-0"
-                                            style={{ backgroundColor: `${brandColor}15`, color: brandColor }}
+                                            style={channelBadgeStyle}
                                             title={displayChannelName}
                                         >
                                             <span className="block max-w-[18rem] truncate">{displayChannelName}</span>
