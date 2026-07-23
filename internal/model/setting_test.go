@@ -43,6 +43,31 @@ func TestSettingValidateRelayRetry(t *testing.T) {
 	}
 }
 
+func TestDefaultSettingsIncludesGroupProbePrompt(t *testing.T) {
+	found := false
+	for _, item := range DefaultSettings() {
+		if item.Key != SettingKeyGroupProbePrompt {
+			continue
+		}
+		found = true
+		if item.Value != "hi" {
+			t.Fatalf("DefaultSettings group_probe_prompt = %q, want hi", item.Value)
+		}
+	}
+	if !found {
+		t.Fatal("DefaultSettings missing group_probe_prompt")
+	}
+}
+
+func TestSettingValidateGroupProbePromptAllowsAnyString(t *testing.T) {
+	for _, value := range []string{"", "hi", "  ", "请用一句话介绍你自己"} {
+		setting := Setting{Key: SettingKeyGroupProbePrompt, Value: value}
+		if err := setting.Validate(); err != nil {
+			t.Fatalf("Validate(%q) error = %v, want nil", value, err)
+		}
+	}
+}
+
 func TestSettingValidateRateLimitHoldEnabled(t *testing.T) {
 	tests := []struct {
 		name    string

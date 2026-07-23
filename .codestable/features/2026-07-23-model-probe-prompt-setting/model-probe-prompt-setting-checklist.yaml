@@ -1,0 +1,102 @@
+doc_type: feature-checklist
+slug: model-probe-prompt-setting
+status: pending
+execution_lane: standard
+date: 2026-07-23
+
+steps:
+  - id: S1
+    name: 注册全局 Setting group_probe_prompt
+    status: done
+    exit_signal: DefaultSettings 含 key group_probe_prompt 默认 hi；前后端 SettingKey 字符串一致；有可断言默认值的单测或明确 diff_review
+    evidence: |
+      go test ./internal/model/ -count=1 -run 'DefaultSettings|GroupProbe' → ok
+      SettingKeyGroupProbePrompt + DefaultSettings hi + free-string Validate；web SettingKey.GroupProbePrompt
+    verify:
+      - type: command
+        cmd: go test ./internal/model/ -count=1 -run 'DefaultSettings|GroupProbe'
+      - type: diff_review
+        focus: SettingKey + DefaultSettings + frontend SettingKey mirror
+    deliverables:
+      - backend setting key
+      - frontend SettingKey mirror
+      - default hi seed
+
+  - id: S2
+    name: resolveGroupProbePrompt + 模型测活构造注入
+    status: done
+    exit_signal: resolve 覆盖默认/自定义/空白/GetString err 均回退或注入正确；buildGroupProbeRequest 使用 resolve 结果；helper 测试通过
+    evidence: |
+      go test ./internal/helper/ -count=1 → ok
+      resolveGroupProbePrompt + custom/blank/missing tests；chat/embedding 注入
+    verify:
+      - type: command
+        cmd: go test ./internal/helper/ -count=1
+    deliverables:
+      - resolveGroupProbePrompt (or equivalent)
+      - probe request uses resolved prompt for chat and embedding
+      - unit tests for N1 N2 B1 B2
+
+  - id: S3
+    name: 运维维护重试区 UI 与 i18n
+    status: done
+    exit_signal: 运维→维护→重试区可编辑保存测活提示词；文案标明仅模型测活且不影响 Key 巡检；空白回退说明；i18n 键齐全
+    evidence: |
+      pnpm --dir web test:i18n → passed
+      SettingRetry 文本框 + zh_hans/zh_hant/en groupProbePrompt
+    verify:
+      - type: command
+        cmd: pnpm --dir web test:i18n
+      - type: manual
+        focus: 运维/维护 → 重试区保存后触发模型测活
+    deliverables:
+      - SettingRetry (or peer) text control
+      - locale title/hint (zh_hans zh_hant en)
+
+  - id: S4
+    name: 回归默认与 Key 巡检边界
+    status: done
+    exit_signal: 默认仍 hi；Key 巡检路径无行为变更；成功路径仍不校验回复内容；DoD 可勾选
+    evidence: |
+      channel_probe.go / key_health.go 未改；Passed 仍基于 HTTP/可解析；helper 全量测试 ok
+    verify:
+      - type: diff_review
+        focus: channel_probe / key_health 无提示词耦合；Passed 条件无 content match
+      - type: command
+        cmd: go test ./internal/helper/ -count=1
+    deliverables:
+      - regression notes in impl evidence
+
+checks:
+  - id: C1
+    name: 未配置时请求文本为 hi
+    status: passed
+    maps_to: N1
+  - id: C2
+    name: 自定义提示词注入测活请求
+    status: passed
+    maps_to: N2
+  - id: C3
+    name: 空/空白回退 hi
+    status: passed
+    maps_to: B1
+  - id: C4
+    name: 成功路径不校验模型回复内容
+    status: passed
+    maps_to: N3
+  - id: C5
+    name: 不影响 Key 巡检
+    status: passed
+    maps_to: R1
+  - id: C6
+    name: 无渠道级覆盖与期望回复配置
+    status: passed
+    maps_to: X1
+  - id: C7
+    name: Setting 读失败回退 hi 且不崩溃
+    status: passed
+    maps_to: B2
+  - id: C8
+    name: 上游非 2xx 仍失败
+    status: passed
+    maps_to: E1

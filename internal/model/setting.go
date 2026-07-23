@@ -104,6 +104,7 @@ const (
 	SettingKeyKeyHealthCheckNotifyEnabled          SettingKey = "key_health_check_notify_enabled"          // 是否发送 Key 验证失败通知
 	SettingKeyKeyHealthCheckRecoveryNotify         SettingKey = "key_health_check_recovery_notify"         // 是否发送 Key 验证恢复通知
 	SettingKeyKeyHealthCheckNotifyCooldown         SettingKey = "key_health_check_notify_cooldown"         // Key 验证通知冷却时间（秒）
+	SettingKeyGroupProbePrompt                     SettingKey = "group_probe_prompt"                       // 模型测活提示词（分组/渠道模型测试 chat content 与 embedding input；空回退 hi）
 	SettingKeyGroupUpstreamMetaDisplayEnabled      SettingKey = "group_upstream_meta_display_enabled"      // 分组编辑页展示上游价/余额/今日收入/性能指标
 )
 
@@ -205,6 +206,7 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyKeyHealthCheckNotifyEnabled, Value: "true"},     // 默认发送失败通知
 		{Key: SettingKeyKeyHealthCheckRecoveryNotify, Value: "true"},    // 默认发送恢复通知
 		{Key: SettingKeyKeyHealthCheckNotifyCooldown, Value: "300"},     // 默认通知冷却 5 分钟
+		{Key: SettingKeyGroupProbePrompt, Value: "hi"},                 // 默认模型测活提示词（与历史硬编码一致）
 		{Key: SettingKeyGroupUpstreamMetaDisplayEnabled, Value: "true"}, // 默认开启分组上游元信息展示
 	}
 }
@@ -436,7 +438,7 @@ func (s *Setting) Validate() error {
 		default:
 			return fmt.Errorf("response filter action must be block or replace")
 		}
-	case SettingKeyResponseFilterErrorMessage:
+	case SettingKeyResponseFilterErrorMessage, SettingKeyGroupProbePrompt:
 		return nil
 	case SettingKeyLogLevel:
 		switch s.Value {

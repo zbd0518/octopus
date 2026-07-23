@@ -1444,6 +1444,10 @@
         "notifyEnabled": "Failure notification",
         "recoveryNotify": "Recovery notification"
       },
+      "groupProbePrompt": {
+        "label": "Model probe prompt",
+        "hint": "User text for group/channel model probes (shared by chat content and embedding input). Does not affect key health checks (/models). Empty or whitespace falls back to hi."
+      },
       "logQueueDropPolicy": {
         "label": "Log queue drop policy",
         "hint": "When the in-memory log queue is full during high QPS, drop old/new logs or trigger immediate flush. 'oldest' (recommended) keeps recent diagnostics; 'newest' preserves historical sequence; 'disabled' blocks to flush (may stall high-load relay).",

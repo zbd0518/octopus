@@ -10,10 +10,35 @@ import (
 	"time"
 
 	appmodel "github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 )
 
+func TestResolveGroupProbePrompt(t *testing.T) {
+	// missing key → default
+	setting.GetCache().Del(appmodel.SettingKeyGroupProbePrompt)
+	if got := resolveGroupProbePrompt(); got != "hi" {
+		t.Fatalf("missing key resolve = %q, want hi", got)
+	}
+
+	setting.GetCache().Set(appmodel.SettingKeyGroupProbePrompt, "请用一句话介绍你自己")
+	if got := resolveGroupProbePrompt(); got != "请用一句话介绍你自己" {
+		t.Fatalf("custom resolve = %q", got)
+	}
+
+	setting.GetCache().Set(appmodel.SettingKeyGroupProbePrompt, "   ")
+	if got := resolveGroupProbePrompt(); got != "hi" {
+		t.Fatalf("blank resolve = %q, want hi", got)
+	}
+
+	setting.GetCache().Set(appmodel.SettingKeyGroupProbePrompt, "hi")
+	if got := resolveGroupProbePrompt(); got != "hi" {
+		t.Fatalf("default value resolve = %q, want hi", got)
+	}
+}
+
 func TestBuildGroupProbeRequest_ConversationEndpointsUseMessages(t *testing.T) {
+	setting.GetCache().Set(appmodel.SettingKeyGroupProbePrompt, "hi")
 	for _, endpointType := range []string{
 		appmodel.EndpointTypeAll,
 		appmodel.EndpointTypeChat,
@@ -40,7 +65,31 @@ func TestBuildGroupProbeRequest_ConversationEndpointsUseMessages(t *testing.T) {
 	}
 }
 
+func TestBuildGroupProbeRequest_UsesCustomPrompt(t *testing.T) {
+	setting.GetCache().Set(appmodel.SettingKeyGroupProbePrompt, "ping-live-check")
+	t.Cleanup(func() {
+		setting.GetCache().Set(appmodel.SettingKeyGroupProbePrompt, "hi")
+	})
+
+	req, err := buildGroupProbeRequest(appmodel.EndpointTypeChat, "gpt-4o-mini")
+	if err != nil {
+		t.Fatalf("buildGroupProbeRequest() error = %v", err)
+	}
+	if req.Messages[0].Content.Content == nil || *req.Messages[0].Content.Content != "ping-live-check" {
+		t.Fatalf("message content = %#v, want ping-live-check", req.Messages[0].Content.Content)
+	}
+
+	emb, err := buildGroupProbeRequest(appmodel.EndpointTypeEmbeddings, "text-embedding-3-small")
+	if err != nil {
+		t.Fatalf("buildGroupProbeRequest(embeddings) error = %v", err)
+	}
+	if emb.EmbeddingInput == nil || emb.EmbeddingInput.Single == nil || *emb.EmbeddingInput.Single != "ping-live-check" {
+		t.Fatalf("embedding_input = %#v, want single ping-live-check", emb.EmbeddingInput)
+	}
+}
+
 func TestBuildGroupProbeRequest_EmbeddingsUseInput(t *testing.T) {
+	setting.GetCache().Set(appmodel.SettingKeyGroupProbePrompt, "hi")
 	req, err := buildGroupProbeRequest(appmodel.EndpointTypeEmbeddings, "text-embedding-3-small")
 	if err != nil {
 		t.Fatalf("buildGroupProbeRequest() error = %v", err)

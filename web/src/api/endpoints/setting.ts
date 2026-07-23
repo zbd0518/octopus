@@ -35,6 +35,7 @@ export const SettingKey = {
     KeyHealthCheckNotifyEnabled: 'key_health_check_notify_enabled',
     KeyHealthCheckRecoveryNotify: 'key_health_check_recovery_notify',
     KeyHealthCheckNotifyCooldown: 'key_health_check_notify_cooldown',
+    GroupProbePrompt: 'group_probe_prompt',
     RelayMaxTotalAttempts: 'relay_max_total_attempts',
     RetryEmptyOutput: 'retry_empty_output',
     CircuitBreakerThreshold: 'circuit_breaker_threshold',

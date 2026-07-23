@@ -1400,6 +1400,10 @@
         "notifyEnabled": "失敗通知",
         "recoveryNotify": "恢復通知"
       },
+      "groupProbePrompt": {
+        "label": "模型測活提示詞",
+        "hint": "用於分組/渠道模型測活請求的使用者文字（對話 content 與 embedding input 共用）。不影響 Key 巡檢（/models）。留空或僅空白時回退為 hi。"
+      },
       "logQueueDropPolicy": {
         "label": "日誌佇列丟棄策略",
         "hint": "高 QPS 時記憶體日誌佇列滿的處理策略。「丟棄最舊」（推薦）保留最新診斷資料；「丟棄最新」保留歷史序列完整性；「停用」阻塞觸發刷盤（高負載下可能拖慢轉發）。",

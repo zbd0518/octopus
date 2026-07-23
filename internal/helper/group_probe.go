@@ -17,6 +17,7 @@ import (
 	"github.com/lingyuins/octopus/internal/op/cacheusage"
 	grp "github.com/lingyuins/octopus/internal/op/group"
 	"github.com/lingyuins/octopus/internal/op/relaylog"
+	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/price"
 	"github.com/lingyuins/octopus/internal/store"
 	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
@@ -708,15 +709,31 @@ func sendGroupProbeRequest(ctx context.Context, outAdapter transmodel.Outbound, 
 	return resp.StatusCode, bodyText, internalResp, nil
 }
 
+const defaultGroupProbePrompt = "hi"
+
+// resolveGroupProbePrompt 读取全局模型测活提示词；空/空白/读失败均回退 "hi"。
+func resolveGroupProbePrompt() string {
+	value, err := setting.GetString(appmodel.SettingKeyGroupProbePrompt)
+	if err != nil {
+		return defaultGroupProbePrompt
+	}
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return defaultGroupProbePrompt
+	}
+	return trimmed
+}
+
 func buildGroupProbeRequest(endpointType, modelName string) (*transmodel.InternalLLMRequest, error) {
 	stream := false
 	normalizedEndpointType := normalizeGroupProbeEndpointType(endpointType)
+	prompt := resolveGroupProbePrompt()
 
 	switch {
 	case normalizedEndpointType == appmodel.EndpointTypeEmbeddings:
 		return &transmodel.InternalLLMRequest{
 			Model:          modelName,
-			EmbeddingInput: &transmodel.EmbeddingInput{Single: stringPtr("hi")},
+			EmbeddingInput: &transmodel.EmbeddingInput{Single: stringPtr(prompt)},
 		}, nil
 	case normalizedEndpointType == appmodel.EndpointTypeAll || appmodel.IsConversationEndpointType(normalizedEndpointType):
 		return &transmodel.InternalLLMRequest{
@@ -724,7 +741,7 @@ func buildGroupProbeRequest(endpointType, modelName string) (*transmodel.Interna
 			Messages: []transmodel.Message{{
 				Role: "user",
 				Content: transmodel.MessageContent{
-					Content: stringPtr("hi"),
+					Content: stringPtr(prompt),
 				},
 			}},
 			Stream: &stream,

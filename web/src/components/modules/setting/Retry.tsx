@@ -35,6 +35,7 @@ export function SettingRetry() {
         nextValues[SettingKey.KeyHealthCheckNotifyEnabled] = settings.find((item) => item.key === SettingKey.KeyHealthCheckNotifyEnabled)?.value ?? 'true';
         nextValues[SettingKey.KeyHealthCheckRecoveryNotify] = settings.find((item) => item.key === SettingKey.KeyHealthCheckRecoveryNotify)?.value ?? 'true';
         nextValues[SettingKey.KeyHealthCheckNotifyCooldown] = settings.find((item) => item.key === SettingKey.KeyHealthCheckNotifyCooldown)?.value ?? '300';
+        nextValues[SettingKey.GroupProbePrompt] = settings.find((item) => item.key === SettingKey.GroupProbePrompt)?.value ?? 'hi';
 
         queueMicrotask(() => setValues(nextValues));
         initialValues.current = nextValues;
@@ -207,6 +208,21 @@ export function SettingRetry() {
                             },
                         );
                     }}
+                />
+            </div>
+            {/* 模型测活提示词（分组/渠道模型测试） */}
+            <div className="flex min-w-0 flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
+                <div className="min-w-0 flex flex-col gap-1">
+                    <span className="text-sm font-medium">{t('retry.groupProbePrompt.label')}</span>
+                    <span className="text-xs text-muted-foreground">{t('retry.groupProbePrompt.hint')}</span>
+                </div>
+                <Input
+                    type="text"
+                    value={values[SettingKey.GroupProbePrompt] ?? 'hi'}
+                    onChange={(e) => setValues((prev) => ({ ...prev, [SettingKey.GroupProbePrompt]: e.target.value }))}
+                    onBlur={() => handleSave(SettingKey.GroupProbePrompt)}
+                    placeholder="hi"
+                    className="w-full rounded-xl md:w-72"
                 />
             </div>
             {/* 定时 Key 可用性巡检（issue #142） */}
