@@ -15,10 +15,17 @@ type CheckinFilterStatusesUpdate =
     | CheckinActiveFilterStatus[]
     | ((current: CheckinActiveFilterStatus[]) => CheckinActiveFilterStatus[]);
 
+type PlatformFiltersUpdate =
+    | string[]
+    | ((current: string[]) => string[]);
+
 interface SiteUIState {
     handlers: SiteUIHandlers;
     checkinFilterStatuses: CheckinActiveFilterStatus[];
+    /** 平台类型筛选（SitePlatform 字符串值）；空数组 = 全部 */
+    platformFilters: string[];
     setCheckinFilterStatuses: (value: CheckinFilterStatusesUpdate) => void;
+    setPlatformFilters: (value: PlatformFiltersUpdate) => void;
     setHandlers: (handlers: Partial<SiteUIHandlers>) => void;
     resetHandlers: () => void;
     requestOpenCreateDialog: () => void;
@@ -41,10 +48,16 @@ const defaultHandlers: SiteUIHandlers = {
 export const useSiteUIStore = create<SiteUIState>((set, get) => ({
     handlers: defaultHandlers,
     checkinFilterStatuses: [],
+    platformFilters: [],
     setCheckinFilterStatuses: (value) =>
         set((state) => ({
             checkinFilterStatuses:
                 typeof value === 'function' ? value(state.checkinFilterStatuses) : value,
+        })),
+    setPlatformFilters: (value) =>
+        set((state) => ({
+            platformFilters:
+                typeof value === 'function' ? value(state.platformFilters) : value,
         })),
     setHandlers: (handlers) =>
         set((state) => ({

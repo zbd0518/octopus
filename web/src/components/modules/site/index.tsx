@@ -16,7 +16,6 @@ import {
   Site as SiteRecord,
   SiteAccount,
   SiteCredentialType,
-  SitePlatform,
   useCheckinAllSites,
   useCheckinSiteAccount,
   useArchiveSite,
@@ -77,6 +76,7 @@ import {
   sitePlatformSupportsCheckin,
   type CheckinFilterStatus,
 } from "./checkin-status";
+import { platformLabel, siteMatchesPlatformFilters } from "./site-filters";
 import { translateSiteMessage } from "./site-message";
 import { useSiteUIStore } from "./ui-store";
 import {
@@ -109,19 +109,6 @@ import {
   Waypoints,
   X,
 } from "lucide-react";
-
-const PLATFORM_LABELS: Record<SitePlatform, string> = {
-  [SitePlatform.NewAPI]: "New API",
-  [SitePlatform.AnyRouter]: "AnyRouter",
-  [SitePlatform.OneAPI]: "One API",
-  [SitePlatform.OneHub]: "One Hub",
-  [SitePlatform.DoneHub]: "Done Hub",
-  [SitePlatform.Sub2API]: "Sub2API",
-  [SitePlatform.OpenAI]: "OpenAI",
-  [SitePlatform.Claude]: "Claude",
-  [SitePlatform.Gemini]: "Gemini",
-  [SitePlatform.SAPI]: "SAPI",
-};
 
 const CREDENTIAL_LABELS: Record<SiteCredentialType, string> = {
   [SiteCredentialType.UsernamePassword]: "用户名 / 密码",
@@ -680,6 +667,8 @@ export function Site() {
   const setCheckinFilterStatuses = useSiteUIStore(
     (state) => state.setCheckinFilterStatuses,
   );
+  const platformFilters = useSiteUIStore((state) => state.platformFilters);
+  const setPlatformFilters = useSiteUIStore((state) => state.setPlatformFilters);
   const setSiteHandlers = useSiteUIStore((state) => state.setHandlers);
   const resetSiteHandlers = useSiteUIStore((state) => state.resetHandlers);
   const pendingJump = useJumpStore((state) => state.pending);
@@ -799,18 +788,24 @@ export function Site() {
 
   const visibleSites = useMemo<VisibleSite[]>(() => {
     const hasSearch = normalizedQuery.length > 0;
+    const hasCheckinFilters = checkinFilterStatuses.length > 0;
 
     const list = (sites ?? []).flatMap((site) => {
       const summary = buildSiteSummary(site);
       const isForcedTarget = forcedSiteId === site.id;
 
-      const hasCheckinFilters = checkinFilterStatuses.length > 0;
+      if (
+        !isForcedTarget &&
+        !siteMatchesPlatformFilters(site.platform, platformFilters)
+      ) {
+        return [];
+      }
 
       const siteMatchesQuery =
         !hasSearch ||
         matchesSearch(site.name, normalizedQuery) ||
         matchesSearch(site.base_url, normalizedQuery) ||
-        matchesSearch(PLATFORM_LABELS[site.platform], normalizedQuery);
+        matchesSearch(platformLabel(site.platform), normalizedQuery);
 
       const accountMatchesQuery = (account: SiteAccount) =>
         matchesSearch(account.name, normalizedQuery);
@@ -837,12 +832,13 @@ export function Site() {
         visibleAccounts = site.accounts;
       }
 
-      const visible =
-        isForcedTarget
-          ? true
-          : hasCheckinFilters
-            ? visibleAccounts.length > 0
-            : !hasSearch || siteMatchesQuery || matchedAccountsBySearch.length > 0;
+      const visible = isForcedTarget
+        ? true
+        : hasCheckinFilters
+          ? visibleAccounts.length > 0
+          : !hasSearch ||
+            siteMatchesQuery ||
+            matchedAccountsBySearch.length > 0;
 
       if (!visible) {
         return [];
@@ -885,13 +881,16 @@ export function Site() {
     sites,
     normalizedQuery,
     checkinFilterStatuses,
+    platformFilters,
     forcedSiteId,
     siteSortField,
     siteSortOrder,
   ]);
 
   const hasActiveFilters =
-    normalizedQuery.length > 0 || checkinFilterStatuses.length > 0;
+    normalizedQuery.length > 0 ||
+    checkinFilterStatuses.length > 0 ||
+    platformFilters.length > 0;
   const visibleAccountCount = visibleSites.reduce(
     (sum, item) => sum + item.visibleAccounts.length,
     0,
@@ -1174,9 +1173,23 @@ export function Site() {
     );
   }
 
+  function handlePlatformFilterChange(platform: string | "all") {
+    if (platform === "all") {
+      setPlatformFilters([]);
+      return;
+    }
+
+    setPlatformFilters((current) =>
+      current.includes(platform)
+        ? current.filter((item) => item !== platform)
+        : [...current, platform],
+    );
+  }
+
   function clearFilters() {
     setSearchTerm("site", "");
     setCheckinFilterStatuses([]);
+    setPlatformFilters([]);
   }
 
   function jumpToSiteChannel(siteId: number) {
@@ -1367,7 +1380,7 @@ export function Site() {
                     </Badge>
                   ) : null}
                   <Badge variant="outline">
-                    {PLATFORM_LABELS[site.platform]}
+                    {platformLabel(site.platform)}
                   </Badge>
                   <Badge
                     variant="outline"
@@ -1839,6 +1852,8 @@ export function Site() {
           onClearFilters={clearFilters}
           activeFilterStatuses={checkinFilterStatuses}
           onFilterChange={handleCheckinFilterChange}
+          platformFilters={platformFilters}
+          onPlatformFilterChange={handlePlatformFilterChange}
         />
 
         {batchMode ? (

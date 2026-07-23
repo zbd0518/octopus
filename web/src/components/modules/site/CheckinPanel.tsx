@@ -20,6 +20,11 @@ import {
   type CheckinActiveFilterStatus,
   type CheckinFilterStatus,
 } from "./checkin-status";
+import {
+  collectSitePlatforms,
+  countSitesByPlatform,
+  platformLabel,
+} from "./site-filters";
 
 const FILTERS: Array<{ key: CheckinFilterStatus; label: string }> = [
   { key: "all", label: "全部" },
@@ -59,6 +64,12 @@ function filterTone(status: CheckinFilterStatus, active: boolean) {
     default:
       return "border-border bg-background text-foreground";
   }
+}
+
+function platformChipTone(active: boolean) {
+  return active
+    ? "border-primary/30 bg-primary text-primary-foreground"
+    : "border-border bg-background text-foreground hover:bg-muted/50";
 }
 
 function formatCurrency(value: number) {
@@ -108,6 +119,8 @@ export function CheckinPanel({
   onClearFilters,
   activeFilterStatuses,
   onFilterChange,
+  platformFilters,
+  onPlatformFilterChange,
 }: {
   sites: Site[] | undefined;
   inventory: {
@@ -124,6 +137,8 @@ export function CheckinPanel({
   onClearFilters: () => void;
   activeFilterStatuses: CheckinActiveFilterStatus[];
   onFilterChange: (status: CheckinFilterStatus) => void;
+  platformFilters: string[];
+  onPlatformFilterChange: (platform: string | "all") => void;
 }) {
   const summaryNow = useMemo(() => {
     const [year = "", month = "", day = ""] = statusDayKey.split("-");
@@ -135,7 +150,13 @@ export function CheckinPanel({
     () => buildCheckinSummary(sites, summaryNow),
     [sites, summaryNow],
   );
-  const hasContextBadges = Boolean(searchTerm);
+  const hasContextBadges = Boolean(searchTerm) || platformFilters.length > 0;
+
+  const availablePlatforms = useMemo(
+    () => collectSitePlatforms(sites),
+    [sites],
+  );
+  const platformCounts = useMemo(() => countSitesByPlatform(sites), [sites]);
 
   const manualCheckinUrls = useMemo(
     () =>
@@ -208,14 +229,60 @@ export function CheckinPanel({
 
         {hasActiveFilters && hasContextBadges ? (
           <div className="mt-4 flex flex-wrap gap-2">
-            {searchTerm ? <Badge variant="outline">搜索：{searchTerm}</Badge> : null}
+            {searchTerm ? (
+              <Badge variant="outline">搜索：{searchTerm}</Badge>
+            ) : null}
+            {platformFilters.map((platform) => (
+              <Badge key={platform} variant="outline">
+                平台：{platformLabel(platform)}
+              </Badge>
+            ))}
           </div>
         ) : null}
       </div>
 
-      <div className="px-5 py-4">
+      <div className="space-y-3 px-5 py-4">
+        {availablePlatforms.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-muted-foreground">
+              平台
+            </span>
+            <button
+              type="button"
+              onClick={() => onPlatformFilterChange("all")}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                platformChipTone(platformFilters.length === 0),
+              )}
+            >
+              <span>{sites?.length ?? 0}</span>
+              <span>全部</span>
+            </button>
+            {availablePlatforms.map((platform) => {
+              const active = platformFilters.includes(platform);
+              return (
+                <button
+                  key={platform}
+                  type="button"
+                  onClick={() => onPlatformFilterChange(platform)}
+                  className={cn(
+                    "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                    platformChipTone(active),
+                  )}
+                >
+                  <span>{platformCounts.get(platform) ?? 0}</span>
+                  <span>{platformLabel(platform)}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-muted-foreground">
+              签到
+            </span>
             {FILTERS.map((filter) => {
               const count =
                 filter.key === "all" ? summary.total : summary[filter.key];
