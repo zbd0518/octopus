@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	Version   = "v2.1.6"
+	Version   = "v2.4.3-fix"
 	Commit    = "unknown"
 	BuildTime = "unknown"
 	Author    = "lingyu"

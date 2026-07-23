@@ -68,3 +68,6 @@ _patch2.cjs
 patch_channel_import.cjs
 web/_patch2.mjs
 octopus
+
+# local workflow/agent cache
+.workflow/
