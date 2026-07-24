@@ -157,10 +157,40 @@ func applyRedisDeltas(ctx context.Context) {
 
 	// channel（全量快照）
 	if snaps, err := ss.SnapshotAll(ctx, statsScopeChannel); err == nil {
-		channelMutationLock.Lock()
+		// 先收集候选 ID，批量校验 channels 表，避免把已删除渠道重新 dirty。
+		candidateIDs := make([]int, 0, len(snaps))
+		parsed := make(map[int]model.StatsMetrics, len(snaps))
 		for idStr, m := range snaps {
 			var id int
 			if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil || id == 0 {
+				continue
+			}
+			if isChannelDeleted(id) {
+				_ = ss.Delete(ctx, statsScopeChannel, idStr)
+				continue
+			}
+			candidateIDs = append(candidateIDs, id)
+			parsed[id] = m
+		}
+		existing, err := loadExistingChannelIDSet(ctx, candidateIDs)
+		if err != nil {
+			log.Warnf("stats redis restore channels existence check: %v", err)
+			// 查询失败时仍恢复，后续 SaveDB 的 filterLiveChannelIDs 会再兜底。
+			existing = make(map[int]struct{}, len(candidateIDs))
+			for _, id := range candidateIDs {
+				existing[id] = struct{}{}
+			}
+		}
+		// 孤儿先在锁外 drop，避免 dropDeletedChannelStats 与 channelMutationLock 死锁。
+		for id := range parsed {
+			if _, ok := existing[id]; !ok {
+				dropDeletedChannelStats(id)
+				delete(parsed, id)
+			}
+		}
+		channelMutationLock.Lock()
+		for id, m := range parsed {
+			if isChannelDeleted(id) {
 				continue
 			}
 			entry, ok := channelCache.Get(id)

@@ -102,6 +102,11 @@ var channelCacheNeedUpdate = make(map[int]struct{})
 var channelCacheNeedUpdateLock sync.Mutex
 var channelMutationLock sync.Mutex
 
+// deletedChannelIDs 记录本进程内已删除的 channel，拦截迟到的 ChannelUpdate/ChannelGet
+// 与 Redis 恢复路径，避免 SaveDB 反复为不存在的 channel_id 撞 FK 1452 并 requeue 毒死整批。
+// channel 删除后 ID 通常不会被复用；测试通过 ClearAllCachesForTest 清空。
+var deletedChannelIDs sync.Map // int -> struct{}
+
 var modelCache = cache.New[int64, model.StatsModel](16)
 var modelCacheNeedUpdate = make(map[int64]struct{})
 var modelCacheNeedUpdateLock sync.Mutex
@@ -229,6 +234,9 @@ func SaveDB(ctx context.Context) error {
 	}
 	apiKeyCacheNeedUpdate = make(map[int]struct{})
 	apiKeyCacheNeedUpdateLock.Unlock()
+
+	// 落盘前剔除已删除/不存在的 channel，避免整批事务撞 FK 1452 后 requeue 死循环。
+	channelIDs = filterLiveChannelIDs(ctx, channelIDs)
 
 	if err := persistSnapshots(ctx, totalSnap, dailySnap, hourlyAll, channelIDs, modelIDs, apiKeyIDs); err != nil {
 		requeueDirtyIDs(channelIDs, modelIDs, apiKeyIDs)
@@ -554,6 +562,8 @@ func saveDBWithDailyOverride(ctx context.Context, dailyOverride model.StatsDaily
 	apiKeyCacheNeedUpdate = make(map[int]struct{})
 	apiKeyCacheNeedUpdateLock.Unlock()
 
+	channelIDs = filterLiveChannelIDs(ctx, channelIDs)
+
 	if err := persistSnapshots(ctx, totalSnap, dailyOverride, hourlyAll, channelIDs, modelIDs, apiKeyIDs); err != nil {
 		requeueDirtyIDs(channelIDs, modelIDs, apiKeyIDs)
 		return err
@@ -561,9 +571,98 @@ func saveDBWithDailyOverride(ctx context.Context, dailyOverride model.StatsDaily
 	return nil
 }
 
+// filterLiveChannelIDs 仅保留 channels 表中仍存在的 ID；孤儿 ID 永久丢弃并 tombstone，
+// 防止 SaveDB 撞 FK 后 requeue 形成每周期 ERROR。
+func filterLiveChannelIDs(ctx context.Context, channelIDs []int) []int {
+	if len(channelIDs) == 0 {
+		return channelIDs
+	}
+
+	// 先按进程内 tombstone 快筛，减少 DB 往返。
+	candidates := make([]int, 0, len(channelIDs))
+	for _, id := range channelIDs {
+		if id == 0 || isChannelDeleted(id) {
+			dropDeletedChannelStats(id)
+			continue
+		}
+		candidates = append(candidates, id)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	existing, err := loadExistingChannelIDSet(ctx, candidates)
+	if err != nil {
+		// 查询失败时保守保留原 ID，由后续 upsert 决定成败；避免误丢合法统计。
+		log.Warnf("stats filter live channels failed, keep dirty ids: %v", err)
+		return candidates
+	}
+
+	live := make([]int, 0, len(candidates))
+	for _, id := range candidates {
+		if _, ok := existing[id]; ok {
+			live = append(live, id)
+			continue
+		}
+		log.Warnf("dropping stats for missing channel %d to avoid FK constraint failure", id)
+		dropDeletedChannelStats(id)
+	}
+	return live
+}
+
+// loadExistingChannelIDSet 批量查询 channels 表中仍存在的 ID。
+func loadExistingChannelIDSet(ctx context.Context, ids []int) (map[int]struct{}, error) {
+	if len(ids) == 0 {
+		return map[int]struct{}{}, nil
+	}
+	var existing []int
+	if err := db.GetDB().WithContext(ctx).Model(&model.Channel{}).
+		Where("id IN ?", ids).
+		Pluck("id", &existing).Error; err != nil {
+		return nil, err
+	}
+	set := make(map[int]struct{}, len(existing))
+	for _, id := range existing {
+		set[id] = struct{}{}
+	}
+	return set, nil
+}
+
+func isChannelDeleted(id int) bool {
+	if id == 0 {
+		return true
+	}
+	_, ok := deletedChannelIDs.Load(id)
+	return ok
+}
+
+// dropDeletedChannelStats 标记渠道已删，并清理内存 cache / dirty / Redis scope。
+// 可重复调用，幂等。
+func dropDeletedChannelStats(channelID int) {
+	if channelID == 0 {
+		return
+	}
+	deletedChannelIDs.Store(channelID, struct{}{})
+
+	channelMutationLock.Lock()
+	channelCache.Del(channelID)
+	channelCacheNeedUpdateLock.Lock()
+	delete(channelCacheNeedUpdate, channelID)
+	channelCacheNeedUpdateLock.Unlock()
+	channelMutationLock.Unlock()
+
+	if store.Enabled() {
+		_ = store.GetStats().Delete(context.Background(), statsScopeChannel, strconv.Itoa(channelID))
+	}
+}
+
 func requeueDirtyIDs(channelIDs []int, modelIDs []int64, apiKeyIDs []int) {
 	channelCacheNeedUpdateLock.Lock()
 	for _, id := range channelIDs {
+		// 已删除渠道绝不 requeue，避免 FK 失败毒死整批。
+		if isChannelDeleted(id) {
+			continue
+		}
 		channelCacheNeedUpdate[id] = struct{}{}
 	}
 	channelCacheNeedUpdateLock.Unlock()
@@ -699,8 +798,18 @@ func TotalUpdate(metrics model.StatsMetrics) error {
 
 // ChannelUpdate adds metrics to a specific channel's statistics.
 func ChannelUpdate(channelID int, metrics model.StatsMetrics) error {
+	if channelID == 0 || isChannelDeleted(channelID) {
+		// 渠道已删：忽略迟到的在途请求，避免重新 dirty 后撞 FK。
+		return nil
+	}
+
 	channelMutationLock.Lock()
 	defer channelMutationLock.Unlock()
+
+	// 双重检查：拿锁期间可能被 OnChannelDeleted 标记。
+	if isChannelDeleted(channelID) {
+		return nil
+	}
 
 	channelEntry, ok := channelCache.Get(channelID)
 	if !ok {
@@ -927,20 +1036,7 @@ func APIKeyUpdate(apiKeyID int, metrics model.StatsMetrics) error {
 
 // ChannelDel removes a channel's statistics cache entry and database record.
 func ChannelDel(id int) error {
-	channelMutationLock.Lock()
-	defer channelMutationLock.Unlock()
-
-	if _, ok := channelCache.Get(id); !ok {
-		return nil
-	}
-	channelCache.Del(id)
-	channelCacheNeedUpdateLock.Lock()
-	delete(channelCacheNeedUpdate, id)
-	channelCacheNeedUpdateLock.Unlock()
-	// Redis 后端：同步删除该渠道的增量 scope，避免残留（issue #123）。
-	if store.Enabled() {
-		_ = store.GetStats().Delete(context.Background(), statsScopeChannel, strconv.Itoa(id))
-	}
+	dropDeletedChannelStats(id)
 	return db.GetDB().Delete(&model.StatsChannel{}, id).Error
 }
 
@@ -979,8 +1075,16 @@ func TodayGet() model.StatsDaily {
 
 // ChannelGet returns statistics for a specific channel, creating an empty entry if not cached.
 func ChannelGet(id int) model.StatsChannel {
+	if id == 0 || isChannelDeleted(id) {
+		return model.StatsChannel{ChannelID: id}
+	}
+
 	channelMutationLock.Lock()
 	defer channelMutationLock.Unlock()
+
+	if isChannelDeleted(id) {
+		return model.StatsChannel{ChannelID: id}
+	}
 
 	stats, ok := channelCache.Get(id)
 	if !ok {
@@ -1138,16 +1242,7 @@ func GetDaily(ctx context.Context) ([]model.StatsDaily, error) {
 // OnChannelDeleted is called by the op package when a channel is deleted,
 // so that the channel's stats cache entry is cleaned up.
 func OnChannelDeleted(channelID int) {
-	channelMutationLock.Lock()
-	channelCache.Del(channelID)
-	channelCacheNeedUpdateLock.Lock()
-	delete(channelCacheNeedUpdate, channelID)
-	channelCacheNeedUpdateLock.Unlock()
-	channelMutationLock.Unlock()
-	// Redis 后端：同步删除该 channel 的 stats 增量 scope，避免残留（issue #123）。
-	if store.Enabled() {
-		_ = store.GetStats().Delete(context.Background(), statsScopeChannel, strconv.Itoa(channelID))
-	}
+	dropDeletedChannelStats(channelID)
 }
 
 // OnAPIKeyDeleted is called by the op package when an API key is deleted,
@@ -1210,6 +1305,10 @@ func ClearAllCachesForTest() {
 	channelCacheNeedUpdateLock.Lock()
 	channelCacheNeedUpdate = make(map[int]struct{})
 	channelCacheNeedUpdateLock.Unlock()
+	deletedChannelIDs.Range(func(key, _ any) bool {
+		deletedChannelIDs.Delete(key)
+		return true
+	})
 
 	modelCache.Clear()
 	modelCacheNeedUpdateLock.Lock()
