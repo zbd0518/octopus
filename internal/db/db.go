@@ -408,8 +408,12 @@ func configureConnectionPool(sqlDB *sql.DB, dbType string) {
 
 	sqlDB.SetMaxIdleConns(10)
 	sqlDB.SetMaxOpenConns(100)
-	sqlDB.SetConnMaxLifetime(time.Hour)
-	sqlDB.SetConnMaxIdleTime(10 * time.Minute)
+	// MySQL/MariaDB/Postgres: keep idle connections short-lived so the pool
+	// evicts them before OS/server-side TCP cleanup leaves stale sockets.
+	// Observed failure: relay log flush hit "driver: bad connection" when
+	// ConnMaxIdleTime was 10m and TCP keepalive was disabled (issue 2026-07-24).
+	sqlDB.SetConnMaxLifetime(30 * time.Minute)
+	sqlDB.SetConnMaxIdleTime(3 * time.Minute)
 }
 
 // sqlitePragmaParams 根据 SQLiteOptions 生成 glebarez/go-sqlite 驱动认识的 DSN
