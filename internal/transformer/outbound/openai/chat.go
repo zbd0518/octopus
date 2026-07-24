@@ -115,6 +115,15 @@ func SanitizeRequestForOpenAICompat(request *model.InternalLLMRequest, baseURL s
 		request.ExtraBody = nil
 	}
 	request.Include = nil
+	// Third-party OpenAI-compatible Chat Completions endpoints (free relays,
+	// Grok proxies, etc.) often reject OpenAI-only optional fields. Claude
+	// Code's Anthropic metadata.user_id is mapped into Metadata and commonly
+	// triggers:
+	//   400 Argument not supported: metadata
+	// Inference does not require metadata, so drop it on the wire.
+	// Official OpenAI accepts metadata; omitting it is always safe.
+	// Aligns with ResponseOutbound.TransformRequest which already strips it.
+	request.Metadata = nil
 }
 
 func applyReasoningCompatTokenBudget(request *model.InternalLLMRequest, baseURL string, isMimoChannel bool) {

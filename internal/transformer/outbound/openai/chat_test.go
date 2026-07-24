@@ -11,6 +11,50 @@ import (
 	"github.com/lingyuins/octopus/internal/transformer/model"
 )
 
+func TestChatOutboundTransformRequest_StripsMetadata(t *testing.T) {
+	outbound := &ChatOutbound{}
+	text := "hello"
+	request := &model.InternalLLMRequest{
+		Model: "grok-4.5",
+		Messages: []model.Message{
+			{
+				Role: "user",
+				Content: model.MessageContent{
+					Content: &text,
+				},
+			},
+		},
+		Metadata: map[string]string{
+			"user_id": `{"device_id":"439c66ca","account_uuid":"","session_id":"1f38f2da"}`,
+		},
+		ReasoningEffort: "high",
+	}
+
+	httpReq, err := outbound.TransformRequest(context.Background(), request, "https://nullapi.example.com", "sk-test")
+	if err != nil {
+		t.Fatalf("TransformRequest() error = %v", err)
+	}
+	defer httpReq.Body.Close()
+
+	body, err := io.ReadAll(httpReq.Body)
+	if err != nil {
+		t.Fatalf("failed to read request body: %v", err)
+	}
+	if strings.Contains(string(body), `"metadata"`) {
+		t.Fatalf("expected metadata to be stripped from outbound body, got: %s", body)
+	}
+
+	var payload map[string]any
+	if err := transformer.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("failed to unmarshal outbound body: %v", err)
+	}
+	if _, ok := payload["metadata"]; ok {
+		t.Fatalf("expected no metadata key in payload, got: %#v", payload["metadata"])
+	}
+	if request.Metadata == nil || request.Metadata["user_id"] == "" {
+		t.Fatalf("expected original request metadata to stay intact")
+	}
+}
 func TestChatOutboundTransformRequest_NormalizesOpenAICompatMessages(t *testing.T) {
 	outbound := &ChatOutbound{}
 	toolCallID := "call_1"
