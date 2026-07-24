@@ -2438,7 +2438,12 @@
       "channelGroupFilter": "渠道分组",
       "channelGroupAll": "全部分组",
       "channelDisabledBadge": "渠道已禁用",
-      "disabledMembersCount": "{count} 个成员渠道已禁用"
+      "noEnabledKeyBadge": "无可用 Key",
+      "healthModerateBadge": "健康一般",
+      "healthLowBadge": "成功率低",
+      "disabledMembersCount": "{count} 个成员渠道已禁用",
+      "noKeyMembersCount": "{count} 个成员无可用 Key",
+      "healthRiskMembersCount": "{count} 个成员上游健康有风险"
     },
     "mode": {
       "roundRobin": "轮询",

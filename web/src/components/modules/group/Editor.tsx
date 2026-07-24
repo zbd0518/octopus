@@ -17,11 +17,16 @@ import type { SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
 import { getChannelGroupDisplayName } from '@/components/modules/channel/GroupManager';
 import {
-    countDisabledMembers,
     filterMatchedForAutoAdd,
     filterModelChannelsForPicker,
     syncMembersChannelEnabled,
 } from './editor-filters';
+import {
+    buildChannelHasEnabledKeyMap,
+    channelHasNoEnabledKey,
+    countMemberRisks,
+    healthRiskLevel,
+} from './editor-member-status';
 import { CHAT_ENDPOINT_PROVIDER_OPTIONS, OUTBOUND_FORMAT_OPTIONS, matchesGroupName, memberKey, MODE_LABELS, MUSIC_ENDPOINT_PROVIDER_OPTIONS, VIDEO_ENDPOINT_PROVIDER_OPTIONS, AUDIO_SPEECH_ENDPOINT_PROVIDER_OPTIONS, ENDPOINT_TYPE_OPTIONS, normalizeEndpointProvider, normalizeEndpointType, normalizeOutboundFormat, normalizeKey } from './utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 import { HelpCircle } from 'lucide-react';
@@ -71,6 +76,7 @@ function ModelPickerSection({
     channelGroupId,
     onChannelGroupIdChange,
     channelGroups,
+    hasEnabledKeyByChannelId,
 }: {
     modelChannels: LLMChannel[];
     selectedMembers: SelectedMember[];
@@ -82,6 +88,7 @@ function ModelPickerSection({
     channelGroupId: number | null;
     onChannelGroupIdChange: (value: number | null) => void;
     channelGroups: ChannelGroup[];
+    hasEnabledKeyByChannelId?: Map<number, boolean>;
 }) {
     const t = useTranslations('group');
     const tChannel = useTranslations('channel.groupManager');
@@ -194,18 +201,28 @@ function ModelPickerSection({
                         );
                         const available = total - selectedCount;
                         const channelDisabled = channel.enabled === false;
+                        const noEnabledKey = Boolean(
+                            hasEnabledKeyByChannelId &&
+                                channelHasNoEnabledKey(channel.id, hasEnabledKeyByChannelId),
+                        );
+                        const hardRisk = channelDisabled || noEnabledKey;
 
                         return (
                             <AccordionItem key={channel.id} value={`channel-${channel.id}`}>
                                 <AccordionPrimitive.Header className={cn(
                                     'sticky top-0 z-10 flex overflow-hidden rounded-lg border border-border/25 bg-card px-3',
-                                    channelDisabled && 'opacity-70'
+                                    hardRisk && 'opacity-70'
                                 )}>
                                     <AccordionPrimitive.Trigger className="flex min-w-0 flex-1 items-center gap-4 py-3.5 text-left text-sm transition-all outline-none focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50 [&[data-state=open]>svg]:rotate-180">
                                         <span className="truncate">{channel.name}</span>
                                         {channelDisabled ? (
                                             <span className="shrink-0 rounded-full border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
                                                 {t('form.channelDisabledBadge')}
+                                            </span>
+                                        ) : null}
+                                        {noEnabledKey ? (
+                                            <span className="shrink-0 rounded-full border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                                                {t('form.noEnabledKeyBadge')}
                                             </span>
                                         ) : null}
                                         <span className="text-xs text-muted-foreground shrink-0">
@@ -219,6 +236,7 @@ function ModelPickerSection({
                                         {channel.models.map((m) => {
                                             const isSelected = selectedKeys.has(memberKey(m));
                                             const { Avatar } = getModelIcon(m.name);
+                                            const risk = healthRiskLevel(m.upstream_metrics?.success_rate);
                                             return (
                                                 <button
                                                     key={memberKey(m)}
@@ -228,12 +246,32 @@ function ModelPickerSection({
                                                     className={cn(
                                                         'w-full flex items-center justify-between gap-2 rounded-lg border border-border/30 bg-card px-3 py-2.5 text-left transition-[transform,border-color,background-color,box-shadow] duration-300',
                                                         isSelected ? 'cursor-not-allowed opacity-60' : 'hover:-translate-y-0.5 hover:border-primary/18 hover:bg-card',
-                                                        channelDisabled && !isSelected && 'opacity-70'
+                                                        hardRisk && !isSelected && 'opacity-70'
                                                     )}
                                                 >
-                                                    <span className="flex items-center gap-2 min-w-0">
+                                                    <span className="flex min-w-0 flex-1 items-center gap-2">
                                                         <Avatar size={16} />
                                                         <span className="text-sm font-medium truncate">{m.name}</span>
+                                                        {channelDisabled ? (
+                                                            <span className="shrink-0 rounded-full border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                                                                {t('form.channelDisabledBadge')}
+                                                            </span>
+                                                        ) : null}
+                                                        {noEnabledKey ? (
+                                                            <span className="shrink-0 rounded-full border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                                                                {t('form.noEnabledKeyBadge')}
+                                                            </span>
+                                                        ) : null}
+                                                        {risk === 'moderate' ? (
+                                                            <span className="shrink-0 rounded-full border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                                                                {t('form.healthModerateBadge')}
+                                                            </span>
+                                                        ) : null}
+                                                        {risk === 'low' ? (
+                                                            <span className="shrink-0 rounded-full border border-destructive/25 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
+                                                                {t('form.healthLowBadge')}
+                                                            </span>
+                                                        ) : null}
                                                     </span>
 
                                                     <span className="shrink-0 text-muted-foreground">
@@ -265,6 +303,7 @@ function SortSection({
     removingIds,
     showWeight,
     onClear,
+    hasEnabledKeyByChannelId,
 }: {
     members: SelectedMember[];
     onReorder: (members: SelectedMember[]) => void;
@@ -273,9 +312,14 @@ function SortSection({
     removingIds: Set<string>;
     showWeight: boolean;
     onClear: () => void;
+    hasEnabledKeyByChannelId?: Map<number, boolean>;
 }) {
     const t = useTranslations('group');
-    const disabledCount = countDisabledMembers(members);
+    const riskCounts = countMemberRisks(members, hasEnabledKeyByChannelId ?? new Map());
+    // channel list 未就绪时不展示 noKey 汇总，避免把「未知」算成 0 风险
+    const noKeyCount = hasEnabledKeyByChannelId ? riskCounts.noKeyCount : 0;
+    const hasRiskSummary =
+        riskCounts.disabledCount > 0 || noKeyCount > 0 || riskCounts.healthRiskCount > 0;
 
     return (
         <div className="flex min-h-[28rem] flex-col rounded-lg border border-border/30 bg-card lg:min-h-0">
@@ -306,9 +350,17 @@ function SortSection({
                 </button>
             </div>
 
-            {disabledCount > 0 ? (
-                <div className="border-b border-amber-500/20 bg-amber-500/5 px-4 py-2 text-xs font-medium text-amber-800 dark:text-amber-300">
-                    {t('form.disabledMembersCount', { count: disabledCount })}
+            {hasRiskSummary ? (
+                <div className="space-y-1 border-b border-amber-500/20 bg-amber-500/5 px-4 py-2 text-xs font-medium text-amber-800 dark:text-amber-300">
+                    {riskCounts.disabledCount > 0 ? (
+                        <div>{t('form.disabledMembersCount', { count: riskCounts.disabledCount })}</div>
+                    ) : null}
+                    {noKeyCount > 0 ? (
+                        <div>{t('form.noKeyMembersCount', { count: noKeyCount })}</div>
+                    ) : null}
+                    {riskCounts.healthRiskCount > 0 ? (
+                        <div>{t('form.healthRiskMembersCount', { count: riskCounts.healthRiskCount })}</div>
+                    ) : null}
                 </div>
             ) : null}
 
@@ -321,6 +373,8 @@ function SortSection({
                     removingIds={removingIds}
                     showWeight={showWeight}
                     showConfirmDelete={false}
+                    showStaticRisks
+                    hasEnabledKeyByChannelId={hasEnabledKeyByChannelId}
                 />
             </div>
         </div>
@@ -346,7 +400,7 @@ export function GroupEditor({
 }) {
     const t = useTranslations('group');
     const { data: modelChannels = [] } = useModelChannelList();
-    const { data: channelList = [] } = useChannelList();
+    const { data: channelList = [], isFetched: channelListFetched } = useChannelList();
     const { data: channelGroups = [] } = useChannelGroupList();
     const conditionPlaceholder = '[{"key":"model","op":"contains","value":"gpt-4"}]';
 
@@ -378,6 +432,14 @@ export function GroupEditor({
         return map;
     }, [channelList]);
 
+    // 仅在 channel list 已 fetch 后暴露 map；未就绪时不传，避免空 map 把「未知」当成「无风险」
+    const hasEnabledKeyByChannelId = useMemo(() => {
+        if (!channelListFetched) {
+            return undefined;
+        }
+        return buildChannelHasEnabledKeyMap(channelList.map((item) => item.raw));
+    }, [channelList, channelListFetched]);
+
     const pickerModelChannels = useMemo(
         () =>
             filterModelChannelsForPicker(modelChannels, {
@@ -388,7 +450,7 @@ export function GroupEditor({
         [modelChannels, showDisabledChannels, channelGroupFilterId, groupIdByChannelId],
     );
 
-    // 已选成员：保留历史项，但用最新渠道 enabled 刷新，便于标明「渠道已禁用」
+    // 已选成员：保留历史项，同步最新 enabled / channel_name / upstream_metrics 等，保证左右风险同口径
     useEffect(() => {
         setSelectedMembers((prev) => syncMembersChannelEnabled(prev, modelChannels));
     }, [modelChannels]);
@@ -869,6 +931,7 @@ export function GroupEditor({
                                     channelGroupId={channelGroupFilterId}
                                     onChannelGroupIdChange={setChannelGroupFilterId}
                                     channelGroups={channelGroups}
+                                    hasEnabledKeyByChannelId={hasEnabledKeyByChannelId}
                                 />
                                 <SortSection
                                     members={selectedMembers}
@@ -878,6 +941,7 @@ export function GroupEditor({
                                     removingIds={removingIds}
                                     showWeight={mode === 4 || mode === 5}
                                     onClear={handleClearMembers}
+                                    hasEnabledKeyByChannelId={hasEnabledKeyByChannelId}
                                 />
                             </div>
                         </section>

@@ -2431,7 +2431,12 @@
       "channelGroupFilter": "渠道分組",
       "channelGroupAll": "全部分組",
       "channelDisabledBadge": "渠道已停用",
-      "disabledMembersCount": "{count} 個成員渠道已停用"
+      "noEnabledKeyBadge": "無可用 Key",
+      "healthModerateBadge": "健康一般",
+      "healthLowBadge": "成功率低",
+      "disabledMembersCount": "{count} 個成員渠道已停用",
+      "noKeyMembersCount": "{count} 個成員無可用 Key",
+      "healthRiskMembersCount": "{count} 個成員上游健康有風險"
     },
     "mode": {
       "roundRobin": "輪詢",

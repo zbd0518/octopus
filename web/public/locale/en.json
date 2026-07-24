@@ -2482,7 +2482,12 @@
       "channelGroupFilter": "Channel group",
       "channelGroupAll": "All groups",
       "channelDisabledBadge": "Channel disabled",
-      "disabledMembersCount": "{count, plural, one {# member channel disabled} other {# member channels disabled}}"
+      "noEnabledKeyBadge": "No enabled key",
+      "healthModerateBadge": "Health fair",
+      "healthLowBadge": "Low success rate",
+      "disabledMembersCount": "{count, plural, one {# member channel disabled} other {# member channels disabled}}",
+      "noKeyMembersCount": "{count, plural, one {# member has no enabled key} other {# members have no enabled key}}",
+      "healthRiskMembersCount": "{count, plural, one {# member has upstream health risk} other {# members have upstream health risk}}"
     },
     "mode": {
       "roundRobin": "Round Robin",

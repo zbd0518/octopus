@@ -88,12 +88,55 @@ test('syncMembersChannelEnabled refreshes enabled from latest channel list', () 
     assert.equal(countDisabledMembers(next), 1);
 });
 
-test('syncMembersChannelEnabled returns same reference when unchanged', () => {
+test('syncMembersChannelEnabled refreshes upstream_metrics for same model row', () => {
+    const oldMetrics = { latency_ms: 100, avg_tps: 10, success_rate: 0.95 };
+    const newMetrics = { latency_ms: 200, avg_tps: 5, success_rate: 0.5 };
     const members = [
-        { id: '1:gpt-4', channel_id: 1, name: 'gpt-4', channel_name: 'A', enabled: true, weight: 1 },
+        {
+            id: '1:gpt-4',
+            channel_id: 1,
+            name: 'gpt-4',
+            channel_name: 'A',
+            enabled: true,
+            weight: 1,
+            upstream_metrics: oldMetrics,
+        },
     ];
     const next = syncMembersChannelEnabled(members, [
-        mc({ name: 'gpt-4', channel_id: 1, channel_name: 'A', enabled: true }),
+        {
+            name: 'gpt-4',
+            channel_id: 1,
+            channel_name: 'A',
+            enabled: true,
+            upstream_metrics: newMetrics,
+        },
+    ]);
+    assert.notEqual(next, members);
+    assert.equal(next[0].upstream_metrics, newMetrics);
+    assert.equal(next[0].upstream_metrics?.success_rate, 0.5);
+});
+
+test('syncMembersChannelEnabled returns same reference when unchanged', () => {
+    const metrics = { latency_ms: 100, avg_tps: 10, success_rate: 0.95 };
+    const members = [
+        {
+            id: '1:gpt-4',
+            channel_id: 1,
+            name: 'gpt-4',
+            channel_name: 'A',
+            enabled: true,
+            weight: 1,
+            upstream_metrics: metrics,
+        },
+    ];
+    const next = syncMembersChannelEnabled(members, [
+        {
+            name: 'gpt-4',
+            channel_id: 1,
+            channel_name: 'A',
+            enabled: true,
+            upstream_metrics: metrics,
+        },
     ]);
     assert.equal(next, members);
 });

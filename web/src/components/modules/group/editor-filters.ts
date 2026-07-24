@@ -9,8 +9,26 @@ export function buildChannelEnabledMap(modelChannels: LLMChannel[]): Map<number,
     return map;
 }
 
-/** 用最新 model/channel 列表刷新已选成员的 enabled / channel_name；无变化时返回原数组引用 */
-export function syncMembersChannelEnabled<T extends { channel_id: number; enabled: boolean; channel_name: string }>(
+type SyncableMember = {
+    name: string;
+    channel_id: number;
+    enabled: boolean;
+    channel_name: string;
+    upstream_price?: LLMChannel['upstream_price'];
+    upstream_metrics?: LLMChannel['upstream_metrics'];
+    channel_balance?: LLMChannel['channel_balance'];
+    channel_today_income?: LLMChannel['channel_today_income'];
+};
+
+function modelChannelLookupKey(channelId: number, name: string): string {
+    return `${channelId}\0${name}`;
+}
+
+/**
+ * 用最新 model/channel 列表刷新已选成员的渠道态与上游展示字段；
+ * 无变化时返回原数组引用。按 channel_id + model name 对齐，保证左右健康风险同口径。
+ */
+export function syncMembersChannelEnabled<T extends SyncableMember>(
     members: T[],
     modelChannels: LLMChannel[],
 ): T[] {
@@ -18,14 +36,42 @@ export function syncMembersChannelEnabled<T extends { channel_id: number; enable
         return members;
     }
 
-    const enabledByChannel = buildChannelEnabledMap(modelChannels);
+    const byKey = new Map<string, LLMChannel>();
+    const enabledByChannel = new Map<number, boolean>();
     const nameByChannel = new Map<number, string>();
     for (const mc of modelChannels) {
+        byKey.set(modelChannelLookupKey(mc.channel_id, mc.name), mc);
+        enabledByChannel.set(mc.channel_id, mc.enabled);
         nameByChannel.set(mc.channel_id, mc.channel_name);
     }
 
     let changed = false;
     const next = members.map((member) => {
+        const matched = byKey.get(modelChannelLookupKey(member.channel_id, member.name));
+        if (matched) {
+            if (
+                member.enabled === matched.enabled &&
+                member.channel_name === matched.channel_name &&
+                member.upstream_price === matched.upstream_price &&
+                member.upstream_metrics === matched.upstream_metrics &&
+                member.channel_balance === matched.channel_balance &&
+                member.channel_today_income === matched.channel_today_income
+            ) {
+                return member;
+            }
+            changed = true;
+            return {
+                ...member,
+                enabled: matched.enabled,
+                channel_name: matched.channel_name,
+                upstream_price: matched.upstream_price,
+                upstream_metrics: matched.upstream_metrics,
+                channel_balance: matched.channel_balance,
+                channel_today_income: matched.channel_today_income,
+            };
+        }
+
+        // 模型行已不在列表时，仍尽量刷新渠道级 enabled / name
         if (!enabledByChannel.has(member.channel_id)) {
             return member;
         }

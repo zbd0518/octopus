@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { CircleAlert, CircleCheck, Dot, GripVertical, Loader2, Trash2, Waves, X } from 'lucide-react';
 import { DragDropContext, Draggable, Droppable, type DraggableProvided, type DropResult } from '@hello-pangea/dnd';
 import { AnimatePresence, motion } from 'motion/react';
@@ -11,6 +11,7 @@ import { SettingKey, useSettingList } from '@/api/endpoints/setting';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 import { useTranslations } from 'next-intl';
 import { UpstreamPerfBadges, UpstreamPriceBadges } from './UpstreamPriceBadges';
+import { channelHasNoEnabledKey, healthRiskLevel, type HealthRiskLevel } from './editor-member-status';
 
 export interface SelectedMember extends LLMChannel {
     id: string;
@@ -23,6 +24,22 @@ export type MemberAvailabilityStatus = 'idle' | 'testing' | 'available' | 'unava
 export interface MemberAvailabilityMeta {
     status: MemberAvailabilityStatus;
     message?: string;
+}
+
+function HealthRiskBadge({ level, label }: { level: HealthRiskLevel; label: string }) {
+    if (level === 'none') return null;
+    return (
+        <span
+            className={cn(
+                'inline-flex shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium',
+                level === 'low'
+                    ? 'border-destructive/25 bg-destructive/10 text-destructive'
+                    : 'border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-400',
+            )}
+        >
+            {label}
+        </span>
+    );
 }
 
 function reorderList<T>(list: T[], startIndex: number, endIndex: number): T[] {
@@ -47,10 +64,12 @@ function MemberItem({
     showWeight = false,
     showConfirmDelete = true,
     showUpstreamMeta = true,
+    showStaticRisks = false,
     layoutScope,
     dnd,
     isDragging,
     availability,
+    noEnabledKey = false,
 }: {
     member: SelectedMember;
     onRemove: (id: string) => void;
@@ -60,16 +79,23 @@ function MemberItem({
     showWeight?: boolean;
     showConfirmDelete?: boolean;
     showUpstreamMeta?: boolean;
+    /** 编辑器静态风险：渠道禁用 / 无可用 Key / 上游健康（与测活 availability 独立） */
+    showStaticRisks?: boolean;
     layoutScope?: string;
     dnd: MemberItemDnd;
     isDragging: boolean;
     availability?: MemberAvailabilityMeta;
+    noEnabledKey?: boolean;
 }) {
     const { Avatar: ModelAvatar } = getModelIcon(member.name);
     const t = useTranslations('group');
     const [confirmDelete, setConfirmDelete] = useState(false);
     const isDisabled = member.enabled === false;
     const availabilityStatus = availability?.status ?? 'idle';
+    const healthRisk = showStaticRisks
+        ? healthRiskLevel(member.upstream_metrics?.success_rate)
+        : 'none';
+    const hasHardRisk = isDisabled || (showStaticRisks && noEnabledKey);
 
     return (
         <div
@@ -90,14 +116,14 @@ function MemberItem({
             <div className={cn(
                 'group/item relative flex items-center gap-1.5 overflow-hidden rounded-lg border border-border/30 bg-card px-2 py-2 select-none transition-[opacity,transform,border-color,box-shadow,background-color] duration-200 md:gap-2 md:px-3 md:py-2.5',
                 isRemoving && 'opacity-0',
-                isDisabled && 'opacity-60 grayscale',
+                hasHardRisk && 'opacity-60 grayscale',
                 availabilityStatus === 'unavailable' && 'border-destructive/40 bg-destructive/5',
                 !isRemoving && !isDragging && 'hover:-translate-y-0.5 hover:border-primary/16 hover:bg-card',
                 isDragging && 'border-primary/30 bg-card'
             )}>
                 <span className={cn(
                     'relative grid size-6 shrink-0 place-items-center rounded-md text-[10px] font-bold md:size-7 md:text-xs',
-                    isDisabled ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary'
+                    hasHardRisk ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary'
                 )}>
                     {index + 1}
                 </span>
@@ -105,7 +131,7 @@ function MemberItem({
                 <div
                     className={cn(
                         'relative rounded-md p-1.5 touch-none transition-colors md:p-1',
-                        isDisabled
+                        hasHardRisk
                             ? 'cursor-grab active:cursor-grabbing hover:bg-muted/60'
                             : 'cursor-grab active:cursor-grabbing hover:bg-primary/8'
                     )}
@@ -115,7 +141,7 @@ function MemberItem({
                     <GripVertical className="size-4 text-muted-foreground md:size-3.5" />
                 </div>
 
-                <span className={cn('relative', isDisabled && 'opacity-70')}>
+                <span className={cn('relative', hasHardRisk && 'opacity-70')}>
                     <ModelAvatar size={18} />
                 </span>
                 <div className="relative flex min-w-0 flex-1 flex-col gap-0.5">
@@ -123,7 +149,7 @@ function MemberItem({
                         <Tooltip side="top" sideOffset={10} align="start">
                             <TooltipTrigger className={cn(
                                 'min-w-0 max-w-[55%] text-left text-xs font-medium truncate leading-tight md:text-sm',
-                                isDisabled && 'text-muted-foreground',
+                                hasHardRisk && 'text-muted-foreground',
                                 availabilityStatus === 'unavailable' && 'text-destructive'
                             )}>
                                 {member.name}
@@ -139,6 +165,17 @@ function MemberItem({
                             <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
                                 {t('form.channelDisabledBadge')}
                             </span>
+                        ) : null}
+                        {showStaticRisks && noEnabledKey ? (
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                                {t('form.noEnabledKeyBadge')}
+                            </span>
+                        ) : null}
+                        {showStaticRisks && healthRisk === 'moderate' ? (
+                            <HealthRiskBadge level="moderate" label={t('form.healthModerateBadge')} />
+                        ) : null}
+                        {showStaticRisks && healthRisk === 'low' ? (
+                            <HealthRiskBadge level="low" label={t('form.healthLowBadge')} />
                         ) : null}
                         {availabilityStatus === 'unavailable' ? (
                             <Tooltip side="top" sideOffset={10} align="center">
@@ -174,7 +211,7 @@ function MemberItem({
                         onChange={(e) => onWeightChange?.(member.id, Math.max(1, parseInt(e.target.value) || 1))}
                         className={cn(
                             'h-7 w-12 rounded-md border border-border/35 bg-card text-center text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-primary md:w-14',
-                            isDisabled && 'text-muted-foreground'
+                            hasHardRisk && 'text-muted-foreground'
                         )}
                     />
                 )}
@@ -256,6 +293,10 @@ export interface MemberListProps {
      * 是否展示上游价格/余额。分组卡预览默认关闭，编辑页默认开启。
      */
     showUpstreamMeta?: boolean;
+    /** 编辑器：展示无可用 Key / 上游健康等静态风险 */
+    showStaticRisks?: boolean;
+    /** channel_id → 是否有可用 Key；仅 showStaticRisks 时使用 */
+    hasEnabledKeyByChannelId?: Map<number, boolean>;
     layoutScope?: string;
     availabilityById?: Record<string, MemberAvailabilityMeta>;
 }
@@ -273,6 +314,8 @@ export function MemberList({
     showWeight = false,
     showConfirmDelete = true,
     showUpstreamMeta = true,
+    showStaticRisks = false,
+    hasEnabledKeyByChannelId,
     layoutScope: externalLayoutScope,
     availabilityById = {},
 }: MemberListProps) {
@@ -389,6 +432,15 @@ export function MemberList({
                                                 showWeight={showWeight}
                                                 showConfirmDelete={showConfirmDelete}
                                                 showUpstreamMeta={effectiveShowUpstreamMeta}
+                                                showStaticRisks={showStaticRisks}
+                                                noEnabledKey={Boolean(
+                                                    showStaticRisks &&
+                                                        hasEnabledKeyByChannelId &&
+                                                        channelHasNoEnabledKey(
+                                                            member.channel_id,
+                                                            hasEnabledKeyByChannelId,
+                                                        ),
+                                                )}
                                                 layoutScope={layoutScope}
                                                 dnd={{
                                                     innerRef: draggableProvided.innerRef,
