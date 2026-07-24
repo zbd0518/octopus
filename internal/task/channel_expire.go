@@ -9,11 +9,10 @@ import (
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/helper"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/op"
 	"github.com/lingyuins/octopus/internal/op/alert"
-	ch "github.com/lingyuins/octopus/internal/op/channel"
 	"github.com/lingyuins/octopus/internal/op/notification"
 	"github.com/lingyuins/octopus/internal/op/setting"
-	st "github.com/lingyuins/octopus/internal/op/stats"
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
@@ -57,11 +56,10 @@ func deleteExpiredChannel(ctx context.Context, channel model.Channel, notifChann
 	// 先删除渠道，删除成功后再发通知。
 	// 反过来（先通知后删除）会在删除失败时导致下一轮重复发送通知（issue #126 修复项）。
 	// channel 是局部变量，删除后其字段仍在内存中，通知内容（name/id/expire_at）不受影响。
-	if err := ch.Delete(channel.ID, ctx); err != nil {
+	if err := op.ChannelDel(channel.ID, ctx); err != nil {
 		log.Errorf("channel expire: failed to delete channel %d (%s): %v (will retry next cycle)", channel.ID, channel.Name, err)
 		return
 	}
-	st.OnChannelDeleted(channel.ID)
 	log.Infof("channel expire: deleted expired disposable channel %d (%s)", channel.ID, channel.Name)
 
 	// 删除成功后发送通知。

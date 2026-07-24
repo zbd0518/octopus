@@ -249,11 +249,10 @@ func deleteChannel(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidParam)
 		return
 	}
-	if err := ch.Delete(idNum, c.Request.Context()); err != nil {
+	if err := op.ChannelDel(idNum, c.Request.Context()); err != nil {
 		resp.InternalError(c)
 		return
 	}
-	st.OnChannelDeleted(idNum)
 	resp.Success(c, nil)
 }
 func fetchModel(c *gin.Context) {

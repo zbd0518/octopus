@@ -3,6 +3,7 @@ package op
 import (
 	"context"
 
+	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/helper"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/channel"
@@ -63,6 +64,8 @@ func ChannelDel(id int, ctx context.Context) error {
 		return err
 	}
 
+	affectedGroupIDs := getAffectedGroupIDs(id, ctx)
+
 	if err := channel.Delete(id, ctx); err != nil {
 		return err
 	}
@@ -75,7 +78,7 @@ func ChannelDel(id int, ctx context.Context) error {
 	}
 
 	// Refresh affected group caches (in op package, from group.go)
-	for _, groupID := range getAffectedGroupIDs(id, ctx) {
+	for _, groupID := range affectedGroupIDs {
 		if err := groupRefreshCacheByID(groupID, ctx); err != nil {
 			log.Warnf("failed to refresh group cache for group %d: %v", groupID, err)
 		}
@@ -92,8 +95,16 @@ func ChannelDel(id int, ctx context.Context) error {
 }
 
 func getAffectedGroupIDs(id int, ctx context.Context) []int {
-	// This is a minimal implementation; the original logic was in ChannelDel's transaction
-	return nil
+	var groupIDs []int
+	if err := db.GetDB().WithContext(ctx).
+		Model(&model.GroupItem{}).
+		Where("channel_id = ?", id).
+		Distinct("group_id").
+		Pluck("group_id", &groupIDs).Error; err != nil {
+		log.Warnf("failed to query affected groups for channel %d: %v", id, err)
+		return nil
+	}
+	return groupIDs
 }
 
 // Deprecated: Use channel.LLMList from internal/op/channel instead.

@@ -247,3 +247,59 @@ func TestChannelGroupDeleteRules(t *testing.T) {
 		t.Fatalf("expected deleted group to be missing, got %v", err)
 	}
 }
+
+func TestChannelDelRemovesGroupItemsAndRefreshesGroupCache(t *testing.T) {
+	ctx := initChannelGroupTestDB(t)
+
+	ch := &model.Channel{
+		Name:      "delete-with-group-item",
+		Type:      0,
+		Enabled:   true,
+		BaseUrls:  []model.BaseUrl{{URL: "https://example.com", Delay: 0}},
+		Model:     "gpt-4o",
+		AutoGroup: model.AutoGroupTypeNone,
+		Keys:      []model.ChannelKey{{Enabled: true, ChannelKey: "sk-delete-group-item"}},
+	}
+	if err := ChannelCreate(ch, ctx); err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+
+	g := &model.Group{
+		Name:         "delete-channel-group",
+		EndpointType: model.EndpointTypeChat,
+		Items: []model.GroupItem{
+			{ChannelID: ch.ID, ModelName: "gpt-4o", Priority: 1, Weight: 1},
+		},
+	}
+	if err := GroupCreate(g, ctx); err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+
+	cachedBefore, err := GroupGet(g.ID, ctx)
+	if err != nil {
+		t.Fatalf("get group before delete: %v", err)
+	}
+	if len(cachedBefore.Items) != 1 {
+		t.Fatalf("cached group items before delete = %d, want 1", len(cachedBefore.Items))
+	}
+
+	if err := ChannelDel(ch.ID, ctx); err != nil {
+		t.Fatalf("delete channel: %v", err)
+	}
+
+	var dbItems []model.GroupItem
+	if err := db.GetDB().WithContext(ctx).Where("channel_id = ?", ch.ID).Find(&dbItems).Error; err != nil {
+		t.Fatalf("query group items: %v", err)
+	}
+	if len(dbItems) != 0 {
+		t.Fatalf("expected deleted channel group items to be removed, got %d", len(dbItems))
+	}
+
+	cachedAfter, err := GroupGet(g.ID, ctx)
+	if err != nil {
+		t.Fatalf("get group after delete: %v", err)
+	}
+	if len(cachedAfter.Items) != 0 {
+		t.Fatalf("cached group items after delete = %d, want 0", len(cachedAfter.Items))
+	}
+}
