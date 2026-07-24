@@ -9,7 +9,7 @@ import (
 
 func init() {
 	// 清理 migration 39 半成功残留：新唯一索引已建、旧 CI 唯一索引仍在。
-	// 若 36 已标 success 但旧索引未删，同步仍会撞 idx_site_account_group_model。
+	// 若 39 已标 success 但旧索引未删，同步仍会撞 idx_site_account_group_model。
 	RegisterAfterAutoMigration(Migration{
 		Version: 40,
 		Up:      migrateDropLeftoverSiteModelNameUniqueIndex,
