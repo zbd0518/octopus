@@ -12,43 +12,46 @@ import (
 func TestMessagesInboundGetInternalResponsePreservesSparseChoiceIndexes(t *testing.T) {
 	first := "first"
 	second := "second"
-	inbound := &MessagesInbound{
-		streamChunks: []*model.InternalLLMResponse{
+	inbound := &MessagesInbound{}
+	chunk2 := &model.InternalLLMResponse{
+		ID:      "resp-id",
+		Object:  "chat.completion.chunk",
+		Created: 1,
+		Model:   "claude-test",
+		Choices: []model.Choice{
 			{
-				ID:      "resp-id",
-				Object:  "chat.completion.chunk",
-				Created: 1,
-				Model:   "claude-test",
-				Choices: []model.Choice{
-					{
-						Index: 2,
-						Delta: &model.Message{
-							Role: "assistant",
-							Content: model.MessageContent{
-								Content: &second,
-							},
-						},
-					},
-				},
-			},
-			{
-				ID:      "resp-id",
-				Object:  "chat.completion.chunk",
-				Created: 1,
-				Model:   "claude-test",
-				Choices: []model.Choice{
-					{
-						Index: 1,
-						Delta: &model.Message{
-							Role: "assistant",
-							Content: model.MessageContent{
-								Content: &first,
-							},
-						},
+				Index: 2,
+				Delta: &model.Message{
+					Role: "assistant",
+					Content: model.MessageContent{
+						Content: &second,
 					},
 				},
 			},
 		},
+	}
+	chunk1 := &model.InternalLLMResponse{
+		ID:      "resp-id",
+		Object:  "chat.completion.chunk",
+		Created: 1,
+		Model:   "claude-test",
+		Choices: []model.Choice{
+			{
+				Index: 1,
+				Delta: &model.Message{
+					Role: "assistant",
+					Content: model.MessageContent{
+						Content: &first,
+					},
+				},
+			},
+		},
+	}
+	if _, err := inbound.TransformStream(context.Background(), chunk2); err != nil {
+		t.Fatalf("TransformStream() error = %v", err)
+	}
+	if _, err := inbound.TransformStream(context.Background(), chunk1); err != nil {
+		t.Fatalf("TransformStream() error = %v", err)
 	}
 
 	resp, err := inbound.GetInternalResponse(context.Background())

@@ -8,8 +8,10 @@ import (
 )
 
 type ChatInbound struct {
-	// streamChunks stores stream chunks for aggregation
-	streamChunks []*model.InternalLLMResponse
+	// streamResponse / streamChoices 在流式路径上在线聚合，避免把每个 SSE chunk
+	// 完整对象都 append 进切片（长流/大图/并发下堆峰值可冲到 GB 级）。
+	streamResponse *model.InternalLLMResponse
+	streamChoices  map[int]*model.Choice
 	// storedResponse stores the non-stream response
 	storedResponse *model.InternalLLMResponse
 }
@@ -39,8 +41,8 @@ func (i *ChatInbound) TransformStream(ctx context.Context, stream *model.Interna
 		return []byte("data: [DONE]\n\n"), nil
 	}
 
-	// Store the chunk for aggregation
-	i.streamChunks = append(i.streamChunks, stream)
+	// 在线聚合：只保留最终文本/工具调用等结果，不缓存完整 chunk 列表。
+	i.foldStreamChunk(stream)
 
 	var body []byte
 	var err error
@@ -74,8 +76,7 @@ type streamChoice struct {
 
 // marshalChatChunk serializes an OpenAI chat completion stream chunk, ensuring
 // "choices" is always an array (possibly empty) and each choice always carries
-// a non-null "delta" field. It does not mutate the input chunk, so the stored
-// internal representation used for aggregation stays untouched.
+// a non-null "delta" field. It does not mutate the input chunk.
 func marshalChatChunk(stream *model.InternalLLMResponse) ([]byte, error) {
 	choices := make([]streamChoice, 0, len(stream.Choices))
 	for _, choice := range stream.Choices {
@@ -97,130 +98,127 @@ func marshalChatChunk(stream *model.InternalLLMResponse) ([]byte, error) {
 	return transformer.Marshal(aux)
 }
 
+// foldStreamChunk merges one stream chunk into the running aggregation.
+// 语义与旧版「缓存全部 chunks 再一次性聚合」一致，但内存只保留最终结果。
+func (i *ChatInbound) foldStreamChunk(chunk *model.InternalLLMResponse) {
+	if chunk == nil {
+		return
+	}
+
+	if i.streamResponse == nil {
+		i.streamResponse = &model.InternalLLMResponse{
+			ID:                chunk.ID,
+			Object:            "chat.completion",
+			Created:           chunk.Created,
+			Model:             chunk.Model,
+			SystemFingerprint: chunk.SystemFingerprint,
+			ServiceTier:       chunk.ServiceTier,
+		}
+		i.streamChoices = make(map[int]*model.Choice)
+	}
+
+	result := i.streamResponse
+	if chunk.ID != "" {
+		result.ID = chunk.ID
+	}
+	if chunk.Model != "" {
+		result.Model = chunk.Model
+	}
+	if chunk.Usage != nil {
+		result.Usage = chunk.Usage
+	}
+
+	for _, choice := range chunk.Choices {
+		existingChoice, exists := i.streamChoices[choice.Index]
+		if !exists {
+			existingChoice = &model.Choice{
+				Index:   choice.Index,
+				Message: &model.Message{},
+			}
+			i.streamChoices[choice.Index] = existingChoice
+		}
+
+		if choice.Delta != nil {
+			delta := choice.Delta
+
+			if delta.Role != "" {
+				existingChoice.Message.Role = delta.Role
+			}
+
+			if delta.Content.Content != nil {
+				if existingChoice.Message.Content.Content == nil {
+					existingChoice.Message.Content.Content = new(string)
+				}
+				*existingChoice.Message.Content.Content += *delta.Content.Content
+			}
+
+			if len(delta.Content.MultipleContent) > 0 {
+				existingChoice.Message.Content.MultipleContent = append(
+					existingChoice.Message.Content.MultipleContent,
+					delta.Content.MultipleContent...,
+				)
+			}
+
+			if len(delta.Images) > 0 {
+				existingChoice.Message.Content.MultipleContent = append(
+					existingChoice.Message.Content.MultipleContent,
+					delta.Images...,
+				)
+			}
+
+			if delta.GetReasoningContent() != "" {
+				if existingChoice.Message.ReasoningContent == nil {
+					existingChoice.Message.ReasoningContent = new(string)
+				}
+				*existingChoice.Message.ReasoningContent += delta.GetReasoningContent()
+			}
+
+			for _, toolCall := range delta.ToolCalls {
+				existingChoice.Message.ToolCalls = mergeToolCall(existingChoice.Message.ToolCalls, toolCall)
+			}
+
+			if delta.Refusal != "" {
+				existingChoice.Message.Refusal = delta.Refusal
+			}
+		}
+
+		if choice.FinishReason != nil {
+			existingChoice.FinishReason = choice.FinishReason
+		}
+
+		if choice.Logprobs != nil {
+			if existingChoice.Logprobs == nil {
+				existingChoice.Logprobs = &model.LogprobsContent{}
+			}
+			existingChoice.Logprobs.Content = append(existingChoice.Logprobs.Content, choice.Logprobs.Content...)
+		}
+	}
+}
+
 // GetInternalResponse returns the complete internal response for logging, statistics, etc.
-// For streaming: aggregates all stored stream chunks into a complete response
+// For streaming: returns the online-aggregated response
 // For non-streaming: returns the stored response
 func (i *ChatInbound) GetInternalResponse(ctx context.Context) (*model.InternalLLMResponse, error) {
-	// Return stored response for non-stream scenario
 	if i.storedResponse != nil {
 		return i.storedResponse, nil
 	}
 
-	// Aggregate stream chunks for stream scenario
-	if len(i.streamChunks) == 0 {
+	if i.streamResponse == nil || len(i.streamChoices) == 0 {
+		// 仅有元数据、无 choice 的流（极少见）也返回已聚合壳，避免与旧行为在
+		// “有 chunk 但无 choice”时返回非 nil 不一致；旧逻辑在 len(chunks)>0 时返回 result。
+		if i.streamResponse != nil {
+			result := i.streamResponse
+			i.streamResponse = nil
+			i.streamChoices = nil
+			return result, nil
+		}
 		return nil, nil
 	}
 
-	// Use the first chunk as the base
-	firstChunk := i.streamChunks[0]
-	result := &model.InternalLLMResponse{
-		ID:                firstChunk.ID,
-		Object:            "chat.completion",
-		Created:           firstChunk.Created,
-		Model:             firstChunk.Model,
-		SystemFingerprint: firstChunk.SystemFingerprint,
-		ServiceTier:       firstChunk.ServiceTier,
-	}
-
-	// Aggregate choices by index
-	choicesMap := make(map[int]*model.Choice)
-
-	for _, chunk := range i.streamChunks {
-		// Update ID and Model if they appear in later chunks (some providers send these later)
-		if chunk.ID != "" {
-			result.ID = chunk.ID
-		}
-		if chunk.Model != "" {
-			result.Model = chunk.Model
-		}
-
-		// Capture usage from the last chunk that has it
-		if chunk.Usage != nil {
-			result.Usage = chunk.Usage
-		}
-
-		for _, choice := range chunk.Choices {
-			existingChoice, exists := choicesMap[choice.Index]
-			if !exists {
-				existingChoice = &model.Choice{
-					Index:   choice.Index,
-					Message: &model.Message{},
-				}
-				choicesMap[choice.Index] = existingChoice
-			}
-
-			// Aggregate delta content into message
-			if choice.Delta != nil {
-				delta := choice.Delta
-
-				// Set role if present
-				if delta.Role != "" {
-					existingChoice.Message.Role = delta.Role
-				}
-
-				// Append content (handle both string content and multipart content)
-				if delta.Content.Content != nil {
-					if existingChoice.Message.Content.Content == nil {
-						existingChoice.Message.Content.Content = new(string)
-					}
-					*existingChoice.Message.Content.Content += *delta.Content.Content
-				}
-
-				// Append multipart content (for images, audio, etc.)
-				if len(delta.Content.MultipleContent) > 0 {
-					existingChoice.Message.Content.MultipleContent = append(
-						existingChoice.Message.Content.MultipleContent,
-						delta.Content.MultipleContent...,
-					)
-				}
-
-				// Append images (used by Gemini via OpenAI compat endpoint for image generation)
-				if len(delta.Images) > 0 {
-					existingChoice.Message.Content.MultipleContent = append(
-						existingChoice.Message.Content.MultipleContent,
-						delta.Images...,
-					)
-				}
-
-				// Append reasoning content (supports both reasoning_content and reasoning fields)
-				if delta.GetReasoningContent() != "" {
-					if existingChoice.Message.ReasoningContent == nil {
-						existingChoice.Message.ReasoningContent = new(string)
-					}
-					*existingChoice.Message.ReasoningContent += delta.GetReasoningContent()
-				}
-
-				// Aggregate tool calls
-				for _, toolCall := range delta.ToolCalls {
-					existingChoice.Message.ToolCalls = mergeToolCall(existingChoice.Message.ToolCalls, toolCall)
-				}
-
-				// Set refusal if present
-				if delta.Refusal != "" {
-					existingChoice.Message.Refusal = delta.Refusal
-				}
-			}
-
-			// Capture finish reason
-			if choice.FinishReason != nil {
-				existingChoice.FinishReason = choice.FinishReason
-			}
-
-			// Capture logprobs
-			if choice.Logprobs != nil {
-				if existingChoice.Logprobs == nil {
-					existingChoice.Logprobs = &model.LogprobsContent{}
-				}
-				existingChoice.Logprobs.Content = append(existingChoice.Logprobs.Content, choice.Logprobs.Content...)
-			}
-		}
-	}
-
-	result.Choices = model.SortedChoicesByIndex(choicesMap)
-
-	// Clear stored chunks after aggregation
-	i.streamChunks = nil
-
+	result := i.streamResponse
+	result.Choices = model.SortedChoicesByIndex(i.streamChoices)
+	i.streamResponse = nil
+	i.streamChoices = nil
 	return result, nil
 }
 

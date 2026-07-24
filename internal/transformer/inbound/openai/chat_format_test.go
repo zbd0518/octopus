@@ -56,11 +56,11 @@ func TestChatInboundTransformStreamFinishReasonChunkHasDelta(t *testing.T) {
 		t.Fatalf("TransformStream() missing finish_reason; got %q", body)
 	}
 
-	// The stored/internal chunk must not be mutated — Delta should still be nil
-	// so aggregation semantics are unchanged.
-	if inbound.streamChunks[0].Choices[0].Delta != nil {
-		t.Fatalf("TransformStream() mutated input chunk Delta to non-nil")
-	}
+		// foldStreamChunk must not mutate the input chunk — Delta should still be nil
+		// so outbound serialization remains independent of aggregation state.
+		if chunk.Choices[0].Delta != nil {
+			t.Fatalf("TransformStream() mutated input chunk Delta to non-nil")
+		}
 }
 
 func TestChatInboundTransformStreamEmptyChoicesIsArray(t *testing.T) {
