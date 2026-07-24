@@ -32,22 +32,23 @@ export enum GroupMode {
  * 分组信息
  */
 export interface Group {
-    id?: number;
+    id: number;
     name: string;
-    category?: string;
+    category: string;
     endpoint_type: string;
-    endpoint_provider?: string;
-    outbound_format?: string;
+    endpoint_provider: string;
+    outbound_format: string;
     mode: GroupMode;
     match_regex: string;
-    condition?: string;
-    first_token_time_out?: number;
-    attempt_time_out?: number;
-    session_keep_time?: number;
-    items?: GroupItem[];
-    last_test_passed?: boolean | null;
-    last_test_all_failed?: boolean | null;
+    first_token_time_out: number;
+    attempt_time_out: number;
+    session_keep_time: number;
+    condition: string;
+    items: GroupItem[];
+    last_test_passed?: boolean;
+    last_test_all_failed?: boolean;
     last_test_at?: number;
+    reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
 }
 
 export interface GroupTestResult {
@@ -360,14 +361,33 @@ export interface GroupItemUpdateRequest {
 }
 
 /**
+ * 分组创建请求
+ */
+export interface CreateGroupRequest {
+    name: string;
+    category: string;
+    endpoint_type: string;
+    endpoint_provider: string;
+    outbound_format: string;
+    mode: GroupMode;
+    match_regex: string;
+    first_token_time_out: number;
+    attempt_time_out: number;
+    session_keep_time: number;
+    condition: string;
+    items: GroupItem[];
+    reasoning_buffer_strategy?: string;
+}
+
+/**
  * 分组更新请求 - 仅包含变更的数据
  */
 export interface GroupUpdateRequest {
     id: number;
     name?: string;
+    category?: string;
     endpoint_type?: string;
     endpoint_provider?: string;
-    category?: string;
     outbound_format?: string;
     mode?: GroupMode;
     match_regex?: string;
@@ -375,6 +395,7 @@ export interface GroupUpdateRequest {
     first_token_time_out?: number;
     attempt_time_out?: number;
     session_keep_time?: number;
+    reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
     items_to_add?: GroupItemAddRequest[];
     items_to_update?: GroupItemUpdateRequest[];
     items_to_delete?: number[];
@@ -394,7 +415,7 @@ export function useCreateGroup() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async (data: Group) => {
+        mutationFn: async (data: CreateGroupRequest) => {
             return apiClient.post<Group>('/api/v1/group/create', data);
         },
         onSuccess: (data) => {

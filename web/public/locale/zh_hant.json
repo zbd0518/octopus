@@ -1414,6 +1414,12 @@
       "streamReplay": {
         "label": "串流重連重放",
         "hint": "啟用串流請求的斷線重連緩衝功能。關閉後立即釋放串流事件緩衝區以降低記憶體占用（見 OOM 診斷報告），但客戶端無法重連恢復串流。"
+      },
+      "reasoningBufferStrategy": {
+        "label": "推理內容緩衝策略",
+        "hint": "控制推理 token（思考過程）的串流發送方式。「緩衝」策略等待可見內容到達後再發送推理內容（可安全重試，但長時間推理可能觸發 Cloudflare/Nginx 逾時）；「立即」策略即時發送推理塊（即時思考展示，但空輸出無法重試）。",
+        "buffer": "緩衝（可重試，CF 逾時風險）",
+        "immediate": "立即（即時，無重試）"
       }
     },
     "autoStrategy": {
@@ -2358,6 +2364,14 @@
       "attemptTimeOutHint": "單位秒，單次轉發嘗試的逾時時間，0 表示不限制（串流和非串流均生效）",
       "sessionKeepTime": "會話保持",
       "sessionKeepTimeHint": "單位秒，會話期間保持使用同一供應源，0 表示停用",
+      "reasoningBufferStrategy": {
+        "label": "推理內容緩衝策略",
+        "hint": "控制該分組的推理 token（思考過程）串流發送方式。可針對特定上游（如有嚴格逾時的 Cloudflare Workers）覆蓋全域設定。",
+        "groupHint": "留空 = 使用全域設定；緩衝 = 等待可見內容到達後再發送（可重試，CF 逾時風險）；立即 = 即時發送推理塊（即時展示，空輸出無法重試）。",
+        "useGlobal": "使用全域設定",
+        "buffer": "緩衝（可重試）",
+        "immediate": "立即（即時）"
+      },
       "condition": {
         "label": "條件匹配（JSON）",
         "hint": "JSON 規則陣列。留空表示始終匹配。",

@@ -91,6 +91,28 @@ func isRetryEmptyOutputEnabled() bool {
 	return v
 }
 
+// getReasoningBufferStrategy 返回有效的推理缓冲策略：
+// 1. 优先使用分组的 reasoning_buffer_strategy（非空时）
+// 2. 回退到全局设置 reasoning_buffer_strategy
+// 3. 最终默认 "buffer"（兼容旧行为）
+// 返回 "buffer" 或 "immediate"。
+func getReasoningBufferStrategy(group *dbmodel.Group) string {
+	if group != nil && group.ReasoningBufferStrategy != "" {
+		strategy := strings.TrimSpace(group.ReasoningBufferStrategy)
+		if strategy == "buffer" || strategy == "immediate" {
+			return strategy
+		}
+	}
+	v, err := setting.GetString(dbmodel.SettingKeyReasoningBufferStrategy)
+	if err == nil {
+		strategy := strings.TrimSpace(v)
+		if strategy == "buffer" || strategy == "immediate" {
+			return strategy
+		}
+	}
+	return "buffer" // 默认缓冲策略，保持向后兼容
+}
+
 // messageHasVisibleContent 检查 Message 是否包含可见内容（文本、多模态、工具调用、音频）。
 // reasoning_content / reasoning 不算可见内容（issue #155）。
 func messageHasVisibleContent(msg *model.Message) bool {
@@ -183,6 +205,7 @@ type relayRequest struct {
 	apiKeyID          int
 	requestModel      string
 	groupEndpointType string
+	group             *dbmodel.Group // 新增：用于读取分组级推理缓冲策略
 	iter              *balancer.Iterator
 	streamSession     *relayStreamSession
 	retryCache        *retryRequestCache

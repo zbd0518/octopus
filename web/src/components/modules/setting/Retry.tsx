@@ -27,6 +27,7 @@ export function SettingRetry() {
         }, {});
         nextValues[SettingKey.KeySelectionStrategy] = settings.find((item) => item.key === SettingKey.KeySelectionStrategy)?.value ?? 'cost';
         nextValues[SettingKey.RetryEmptyOutput] = settings.find((item) => item.key === SettingKey.RetryEmptyOutput)?.value ?? 'true';
+        nextValues[SettingKey.ReasoningBufferStrategy] = settings.find((item) => item.key === SettingKey.ReasoningBufferStrategy)?.value ?? 'buffer';
         nextValues[SettingKey.RelayLogQueueDropPolicy] = settings.find((item) => item.key === SettingKey.RelayLogQueueDropPolicy)?.value ?? 'oldest';
         nextValues[SettingKey.StreamSessionReplayEnabled] = settings.find((item) => item.key === SettingKey.StreamSessionReplayEnabled)?.value ?? 'true';
         nextValues[SettingKey.KeyHealthCheckEnabled] = settings.find((item) => item.key === SettingKey.KeyHealthCheckEnabled)?.value ?? 'false';
@@ -148,6 +149,39 @@ export function SettingRetry() {
                         <SelectItem className="rounded-lg" value="availability">{t('retry.keySelectionStrategy.availability')}</SelectItem>
                         <SelectItem className="rounded-lg" value="speed">{t('retry.keySelectionStrategy.speed')}</SelectItem>
                         <SelectItem className="rounded-lg" value="priority">{t('retry.keySelectionStrategy.priority')}</SelectItem>
+                    </SelectContent>
+                </Select>
+            </div>
+
+            <div className="flex min-w-0 flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
+                <div className="min-w-0 flex flex-col gap-1">
+                    <span className="text-sm font-medium">{t('retry.reasoningBufferStrategy.label')}</span>
+                    <span className="text-xs text-muted-foreground">{t('retry.reasoningBufferStrategy.hint')}</span>
+                </div>
+                <Select
+                    value={values[SettingKey.ReasoningBufferStrategy] || 'buffer'}
+                    onValueChange={(value) => {
+                        setValues((prev) => ({ ...prev, [SettingKey.ReasoningBufferStrategy]: value }));
+                        setSetting.mutate(
+                            { key: SettingKey.ReasoningBufferStrategy, value },
+                            {
+                                onSuccess: () => {
+                                    toast.success(t('saved'));
+                                    initialValues.current = {
+                                        ...initialValues.current,
+                                        [SettingKey.ReasoningBufferStrategy]: value,
+                                    };
+                                },
+                            },
+                        );
+                    }}
+                >
+                    <SelectTrigger className="w-full rounded-xl md:w-48">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-xl">
+                        <SelectItem className="rounded-lg" value="buffer">{t('retry.reasoningBufferStrategy.buffer')}</SelectItem>
+                        <SelectItem className="rounded-lg" value="immediate">{t('retry.reasoningBufferStrategy.immediate')}</SelectItem>
                     </SelectContent>
                 </Select>
             </div>

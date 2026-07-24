@@ -700,6 +700,14 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 		selectFields = append(selectFields, "condition")
 		updates.Condition = strings.TrimSpace(*req.Condition)
 	}
+	if req.ReasoningBufferStrategy != nil {
+		selectFields = append(selectFields, "reasoning_buffer_strategy")
+		strategy := strings.TrimSpace(*req.ReasoningBufferStrategy)
+		if strategy != "" && strategy != "buffer" && strategy != "immediate" {
+			return nil, fmt.Errorf("invalid reasoning buffer strategy: must be empty, 'buffer', or 'immediate'")
+		}
+		updates.ReasoningBufferStrategy = strategy
+	}
 
 	if len(selectFields) > 0 {
 		if err := tx.Model(&model.Group{}).Where("id = ?", req.ID).Select(selectFields).Updates(&updates).Error; err != nil {

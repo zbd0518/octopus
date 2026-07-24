@@ -1414,6 +1414,12 @@
       "streamReplay": {
         "label": "流重连重放",
         "hint": "启用流式请求的断线重连缓冲功能。关闭后立即释放流事件缓冲区以降低内存占用（见 OOM 诊断报告），但客户端无法重连恢复流。"
+      },
+      "reasoningBufferStrategy": {
+        "label": "推理内容缓冲策略",
+        "hint": "控制推理 token（思考过程）的流式发送方式。「缓冲」策略等待可见内容到达后再发送推理内容（可安全重试，但长时间推理可能触发 Cloudflare/Nginx 超时）；「立即」策略实时发送推理块（实时思考展示，但空输出无法重试）。",
+        "buffer": "缓冲（可重试，CF 超时风险）",
+        "immediate": "立即（实时，无重试）"
       }
     },
     "autoStrategy": {
@@ -2365,6 +2371,14 @@
       "attemptTimeOutHint": "单位秒，单次转发尝试的超时时间，0 表示不限制（流式和非流式均生效）",
       "sessionKeepTime": "会话保持",
       "sessionKeepTimeHint": "单位秒，会话期间保持使用同一渠道，0 表示禁用",
+      "reasoningBufferStrategy": {
+        "label": "推理内容缓冲策略",
+        "hint": "控制该分组的推理 token（思考过程）流式发送方式。可针对特定上游（如有严格超时的 Cloudflare Workers）覆盖全局设置。",
+        "groupHint": "留空 = 使用全局设置；缓冲 = 等待可见内容到达后再发送（可重试，CF 超时风险）；立即 = 实时发送推理块（实时展示，空输出无法重试）。",
+        "useGlobal": "使用全局设置",
+        "buffer": "缓冲（可重试）",
+        "immediate": "立即（实时）"
+      },
       "condition": {
         "label": "条件匹配（JSON）",
         "hint": "JSON 规则数组。留空表示始终匹配。",

@@ -87,6 +87,11 @@ func assertMigrateGroupEndpointNameUniqueIndexAllowsSameNameAcrossEndpoints(t *t
 	if err := migrateGroupEndpointNameUniqueIndex(db); err != nil {
 		t.Fatalf("migrateGroupEndpointNameUniqueIndex: %v", err)
 	}
+	// Run migration 036 to add reasoning_buffer_strategy column
+	// (test uses latest model.Group which includes this field)
+	if err := addReasoningBufferStrategyToGroups(db); err != nil {
+		t.Fatalf("addReasoningBufferStrategyColumn: %v", err)
+	}
 
 	if err := db.Create(&model.Group{Name: "shared-model", EndpointType: model.EndpointTypeEmbeddings, Mode: model.GroupModeRoundRobin}).Error; err != nil {
 		t.Fatalf("create same-name different endpoint group after migration: %v", err)

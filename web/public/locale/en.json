@@ -1458,6 +1458,12 @@
       "streamReplay": {
         "label": "Stream reconnect replay",
         "hint": "Enable buffering for streaming reconnect & replay. Disabling immediately frees stream event buffers to reduce memory (see OOM diagnostics report), but clients cannot reconnect to resume streams."
+      },
+      "reasoningBufferStrategy": {
+        "label": "Reasoning buffer strategy",
+        "hint": "Controls how reasoning tokens (thinking process) are streamed. 'buffer' waits for visible content before sending reasoning (safe retry, but may trigger Cloudflare/Nginx timeouts on long reasoning). 'immediate' sends reasoning chunks instantly (real-time thinking display, but empty-output retry is unavailable).",
+        "buffer": "Buffer (safe retry, CF timeout risk)",
+        "immediate": "Immediate (real-time, no retry)"
       }
     },
     "autoStrategy": {
@@ -1469,18 +1475,18 @@
         "placeholder": "10"
       },
       "timeWindow": {
-        "label": "Time Window (sec)",
-        "hint": "Time window for calculating success rate",
+        "label": "Time Window (seconds)",
+        "hint": "Time window for recent samples. Samples older than this are dropped when evaluating channel success rate.",
         "placeholder": "300"
       },
       "sampleThreshold": {
         "label": "Sample Threshold",
-        "hint": "Maximum number of samples to keep in sliding window",
+        "hint": "Max recent samples per channel. Older samples beyond this cap are dropped (sliding window).",
         "placeholder": "100"
       },
       "latencyWeight": {
-        "label": "Latency Weight (0-100)",
-        "hint": "Higher values prefer lower-latency channels more strongly; lower values lean more on success rate.",
+        "label": "Latency Weight (%)",
+        "hint": "Weight for latency in automatic channel selection (0-100). Higher values favor faster channels. Lower values favor reliability.",
         "placeholder": "30"
       }
     },
@@ -2409,6 +2415,14 @@
       "attemptTimeOutHint": "Unit: seconds, per-attempt relay timeout, 0 = no limit (applies to both streaming and non-streaming)",
       "sessionKeepTime": "Session Keep Time",
       "sessionKeepTimeHint": "Unit: seconds, keeps using the same channel within a session, 0 = disabled",
+      "reasoningBufferStrategy": {
+        "label": "Reasoning Buffer Strategy",
+        "hint": "Controls how reasoning tokens (thinking process) are streamed for this group. Override the global setting for specific upstreams (e.g. Cloudflare Workers with strict timeouts).",
+        "groupHint": "Empty = use global setting; buffer = wait for visible content (safe retry, CF timeout risk); immediate = send reasoning instantly (real-time display, no retry on empty output).",
+        "useGlobal": "Use global setting",
+        "buffer": "Buffer (safe retry)",
+        "immediate": "Immediate (real-time)"
+      },
       "condition": {
         "label": "Condition (JSON)",
         "hint": "JSON array of rules. Leave empty to always match.",

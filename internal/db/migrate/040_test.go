@@ -9,8 +9,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// TestMigrateDropLeftoverSiteModelNameUniqueIndex 模拟 36 半成功：
-// 新唯一索引已在、旧 CI 唯一索引仍在；37 应删掉旧索引且保留新索引。
+// TestMigrateDropLeftoverSiteModelNameUniqueIndex 模拟 39 半成功：
+// 新唯一索引已在、旧 CI 唯一索引仍在；40 应删掉旧索引且保留新索引。
 func TestMigrateDropLeftoverSiteModelNameUniqueIndex(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "site-model-key-leftover.db")
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})

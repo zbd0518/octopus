@@ -35,8 +35,16 @@ func TestParseOAuthKey_Success(t *testing.T) {
 }
 
 func TestParseOAuthKey_Empty(t *testing.T) {
-	if _, err := parseOAuthKey(""); err == nil {
-		t.Fatal("expected error for empty key")
+	// After commit aff85d16d, empty key is allowed (returns zero-value oauth key)
+	key, err := parseOAuthKey("")
+	if err != nil {
+		t.Fatalf("parseOAuthKey(\"\") error = %v, want nil (empty key allowed)", err)
+	}
+	if key == nil {
+		t.Fatal("parseOAuthKey(\"\") returned nil key")
+	}
+	if key.AccessToken != "" || key.AccountID != "" {
+		t.Errorf("parseOAuthKey(\"\") = %+v, want zero-value oauth key", key)
 	}
 }
 

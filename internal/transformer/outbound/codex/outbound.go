@@ -108,6 +108,7 @@ func (o *Outbound) TransformRequest(ctx context.Context, request *model.Internal
 	}
 	req.Header.Set("originator", "codex_cli_rs")
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
+	req.Header.Set("Content-Type", "application/json")
 	if request.Stream != nil && *request.Stream {
 		req.Header.Set("Accept", "text/event-stream")
 	} else {

@@ -8,44 +8,49 @@ import (
 )
 
 func init() {
-	// 清理 migration 36 半成功残留：新唯一索引已建、旧 CI 唯一索引仍在。
-	// 若 36 已标 success 但旧索引未删，同步仍会撞 idx_site_account_group_model。
 	RegisterAfterAutoMigration(Migration{
 		Version: 37,
-		Up:      migrateDropLeftoverSiteModelNameUniqueIndex,
+		Up:      addHistogramColumnsToStatsTablesIfMissing,
 	})
 }
 
-// 037: 删除 site_models 上残留的旧唯一索引 idx_site_account_group_model。
-//
-// 幂等：新索引不存在时先补建；旧索引不存在则 no-op。
-// MySQL 删除时临时关闭 FOREIGN_KEY_CHECKS，避免 Error 1553。
-func migrateDropLeftoverSiteModelNameUniqueIndex(db *gorm.DB) error {
+// 037: 为所有统计表增加延迟直方图列（issue #159 导入数据后缺失 histogram 列）。
+// 这些列用于记录延迟分布：< 100ms, 100-500ms, 500ms-1s, 1-5s, > 5s。
+// GORM AutoMigrate 通常也会加列，这里幂等兜底，确保跨方言与导入数据场景下列存在。
+func addHistogramColumnsToStatsTablesIfMissing(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("db is nil")
 	}
-	if !db.Migrator().HasTable(&model.SiteModel{}) {
-		return nil
+
+	// 定义需要添加 histogram 列的所有统计表及其模型
+	tables := []struct {
+		model   interface{}
+		columns []string
+	}{
+		{&model.StatsTotal{}, []string{"HistogramLt100", "Histogram100to500", "Histogram500to1k", "Histogram1kto5k", "HistogramGt5k"}},
+		{&model.StatsHourly{}, []string{"HistogramLt100", "Histogram100to500", "Histogram500to1k", "Histogram1kto5k", "HistogramGt5k"}},
+		{&model.StatsDaily{}, []string{"HistogramLt100", "Histogram100to500", "Histogram500to1k", "Histogram1kto5k", "HistogramGt5k"}},
+		{&model.StatsDailyChannel{}, []string{"HistogramLt100", "Histogram100to500", "Histogram500to1k", "Histogram1kto5k", "HistogramGt5k"}},
+		{&model.StatsDailyModel{}, []string{"HistogramLt100", "Histogram100to500", "Histogram500to1k", "Histogram1kto5k", "HistogramGt5k"}},
+		{&model.StatsDailyAPIKey{}, []string{"HistogramLt100", "Histogram100to500", "Histogram500to1k", "Histogram1kto5k", "HistogramGt5k"}},
+		{&model.StatsDailyChannelModel{}, []string{"HistogramLt100", "Histogram100to500", "Histogram500to1k", "Histogram1kto5k", "HistogramGt5k"}},
+		{&model.StatsChannel{}, []string{"HistogramLt100", "Histogram100to500", "Histogram500to1k", "Histogram1kto5k", "HistogramGt5k"}},
+		{&model.StatsAPIKey{}, []string{"HistogramLt100", "Histogram100to500", "Histogram500to1k", "Histogram1kto5k", "HistogramGt5k"}},
+		{&model.StatsSiteModelHourly{}, []string{"HistogramLt100", "Histogram100to500", "Histogram500to1k", "Histogram1kto5k", "HistogramGt5k"}},
 	}
 
-	// 没有 model_name_key 列则说明 36 未生效，交给 36 处理；此处不强行操作。
-	if !db.Migrator().HasColumn(&model.SiteModel{}, "ModelNameKey") {
-		return nil
-	}
-
-	// 确保新唯一索引存在，再删旧索引。
-	if !db.Migrator().HasIndex(&model.SiteModel{}, "idx_site_account_group_model_key") {
-		// 回填空 key，避免建唯一索引时撞空串。
-		if err := backfillSiteModelNameKeys(db); err != nil {
-			return err
+	for _, tbl := range tables {
+		if !db.Migrator().HasTable(tbl.model) {
+			continue
 		}
-		if err := db.Migrator().CreateIndex(&model.SiteModel{}, "idx_site_account_group_model_key"); err != nil {
-			return fmt.Errorf("create site_models idx_site_account_group_model_key: %w", err)
+		for _, col := range tbl.columns {
+			if db.Migrator().HasColumn(tbl.model, col) {
+				continue
+			}
+			if err := db.Migrator().AddColumn(tbl.model, col); err != nil {
+				return fmt.Errorf("add %T.%s: %w", tbl.model, col, err)
+			}
 		}
-	}
-
-	if err := dropSiteModelOldUniqueIndexes(db); err != nil {
-		return err
 	}
 	return nil
 }

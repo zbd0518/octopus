@@ -348,6 +348,7 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		apiKeyID:          apiKeyID,
 		requestModel:      requestModel,
 		groupEndpointType: group.EndpointType,
+		group:             &group, // 传递分组对象用于策略读取
 		iter:              iter,
 		streamSession:     streamSession,
 		retryCache:        newRetryRequestCache(),
@@ -852,8 +853,10 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	}
 
 	firstToken := true
-	hasVisibleContent := false   // 是否已产生可见内容（issue #155 流式空输出检测）
-	var reasoningBuffer [][]byte // 暂存仅含 reasoning 的 chunk，待可见内容到达后 flush
+	hasVisibleContent := false // 是否已产生可见内容（issue #155 流式空输出检测）
+	strategy := getReasoningBufferStrategy(ra.group)
+	shouldBuffer := (strategy == "buffer") // buffer=暂存; immediate=立即发送
+	var reasoningBuffer [][]byte           // 暂存仅含 reasoning 的 chunk，待可见内容到达后 flush
 	clientDone := ra.clientCtx.Done()
 	clientDisconnected := false
 	clientDisconnectLogged := false
@@ -946,16 +949,22 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 				logClientDisconnected()
 				if ra.streamSession != nil {
 					ra.streamSession.Finish(nil)
-				}
-				log.Infof("stream end")
-				// 空输出检测（issue #106/#155）：整个流式响应没有产生任何可见内容。
-				// reasoning-only chunk 被暂存到 reasoningBuffer，未写入客户端（Written()=false），
-				// 可以安全重试。仅当启用空输出重试时触发。
-				if isRetryEmptyOutputEnabled() && !hasVisibleContent {
-					log.Infof("channel %s returned empty stream (no visible content), will retry", ra.channel.Name)
-					if ra.streamSession != nil {
-						ra.streamSession.Finish(nil)
+					log.Infof("stream end")
+					// 空输出检测（issue #106/#155）：整个流式响应没有产生任何可见内容。
+					// buffer 策略：reasoning-only chunk 被暂存到 reasoningBuffer，未写入客户端（Written()=false），
+					// 可以安全重试。immediate 策略：reasoning 已发送，不可重试（只记录日志）。
+					// 仅当启用空输出重试且使用 buffer 策略时触发重试。
+					if isRetryEmptyOutputEnabled() && shouldBuffer && !hasVisibleContent {
+						log.Infof("channel %s returned empty stream (no visible content), will retry", ra.channel.Name)
+						if ra.streamSession != nil {
+							ra.streamSession.Finish(nil)
+						}
+						return errEmptyOutput
 					}
+					if !shouldBuffer && !hasVisibleContent {
+						log.Warnf("channel %s returned empty stream (immediate strategy, no retry)", ra.channel.Name)
+					}
+					return nil
 					return errEmptyOutput
 				}
 				return nil
@@ -1015,9 +1024,10 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 				}
 			}
 
-			// issue #155：仅含 reasoning 的 chunk 暂存到 buffer，不立即写入客户端。
-			// 待可见内容到达后统一 flush；若整个流式响应仅含 reasoning 则触发重试。
-			if !chunkHasVisible && !hasVisibleContent {
+			// issue #155：根据策略决定是否缓冲 reasoning chunks。
+			// buffer 策略：暂存到 buffer，待可见内容到达后统一 flush（安全重试但 CF 可能超时）
+			// immediate 策略：立即发送所有 chunks（实时体验但空输出不可重试）
+			if shouldBuffer && !chunkHasVisible && !hasVisibleContent {
 				reasoningBuffer = append(reasoningBuffer, data)
 				continue
 			}

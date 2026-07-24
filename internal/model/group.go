@@ -38,6 +38,10 @@ type Group struct {
 	LastTestAllFailed *bool `json:"last_test_all_failed,omitempty" gorm:"column:last_test_all_failed"`
 	// LastTestAt 最近一次分组测试完成时间（unix 秒），0 = 从未测试。
 	LastTestAt int64 `json:"last_test_at,omitempty" gorm:"column:last_test_at;default:0"`
+	// ReasoningBufferStrategy 推理内容缓冲策略（issue #155 Cloudflare 超时问题）。
+	// "" = 使用全局设置；"buffer" = 缓冲直到可见内容（安全重试但 CF 可能超时）；
+	// "immediate" = 立即流式发送（实时体验但空输出不可重试）。
+	ReasoningBufferStrategy string `json:"reasoning_buffer_strategy,omitempty" gorm:"column:reasoning_buffer_strategy;default:'';size:20"`
 }
 
 type GroupItem struct {
@@ -51,21 +55,22 @@ type GroupItem struct {
 
 // GroupUpdateRequest 分组更新请求 - 仅包含变更的数据
 type GroupUpdateRequest struct {
-	ID                int                      `json:"id" binding:"required"`
-	Name              *string                  `json:"name,omitempty"`                 // 仅在名称变更时发送
-	Category          *string                  `json:"category,omitempty"`             // 仅在分类变更时发送
-	EndpointType      *string                  `json:"endpoint_type,omitempty"`        // 仅在 API 分类变更时发送
-	EndpointProvider  *string                  `json:"endpoint_provider,omitempty"`    // 仅在端点提供方变更时发送
-	OutboundFormat    *string                  `json:"outbound_format,omitempty"`      // 仅在出站格式变更时发送
-	Mode              *GroupMode               `json:"mode,omitempty"`                 // 仅在模式变更时发送
-	MatchRegex        *string                  `json:"match_regex,omitempty"`          // 仅在匹配正则变更时发送
-	Condition         *string                  `json:"condition,omitempty"`            // 仅在条件变更时发送
-	FirstTokenTimeOut *int                     `json:"first_token_time_out,omitempty"` // 仅在超时变更时发送(秒)
-	AttemptTimeOut    *int                     `json:"attempt_time_out,omitempty"`     // 仅在转发超时变更时发送(秒)
-	SessionKeepTime   *int                     `json:"session_keep_time,omitempty"`    // 仅在会话保持时间变更时发送(秒)
-	ItemsToAdd        []GroupItemAddRequest    `json:"items_to_add,omitempty"`         // 新增的 items
-	ItemsToUpdate     []GroupItemUpdateRequest `json:"items_to_update,omitempty"`      // 更新的 items (priority 变更)
-	ItemsToDelete     []int                    `json:"items_to_delete,omitempty"`      // 删除的 item IDs
+	ID                      int                      `json:"id" binding:"required"`
+	Name                    *string                  `json:"name,omitempty"`                      // 仅在名称变更时发送
+	Category                *string                  `json:"category,omitempty"`                  // 仅在分类变更时发送
+	EndpointType            *string                  `json:"endpoint_type,omitempty"`             // 仅在 API 分类变更时发送
+	EndpointProvider        *string                  `json:"endpoint_provider,omitempty"`         // 仅在端点提供方变更时发送
+	OutboundFormat          *string                  `json:"outbound_format,omitempty"`           // 仅在出站格式变更时发送
+	Mode                    *GroupMode               `json:"mode,omitempty"`                      // 仅在模式变更时发送
+	MatchRegex              *string                  `json:"match_regex,omitempty"`               // 仅在匹配正则变更时发送
+	Condition               *string                  `json:"condition,omitempty"`                 // 仅在条件变更时发送
+	FirstTokenTimeOut       *int                     `json:"first_token_time_out,omitempty"`      // 仅在超时变更时发送(秒)
+	AttemptTimeOut          *int                     `json:"attempt_time_out,omitempty"`          // 仅在转发超时变更时发送(秒)
+	SessionKeepTime         *int                     `json:"session_keep_time,omitempty"`         // 仅在会话保持时间变更时发送(秒)
+	ReasoningBufferStrategy *string                  `json:"reasoning_buffer_strategy,omitempty"` // 仅在推理缓冲策略变更时发送
+	ItemsToAdd              []GroupItemAddRequest    `json:"items_to_add,omitempty"`              // 新增的 items
+	ItemsToUpdate           []GroupItemUpdateRequest `json:"items_to_update,omitempty"`           // 更新的 items (priority 变更)
+	ItemsToDelete           []int                    `json:"items_to_delete,omitempty"`           // 删除的 item IDs
 }
 
 // GroupItemAddRequest 新增 item 请求

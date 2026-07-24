@@ -40,6 +40,7 @@ export type GroupEditorValues = {
     first_token_time_out: number;
     attempt_time_out: number;
     session_keep_time: number;
+    reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
     members: SelectedMember[];
 };
 
@@ -359,6 +360,7 @@ export function GroupEditor({
     const [firstTokenTimeOut, setFirstTokenTimeOut] = useState<number>(initial?.first_token_time_out ?? 0);
     const [attemptTimeOut, setAttemptTimeOut] = useState<number>(initial?.attempt_time_out ?? 0);
     const [sessionKeepTime, setSessionKeepTime] = useState<number>(initial?.session_keep_time ?? 0);
+    const [reasoningBufferStrategy, setReasoningBufferStrategy] = useState<string>(initial?.reasoning_buffer_strategy ?? '');
     const [condition, setCondition] = useState(initial?.condition ?? '');
     const [selectedMembers, setSelectedMembers] = useState<SelectedMember[]>(dedupeSelectedMembers(initial?.members ?? []));
     const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
@@ -482,6 +484,7 @@ export function GroupEditor({
             attempt_time_out: attemptTimeOut,
             session_keep_time: sessionKeepTime,
             condition,
+            reasoning_buffer_strategy: reasoningBufferStrategy,
             members: dedupeSelectedMembers(selectedMembers),
         });
     };
@@ -729,39 +732,67 @@ export function GroupEditor({
                                         className="h-10 rounded-lg text-sm md:h-11"
                                     />
                                 </Field>
-                                <Field>
-                                    <FieldLabel htmlFor="group-session-keep-time">
-                                        {t('form.sessionKeepTime')}
-                                        <TooltipProvider>
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    <HelpCircle className="size-4 cursor-help text-muted-foreground" />
-                                                </TooltipTrigger>
-                                                <TooltipContent>
-                                                    {t('form.sessionKeepTimeHint')}
-                                                </TooltipContent>
-                                            </Tooltip>
-                                        </TooltipProvider>
-                                    </FieldLabel>
-                                    <Input
-                                        id="group-session-keep-time"
-                                        type="number"
-                                        inputMode="numeric"
-                                        min={0}
-                                        step={1}
-                                        value={String(sessionKeepTime)}
-                                        onChange={(e) => {
-                                            const raw = e.target.value;
-                                            if (raw.trim() === '') {
-                                                setSessionKeepTime(0);
-                                                return;
-                                            }
-                                            const n = Number.parseInt(raw, 10);
-                                            setSessionKeepTime(Number.isFinite(n) && n > 0 ? n : 0);
-                                        }}
-                                        className="h-10 rounded-lg text-sm md:h-11"
-                                    />
-                                </Field>
+                <Field>
+                    <FieldLabel htmlFor="group-session-keep-time">
+                        {t('form.sessionKeepTime')}
+                        <TooltipProvider>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <HelpCircle className="size-4 cursor-help text-muted-foreground" />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                    {t('form.sessionKeepTimeHint')}
+                                </TooltipContent>
+                            </Tooltip>
+                        </TooltipProvider>
+                    </FieldLabel>
+                    <Input
+                        id="group-session-keep-time"
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        step={1}
+                        value={String(sessionKeepTime)}
+                        onChange={(e) => {
+                            const raw = e.target.value;
+                            if (raw.trim() === '') {
+                                setSessionKeepTime(0);
+                                return;
+                            }
+                            const n = Number.parseInt(raw, 10);
+                            setSessionKeepTime(Number.isFinite(n) && n > 0 ? n : 0);
+                        }}
+                        className="h-10 rounded-lg text-sm md:h-11"
+                    />
+                </Field>
+                <Field>
+                    <FieldLabel htmlFor="group-reasoning-buffer-strategy">
+                        {t('form.reasoningBufferStrategy.label')}
+                        <TooltipProvider>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <HelpCircle className="size-4 cursor-help text-muted-foreground" />
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                    {t('form.reasoningBufferStrategy.hint')}
+                                </TooltipContent>
+                            </Tooltip>
+                        </TooltipProvider>
+                    </FieldLabel>
+                    <select
+                        id="group-reasoning-buffer-strategy"
+                        value={reasoningBufferStrategy}
+                        onChange={(e) => setReasoningBufferStrategy(e.target.value)}
+                        className="h-10 w-full rounded-lg border border-border/40 bg-card px-3 text-sm shadow-sm transition-[border-color,box-shadow,background-color] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:h-11"
+                    >
+                        <option value="">{t('form.reasoningBufferStrategy.useGlobal')}</option>
+                        <option value="buffer">{t('form.reasoningBufferStrategy.buffer')}</option>
+                        <option value="immediate">{t('form.reasoningBufferStrategy.immediate')}</option>
+                    </select>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        {t('form.reasoningBufferStrategy.groupHint')}
+                    </p>
+                </Field>
                                 <Field className="md:col-span-2">
                                     <FieldLabel htmlFor="group-condition">
                                         {t('form.condition.label')}
