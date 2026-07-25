@@ -205,7 +205,8 @@ function ModelPickerSection({
                             hasEnabledKeyByChannelId &&
                                 channelHasNoEnabledKey(channel.id, hasEnabledKeyByChannelId),
                         );
-                        const hardRisk = channelDisabled || noEnabledKey;
+                        // 仅「渠道已禁用」为硬风险灰化；「无可用 Key」只做软提示徽章，避免误判为不可选
+                        const hardRisk = channelDisabled;
 
                         return (
                             <AccordionItem key={channel.id} value={`channel-${channel.id}`}>

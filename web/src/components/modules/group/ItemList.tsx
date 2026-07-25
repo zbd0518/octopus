@@ -95,7 +95,8 @@ function MemberItem({
     const healthRisk = showStaticRisks
         ? healthRiskLevel(member.upstream_metrics?.success_rate)
         : 'none';
-    const hasHardRisk = isDisabled || (showStaticRisks && noEnabledKey);
+    // 仅渠道禁用做硬风险灰化；无可用 Key 只展示徽章（软提示）
+    const hasHardRisk = isDisabled;
 
     return (
         <div
