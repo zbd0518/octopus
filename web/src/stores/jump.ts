@@ -13,7 +13,10 @@ export type SiteChannelJumpTarget =
 
 export type ChannelJumpTarget = { kind: 'channel-card'; channelId: number };
 
-export type JumpTarget = SiteJumpTarget | SiteChannelJumpTarget | ChannelJumpTarget;
+/** 打开路由分组页并自动进入指定分组的编辑器 */
+export type GroupJumpTarget = { kind: 'group-editor'; groupId: number };
+
+export type JumpTarget = SiteJumpTarget | SiteChannelJumpTarget | ChannelJumpTarget | GroupJumpTarget;
 
 export type PendingJump = {
     requestId: number;
@@ -38,6 +41,8 @@ export function getJumpTargetRoute(target: JumpTarget): NavItem {
             return 'hub';
         case 'channel-card':
             return 'channel';
+        case 'group-editor':
+            return 'group';
         default:
             return 'home';
     }
@@ -57,6 +62,10 @@ export function isSiteChannelJumpTarget(target: JumpTarget): target is SiteChann
 
 export function isChannelJumpTarget(target: JumpTarget): target is ChannelJumpTarget {
     return target.kind === 'channel-card';
+}
+
+export function isGroupJumpTarget(target: JumpTarget): target is GroupJumpTarget {
+    return target.kind === 'group-editor';
 }
 
 export const useJumpStore = create<JumpState>((set, get) => ({

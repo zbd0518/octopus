@@ -14,7 +14,9 @@ import {
     ShieldAlert,
     Stethoscope,
     FlaskConical,
-    Loader2
+    Loader2,
+    Layers,
+    ExternalLink,
 } from 'lucide-react';
 import {
     useUpdateChannel,
@@ -26,8 +28,10 @@ import {
     type UpdateChannelRequest,
     type TestChannelSummary,
 } from '@/api/endpoints/channel';
-import { useGroupTestProgress } from '@/api/endpoints/group';
+import { useGroupList, useGroupTestProgress } from '@/api/endpoints/group';
 import { useSettingList, SettingKey } from '@/api/endpoints/setting';
+import { useJumpStore } from '@/stores/jump';
+import { collectChannelRouteGroups } from './route-groups';
 import {
     MorphingDialogTitle,
     MorphingDialogDescription,
@@ -73,6 +77,12 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
     const deleteChannel = useDeleteChannel();
     const checkChannelKeys = useCheckChannelKeys();
     const { data: settings } = useSettingList();
+    const { data: routeGroups = [] } = useGroupList();
+    const requestJump = useJumpStore((s) => s.requestJump);
+    const channelRouteGroups = useMemo(
+        () => collectChannelRouteGroups(routeGroups, channel.id),
+        [routeGroups, channel.id],
+    );
     const [isEditing, setIsEditing] = useState(false);
     const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
     // 检查全部 Key 后的结果；当 passed === false 表示全部 Key 都不可用，
@@ -492,6 +502,57 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                             </dd>
                                         </div>
                                     </dl>
+                                </section>
+
+                                <section className={sectionClassName}>
+                                    <h4 className="mb-3 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                                        <Layers className="size-3.5" />
+                                        {t('sections.routeGroups')}
+                                    </h4>
+                                    {channelRouteGroups.length === 0 ? (
+                                        <div className="rounded-lg border border-dashed border-border/30 bg-card p-4 text-center text-sm text-muted-foreground">
+                                            {t('routeGroups.empty')}
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            {channelRouteGroups.map((membership) => (
+                                                <div
+                                                    key={membership.groupId}
+                                                    className="rounded-lg border border-border/25 bg-card p-3 shadow-sm"
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        className="group/link inline-flex max-w-full items-center gap-1.5 text-left text-sm font-medium text-primary hover:underline"
+                                                        onClick={() => {
+                                                            setIsOpen(false);
+                                                            // 等详情关闭动画后再切页，避免叠层闪烁
+                                                            window.setTimeout(() => {
+                                                                requestJump({
+                                                                    kind: 'group-editor',
+                                                                    groupId: membership.groupId,
+                                                                });
+                                                            }, 220);
+                                                        }}
+                                                    >
+                                                        <span className="truncate">{membership.groupName}</span>
+                                                        <ExternalLink className="size-3.5 shrink-0 opacity-70 group-hover/link:opacity-100" />
+                                                    </button>
+                                                    <div className="mt-2 flex flex-wrap gap-1.5">
+                                                        {membership.models.map((model) => (
+                                                            <Badge
+                                                                key={model}
+                                                                variant="secondary"
+                                                                className="h-5 max-w-full truncate px-1.5 text-[10px] font-normal"
+                                                                title={model}
+                                                            >
+                                                                {model}
+                                                            </Badge>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </section>
 
                                 <section className={sectionClassName}>

@@ -337,11 +337,31 @@ function EditDialogContent({
     );
 }
 
+/** 受控打开 MorphingDialog：jump 场景下在 expanded 后自动 setIsOpen(true) */
+function GroupEditorDialogOpener({ open }: { open: boolean }) {
+    const { isOpen, setIsOpen } = useMorphingDialog();
+    useEffect(() => {
+        if (open && !isOpen) {
+            setIsOpen(true);
+        }
+    }, [open, isOpen, setIsOpen]);
+    return null;
+}
+
 // ---------------------------------------------------------------------------
 // GroupListItem
 // ---------------------------------------------------------------------------
 
-export function GroupListItem({ group }: { group: Group }) {
+export function GroupListItem({
+    group,
+    autoOpenEditor = false,
+    onAutoOpenEditorConsumed,
+}: {
+    group: Group;
+    /** 外部 jump 请求：挂载后自动打开编辑器一次 */
+    autoOpenEditor?: boolean;
+    onAutoOpenEditorConsumed?: () => void;
+}) {
     const t = useTranslations('group');
     const updateGroup = useUpdateGroup();
     const deleteGroup = useDeleteGroup();
@@ -356,6 +376,20 @@ export function GroupListItem({ group }: { group: Group }) {
 
     const [expanded, setExpanded] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState(false);
+    const [editorOpen, setEditorOpen] = useState(false);
+    const autoOpenHandledRef = useRef(false);
+
+    useEffect(() => {
+        if (!autoOpenEditor) {
+            autoOpenHandledRef.current = false;
+            return;
+        }
+        if (autoOpenHandledRef.current) return;
+        autoOpenHandledRef.current = true;
+        setExpanded(true);
+        setEditorOpen(true);
+        onAutoOpenEditorConsumed?.();
+    }, [autoOpenEditor, onAutoOpenEditorConsumed]);
 
     // ---- Channel maps ----
     const channelNameByKey = useMemo(
@@ -1236,7 +1270,11 @@ export function GroupListItem({ group }: { group: Group }) {
                             {/* --- Bottom action bar --- */}
                             <div className="flex items-center gap-1 border-t border-border/25 pt-2">
                                 {/* Edit */}
-                                <MorphingDialog>
+                                <MorphingDialog
+                                    onOpen={() => setEditorOpen(true)}
+                                    onClose={() => setEditorOpen(false)}
+                                >
+                                    <GroupEditorDialogOpener open={editorOpen} />
                                     <MorphingDialogTrigger className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-card hover:text-foreground">
                                         <Tooltip
                                             side="top"

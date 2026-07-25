@@ -2731,6 +2731,7 @@
         "requests": "請求詳情",
         "tokens": "Token 使用",
         "costs": "成本詳情",
+        "routeGroups": "所屬路由分組",
         "baseUrls": "Base URLs",
         "keys": "金鑰",
         "ccSwitch": "CC Switch",
@@ -2739,6 +2740,9 @@
       "noBaseUrls": "暫無 Base URL",
       "noKeys": "暫無金鑰",
       "priority": "優先級",
+      "routeGroups": {
+        "empty": "未加入任何路由分組"
+      },
       "ccSwitch": {
         "description": "生成符合 CC Switch v1 協議的供應方匯入連結，可選擇目標應用、路由分組和 Octopus API Key。",
         "app": "目標應用",

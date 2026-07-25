@@ -2775,6 +2775,7 @@
         "requests": "Request Details",
         "tokens": "Token Usage",
         "costs": "Cost Details",
+        "routeGroups": "Route Groups",
         "baseUrls": "Base URLs",
         "keys": "Keys",
         "ccSwitch": "CC Switch",
@@ -2783,6 +2784,9 @@
       "noBaseUrls": "No Base URLs",
       "noKeys": "No Keys",
       "priority": "Priority",
+      "routeGroups": {
+        "empty": "Not in any route group"
+      },
       "ccSwitch": {
         "description": "Generate a CC Switch v1 provider import link with a target app, route group, and Octopus API key.",
         "app": "Target App",

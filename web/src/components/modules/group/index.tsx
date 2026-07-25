@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { GroupListItem } from './GroupListItem';
 import { AutoGroupButton } from './AutoGroupButton';
@@ -25,6 +25,7 @@ import { buttonVariants } from '@/components/ui/button';
 import { useSearchableList, useGroupFilter } from '@/hooks/use-searchable-list';
 import { LoadingState } from '@/components/common/LoadingState';
 import { ErrorState } from '@/components/common/ErrorState';
+import { isGroupJumpTarget, useJumpStore } from '@/stores/jump';
 
 function matchesGroupFilter(item: RouteGroup, filter: string) {
     if (filter === 'with-members') return (item.items?.length || 0) > 0;
@@ -45,8 +46,63 @@ export function Group() {
     const pageKey = 'group' as const;
     const filter = useGroupFilter();
     const groupViewMode = useToolbarViewOptionsStore((s) => s.groupViewMode);
+    const setGroupViewMode = useToolbarViewOptionsStore((s) => s.setGroupViewMode);
     const searchTerm = useSearchStore((s) => s.getSearchTerm(pageKey));
     const { data: modelChannels = [] } = useModelChannelList();
+    const pendingJump = useJumpStore((s) => s.pending);
+    const clearPending = useJumpStore((s) => s.clearPending);
+    const [autoOpenGroupId, setAutoOpenGroupId] = useState<number | null>(null);
+    const groupCardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+
+    const pendingGroupJump =
+        pendingJump && isGroupJumpTarget(pendingJump.target) ? pendingJump : null;
+    const forcedGroupId = pendingGroupJump?.target.groupId ?? autoOpenGroupId;
+
+    const registerGroupRef = useCallback((groupId: number, node: HTMLDivElement | null) => {
+        if (node) {
+            groupCardRefs.current.set(groupId, node);
+            return;
+        }
+        groupCardRefs.current.delete(groupId);
+    }, []);
+
+    const handleAutoOpenConsumed = useCallback(() => {
+        setAutoOpenGroupId(null);
+    }, []);
+
+    // 渠道详情 jump：切到卡片视图、置顶目标组、滚动并打开编辑器
+    useEffect(() => {
+        if (!pendingGroupJump) return;
+        if (groupViewMode !== 'cards') {
+            setGroupViewMode('cards');
+        }
+        setAutoOpenGroupId(pendingGroupJump.target.groupId);
+        clearPending(pendingGroupJump.requestId);
+    }, [pendingGroupJump, groupViewMode, setGroupViewMode, clearPending]);
+
+    useEffect(() => {
+        if (autoOpenGroupId == null) return;
+        let attempts = 0;
+        const maxAttempts = 20;
+        let timer: number | null = null;
+
+        const tryScroll = () => {
+            const node = groupCardRefs.current.get(autoOpenGroupId);
+            if (node) {
+                node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+            attempts += 1;
+            if (attempts < maxAttempts) {
+                timer = window.setTimeout(tryScroll, 150);
+            }
+        };
+
+        timer = window.setTimeout(tryScroll, 80);
+        return () => {
+            if (timer !== null) window.clearTimeout(timer);
+        };
+    }, [autoOpenGroupId, groups?.length]);
 
     const { visibleItems: visibleGroups, sortedItems: sortedGroups } = useSearchableList({
         data: groups,
@@ -54,6 +110,15 @@ export function Group() {
         filter,
         filterPredicate: matchesGroupFilter,
     });
+
+    const displayGroups = useMemo(() => {
+        if (forcedGroupId == null) return visibleGroups;
+        const pinned = visibleGroups.find((g) => g.id === forcedGroupId);
+        // 目标组可能被当前 filter 隐藏：从全量列表补回并置顶，保证 jump 可打开
+        const fallback = pinned ?? (groups ?? []).find((g) => g.id === forcedGroupId);
+        if (!fallback) return visibleGroups;
+        return [fallback, ...visibleGroups.filter((g) => g.id !== forcedGroupId)];
+    }, [visibleGroups, forcedGroupId, groups]);
 
     const groupedSourceGroups = useMemo(
         () => sortedGroups.filter((group) => matchesGroupFilter(group, filter)),
@@ -132,11 +197,25 @@ export function Group() {
                     <GroupedRouteModelView categories={groupedCategories} />
                 ) : (
                     <VirtualizedGrid
-                        items={visibleGroups}
+                        items={displayGroups}
                         columns={{ default: 1, sm: 2, md: 2, lg: 3 }}
                         estimateItemHeight={72}
                         getItemKey={(group, index) => group.id ?? `group-${index}`}
-                        renderItem={(group) => <GroupListItem group={group} />}
+                        renderItem={(group) => (
+                            <div
+                                ref={(node) => {
+                                    if (typeof group.id === 'number') {
+                                        registerGroupRef(group.id, node);
+                                    }
+                                }}
+                            >
+                                <GroupListItem
+                                    group={group}
+                                    autoOpenEditor={autoOpenGroupId === group.id}
+                                    onAutoOpenEditorConsumed={handleAutoOpenConsumed}
+                                />
+                            </div>
+                        )}
                         bottomPaddingClassName="pb-3 md:pb-4"
                     />
                 )}
