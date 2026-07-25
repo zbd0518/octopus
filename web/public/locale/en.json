@@ -157,6 +157,8 @@
       "consoleTokenLabel": "Console Token",
       "sensenovaTokenPlaceholder": "Paste console Bearer Token value",
       "sensenovaTokenHint": "Log in to platform.sensenova.cn console, copy the Bearer Token from request headers. Valid for ~3 hours; re-obtain after expiry.",
+      "volcengineCredentialPlaceholder": "Cookie value|||x-csrf-token value (copy from console request headers, joined with |||)",
+      "volcengineCredentialHint": "Log in to console.volcengine.com/ark -> F12 -> Network -> any plan API, copy the full Cookie request header and x-csrf-token request header, joined with |||. Session expiry requires re-obtaining.",
       "cookieLabel": "Cookie",
       "mimoPassTokenPlaceholder": "Paste full Cookie from account.xiaomi.com",
       "mimoServiceTokenPlaceholder": "Paste full Cookie from platform.xiaomimimo.com",
@@ -2466,13 +2468,14 @@
       },
       "outboundFormat": {
         "label": "Outbound Format",
-        "hint": "Select the preferred outbound API format. Auto tries Chat Completions first then falls back to Responses. Messages prefers Anthropic Messages. Raw passthrough sends the original client request body upstream without format conversion or fallback. The only-variants disable fallback for upstreams that reject the other format.",
+        "hint": "Select the preferred outbound API format. Auto tries Chat Completions first then falls back to Responses. Messages prefers Anthropic Messages. Raw passthrough sends the original client request body upstream without format conversion or fallback. Raw passthrough (body) additionally preserves the client's original request path and only rewrites the model name. The only-variants disable fallback for upstreams that reject the other format.",
         "options": {
           "auto": "Auto",
           "chat": "Chat Completions",
           "responses": "Responses",
           "messages": "Anthropic Messages",
           "passthrough": "Raw passthrough",
+          "raw": "Raw passthrough (body)",
           "chatOnly": "Chat Completions only",
           "responsesOnly": "Responses only",
           "messagesOnly": "Anthropic Messages only"

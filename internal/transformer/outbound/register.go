@@ -25,6 +25,9 @@ const (
 	OutboundTypeCloudflare
 	OutboundTypePassthrough
 	OutboundTypeCodex
+	// OutboundTypeRaw 原始穿透（信息体）：保留客户端原始请求体与请求路径，
+	// 仅改写 model 字段。仅由分组出站格式 "raw" 触发，不是渠道类型。
+	OutboundTypeRaw
 )
 
 func (t OutboundType) String() string {
@@ -49,6 +52,8 @@ func (t OutboundType) String() string {
 		return "passthrough"
 	case OutboundTypeCodex:
 		return "codex"
+	case OutboundTypeRaw:
+		return "raw"
 	default:
 		return "unknown"
 	}
@@ -92,6 +97,7 @@ var outboundFactories = map[OutboundType]func() model.Outbound{
 	OutboundTypeCloudflare:      func() model.Outbound { return &cloudflare.ChatOutbound{} },
 	OutboundTypePassthrough:     func() model.Outbound { return &passthrough.Outbound{} },
 	OutboundTypeCodex:           func() model.Outbound { return &codex.Outbound{} },
+	OutboundTypeRaw:             func() model.Outbound { return &passthrough.Outbound{PreservePath: true} },
 }
 
 func Get(outboundType OutboundType) model.Outbound {

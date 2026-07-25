@@ -63,6 +63,7 @@ export const OUTBOUND_FORMAT_OPTIONS = [
     { labelKey: 'form.outboundFormat.options.responses', value: 'responses' },
     { labelKey: 'form.outboundFormat.options.messages', value: 'messages' },
     { labelKey: 'form.outboundFormat.options.passthrough', value: 'passthrough' },
+    { labelKey: 'form.outboundFormat.options.raw', value: 'raw' },
     { labelKey: 'form.outboundFormat.options.chatOnly', value: 'chat_only' },
     { labelKey: 'form.outboundFormat.options.responsesOnly', value: 'responses_only' },
     { labelKey: 'form.outboundFormat.options.messagesOnly', value: 'messages_only' },
@@ -70,7 +71,7 @@ export const OUTBOUND_FORMAT_OPTIONS = [
 
 export function normalizeOutboundFormat(value?: string | null) {
     const normalized = value?.trim().toLowerCase();
-    if (normalized === 'chat' || normalized === 'responses' || normalized === 'messages' || normalized === 'passthrough' || normalized === 'chat_only' || normalized === 'responses_only' || normalized === 'messages_only') return normalized;
+    if (normalized === 'chat' || normalized === 'responses' || normalized === 'messages' || normalized === 'passthrough' || normalized === 'raw' || normalized === 'chat_only' || normalized === 'responses_only' || normalized === 'messages_only') return normalized;
     return '';
 }
 

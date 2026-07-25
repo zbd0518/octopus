@@ -241,6 +241,11 @@ type InternalLLMRequest struct {
 	// This is a help field and will not be sent to the llm service.
 	Query url.Values `json:"-"`
 
+	// RawPath is the original URL path of the inbound request (e.g. /v1/messages).
+	// It is only used by the raw passthrough outbound format to forward the
+	// client's request path verbatim instead of a canonical per-format endpoint.
+	RawPath string `json:"-"`
+
 	// ConversationID is an Octopus relay-side stream session key used to resume
 	// the same streaming generation after a client reconnect.
 	ConversationID string `json:"-"`

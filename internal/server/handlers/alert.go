@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/lingyuins/octopus/internal/server/middleware"
 	"github.com/lingyuins/octopus/internal/server/resp"
 	"github.com/lingyuins/octopus/internal/server/router"
+	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
 func init() {
@@ -137,7 +139,11 @@ func updateNotifChannel(c *gin.Context) {
 		return
 	}
 	ch := req.toModel()
-	mergeNotifChannelSecrets(c.Request.Context(), &ch)
+	if err := mergeNotifChannelSecrets(c.Request.Context(), &ch); err != nil {
+		log.Warnf("failed to merge notification channel %d secrets: %v", ch.ID, err)
+		resp.InternalError(c)
+		return
+	}
 	if err := alert.NotifChannelUpdate(c.Request.Context(), &ch); err != nil {
 		if status, msg, ok := classifyAlertMutationError(err); ok {
 			resp.Error(c, status, msg)
@@ -281,13 +287,16 @@ func redactNotifChannel(ch *model.AlertNotifChannel) {
 	}
 }
 
-func mergeNotifChannelSecrets(ctx context.Context, ch *model.AlertNotifChannel) {
+// mergeNotifChannelSecrets 将更新负载中被掩码（***）或清空的密钥恢复为库中
+// 现值。读取现值失败时返回 error——继续更新会把掩码/空值原样写库，导致真密钥丢失。
+// 渠道不存在时返回 nil（静默跳过）：后续的 NotifChannelUpdate 负责报 404。
+func mergeNotifChannelSecrets(ctx context.Context, ch *model.AlertNotifChannel) error {
 	if ch == nil || ch.ID == 0 {
-		return
+		return nil
 	}
 	channels, err := alert.NotifChannelList(ctx)
 	if err != nil {
-		return
+		return fmt.Errorf("list notification channels: %w", err)
 	}
 	var old *model.AlertNotifChannel
 	for i := range channels {
@@ -297,12 +306,13 @@ func mergeNotifChannelSecrets(ctx context.Context, ch *model.AlertNotifChannel) 
 		}
 	}
 	if old == nil {
-		return
+		return nil
 	}
 	if ch.Secret == "" || strings.Contains(ch.Secret, "***") {
 		ch.Secret = old.Secret
 	}
 	ch.Config = mergeMaskedConfig(old.Config, ch.Config)
+	return nil
 }
 
 func mergeMaskedConfig(oldConfig, newConfig string) string {

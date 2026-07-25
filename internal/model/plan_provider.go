@@ -25,13 +25,14 @@ const (
 	PlanProviderOpenAI      PlanProviderCategory = "openai"
 
 	// TokenPlan 类厂商
-	PlanProviderMiniMax       PlanProviderCategory = "minimax"
-	PlanProviderZhipu         PlanProviderCategory = "zhipu"
-	PlanProviderStepFunPlan   PlanProviderCategory = "stepfun_plan"
-	PlanProviderSenseNovaPlan PlanProviderCategory = "sensenova_plan"
-	PlanProviderMiMoPlan      PlanProviderCategory = "mimo_plan"
-	PlanProviderCodex         PlanProviderCategory = "codex"
-	PlanProviderBailianPlan   PlanProviderCategory = "bailian_plan"
+	PlanProviderMiniMax        PlanProviderCategory = "minimax"
+	PlanProviderZhipu          PlanProviderCategory = "zhipu"
+	PlanProviderStepFunPlan    PlanProviderCategory = "stepfun_plan"
+	PlanProviderSenseNovaPlan  PlanProviderCategory = "sensenova_plan"
+	PlanProviderMiMoPlan       PlanProviderCategory = "mimo_plan"
+	PlanProviderCodex          PlanProviderCategory = "codex"
+	PlanProviderBailianPlan    PlanProviderCategory = "bailian_plan"
+	PlanProviderVolcenginePlan PlanProviderCategory = "volcengine_plan"
 )
 
 // PlanProviderCategoryInfo 厂商元信息（非 DB 字段）
@@ -181,6 +182,15 @@ var PlanProviderCategories = []PlanProviderCategoryInfo{
 		Models:      "qwen3.8-max-preview,qwen3.7-max,qwen3.7-plus,qwen3.6-flash,glm-5.2,deepseek-v4-pro",
 		Description: "阿里云百炼 Token Plan 套餐用量查询（控制台 Cookie 鉴权）。在浏览器登录 bailian.console.aliyun.com 后，按 F12 → Application → Cookies 复制完整 Cookie。可选填 API Key（sk-sp-...）自动创建转发渠道（接入点 token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1）",
 		HelpURL:     "https://bailian.console.aliyun.com/cn-beijing?tab=plan#/efm/subscription/token-plan/personal",
+	},
+	{
+		Category:    PlanProviderVolcenginePlan,
+		Name:        "火山方舟 Agent Plan",
+		Type:        PlanProviderTypeTokenPlan,
+		BaseURL:     "https://console.volcengine.com",
+		Models:      "auto,doubao-seed-evolving,doubao-seed-2-1-turbo,kimi-k3",
+		Description: "火山方舟 Agent Plan 套餐用量查询（控制台 Cookie + CSRF Token 鉴权）。在浏览器登录 console.volcengine.com/ark 后，按 F12 → Network 找任意 plan 接口，复制完整 Cookie 和 x-csrf-token 请求头，用 `Cookie值|||x-csrf-token值` 格式填入。可选填 API Key（ark-...）自动创建转发渠道（接入点 ark.cn-beijing.volces.com/api/plan/v3）",
+		HelpURL:     "https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan",
 	},
 }
 

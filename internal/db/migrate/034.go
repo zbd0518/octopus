@@ -54,7 +54,7 @@ func migrateNavAlertToNotification(db *gorm.DB) error {
 
 		var items []string
 		if err := json.Unmarshal([]byte(raw), &items); err != nil {
-			// 非合法 JSON 不在本迁移职责内（011 的 cleanup 会兜底重写默认），跳过。
+			// 非合法 JSON 不在本迁移职责内（011 的 cleanup 同样跳过保留原值）。
 			continue
 		}
 

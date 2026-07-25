@@ -3,6 +3,7 @@ package passthrough
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -17,6 +18,11 @@ import (
 // Response parsing is delegated to the adapter that matches the original API format.
 type Outbound struct {
 	delegate model.Outbound
+
+	// PreservePath 为 true 时（分组出站格式 "raw"，原始穿透（信息体）），
+	// 上游 URL 使用客户端原始请求路径（InternalLLMRequest.RawPath），
+	// 而不是按入站协议映射的固定端点路径。请求体仍只改写 model 字段。
+	PreservePath bool
 }
 
 func (o *Outbound) TransformRequest(ctx context.Context, request *model.InternalLLMRequest, baseUrl, key string) (*http.Request, error) {
@@ -32,8 +38,12 @@ func (o *Outbound) TransformRequest(ctx context.Context, request *model.Internal
 		return nil, err
 	}
 	o.delegate = delegate
+	body, err := rewritePassthroughModel(request.RawRequest, request.Model)
+	if err != nil {
+		return nil, fmt.Errorf("failed to rewrite passthrough model: %w", err)
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "", bytes.NewReader(request.RawRequest))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create passthrough request: %w", err)
 	}
@@ -55,7 +65,7 @@ func (o *Outbound) TransformRequest(ctx context.Context, request *model.Internal
 		}
 	}
 
-	upstreamURL, err := buildPassthroughURL(baseUrl, endpointPath, request.Query, request.RawAPIFormat)
+	upstreamURL, err := o.buildUpstreamURL(baseUrl, endpointPath, request)
 	if err != nil {
 		return nil, err
 	}
@@ -101,6 +111,70 @@ func delegateAndEndpointForFormat(format model.APIFormat) (model.Outbound, strin
 	default:
 		return nil, "", fmt.Errorf("passthrough does not support raw api format %q", format)
 	}
+}
+
+// rewritePassthroughModel rewrites the top-level "model" field in the original
+// inbound JSON body to the resolved upstream model name. Format conversion is
+// intentionally skipped in passthrough mode, but group/channel model mapping
+// must still apply — otherwise the group name would be sent upstream as-is.
+func rewritePassthroughModel(raw []byte, modelName string) ([]byte, error) {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" || len(raw) == 0 {
+		return raw, nil
+	}
+
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		// Keep the original body when it is not a JSON object (defensive).
+		return raw, nil
+	}
+	if current, ok := obj["model"].(string); ok && current == modelName {
+		return raw, nil
+	}
+	obj["model"] = modelName
+	return json.Marshal(obj)
+}
+
+// buildUpstreamURL picks the upstream URL for the passthrough request.
+// In PreservePath mode the client's original request path is appended to the
+// channel base URL (reusing the OpenAI path-joining rules so a base URL that
+// already ends in /v1 does not duplicate the version segment); when RawPath is
+// empty it falls back to the canonical per-format endpoint.
+func (o *Outbound) buildUpstreamURL(baseURL, endpointPath string, request *model.InternalLLMRequest) (string, error) {
+	if o.PreservePath {
+		if rawPath := strings.TrimSpace(request.RawPath); rawPath != "" {
+			if !strings.HasPrefix(rawPath, "/") {
+				rawPath = "/" + rawPath
+			}
+			// Anthropic 协议使用独立拼接规则（与 buildPassthroughURL 一致）：
+			// base URL 与路径直接拼接，不做 OpenAI 风格的 /v1 前缀去重。
+			if request.RawAPIFormat == model.APIFormatAnthropicMessage {
+				parsed, err := url.Parse(strings.TrimSuffix(baseURL, "/"))
+				if err != nil {
+					return "", fmt.Errorf("failed to parse base url: %w", err)
+				}
+				parsed.Path = strings.TrimSuffix(parsed.Path, "/") + rawPath
+				return appendQuery(parsed.String(), request.Query)
+			}
+			upstreamURL, err := openai.BuildOpenAIUpstreamURL(baseURL, rawPath)
+			if err != nil {
+				return "", err
+			}
+			return appendQuery(upstreamURL, request.Query)
+		}
+	}
+	return buildPassthroughURL(baseURL, endpointPath, request.Query, request.RawAPIFormat)
+}
+
+func appendQuery(upstreamURL string, query url.Values) (string, error) {
+	parsed, err := url.Parse(upstreamURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse built upstream url: %w", err)
+	}
+	if query != nil {
+		parsed.RawQuery = query.Encode()
+	}
+	return parsed.String(), nil
 }
 
 func buildPassthroughURL(baseURL, endpointPath string, query url.Values, format model.APIFormat) (string, error) {

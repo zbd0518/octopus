@@ -79,8 +79,9 @@ func cleanupNavSetting(db *gorm.DB, key string) error {
 
 	var items []string
 	if err := json.Unmarshal([]byte(raw), &items); err != nil {
-		// not valid JSON — overwrite with default
-		return setNavDefault(db, key)
+		// 非法 JSON：保留原值并跳过。该值可能是用户手工编辑出错——
+		// 用默认值覆盖会静默重置用户导航配置；前端正则化会兜底非法值。
+		return nil
 	}
 
 	// Filter to only valid items, preserving input order
@@ -117,13 +118,4 @@ func cleanupNavSetting(db *gorm.DB, key string) error {
 	}
 
 	return db.Model(&Setting{}).Where("`key` = ?", key).Update("value", string(newJSON)).Error
-}
-
-func setNavDefault(db *gorm.DB, key string) error {
-	defaultJSON, _ := json.Marshal(defaultNavOrder)
-	type Setting struct {
-		Key   string `gorm:"primaryKey"`
-		Value string
-	}
-	return db.Model(&Setting{}).Where("`key` = ?", key).Update("value", string(defaultJSON)).Error
 }

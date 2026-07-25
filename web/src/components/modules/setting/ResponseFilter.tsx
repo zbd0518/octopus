@@ -241,7 +241,7 @@ export function SettingResponseFilter() {
                     <div className="flex flex-wrap gap-2 pl-8">
                         {keywords.map((kw, index) => (
                             <Badge
-                                key={index}
+                                key={kw}
                                 variant="outline"
                                 className="cursor-pointer gap-1.5 rounded-lg px-2.5 py-1 text-xs transition-colors hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30"
                                 onClick={() => handleRemoveKeyword(index)}

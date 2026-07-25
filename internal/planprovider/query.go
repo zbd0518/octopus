@@ -85,6 +85,8 @@ func QueryTokenPlan(ctx context.Context, category model.PlanProviderCategory, ap
 		return queryCodexTokenPlan(ctx, apiKey)
 	case model.PlanProviderBailianPlan:
 		return queryBailianPlanTokenPlan(ctx, apiKey)
+	case model.PlanProviderVolcenginePlan:
+		return queryVolcenginePlanTokenPlan(ctx, apiKey)
 	default:
 		return nil, fmt.Errorf("unsupported tokenplan provider: %s", category)
 	}
@@ -1283,6 +1285,127 @@ func bailianGatewayPost(ctx context.Context, cookie, apiPath, dataJSON string) (
 		return nil, fmt.Errorf("http status %d: %s", resp.StatusCode, string(respBody))
 	}
 	return respBody, nil
+}
+
+// --- 火山方舟 Agent Plan (Volcengine Ark) ---
+//
+// 火山方舟 Agent Plan 的套餐用量查询通过控制台 TOP API：
+//   - 域名：console.volcengine.com（控制台），非 API 端点
+//   - 凭据：浏览器 Cookie + x-csrf-token 请求头，二者配对使用
+//   - 鉴权：Cookie 会话认证 + CSRF Token 头校验
+//   - 用量为绝对值（Quota / Used），非百分比
+//
+// 用户凭据格式：`Cookie值|||x-csrf-token值`（三部分竖线分隔）。
+// Cookie 从 console.volcengine.com 控制台请求头复制，x-csrf-token 同页请求头获取。
+//
+// 用量接口一次返回五档配额（5h/日/周/月），取月配额为主配额、周配额为次配额。
+// 转发渠道使用火山方舟 OpenAI 兼容端点 + ark- API Key：
+//   - 接入点：https://ark.cn-beijing.volces.com/api/plan/v3
+//   - API Key：ark-... 格式（控制台 API Key 管理页创建）
+var volcenginePlanUsageURL = "https://console.volcengine.com/api/top/ark/cn-beijing/2024-01-01/GetAgentPlanAFPUsage"
+
+// volcengineCredentialSep 是用户凭据中 Cookie 与 CSRF Token 的分隔符。
+const volcengineCredentialSep = "|||"
+
+func queryVolcenginePlanTokenPlan(ctx context.Context, credential string) (*TokenPlanResult, error) {
+	cookie, csrfToken, err := parseVolcengineCredential(credential)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, volcenginePlanUsageURL, strings.NewReader("{}"))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Cookie", cookie)
+	req.Header.Set("x-csrf-token", csrfToken)
+	req.Header.Set("Referer", "https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan")
+	req.Header.Set("Origin", "https://console.volcengine.com")
+
+	client := &http.Client{Timeout: requestTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http post: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("http status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var usageResp struct {
+		ResponseMetadata struct {
+			Error *struct {
+				Code    string `json:"Code"`
+				Message string `json:"Message"`
+			} `json:"Error"`
+		} `json:"ResponseMetadata"`
+		Result struct {
+			PlanType    string `json:"PlanType"`
+			AFPFiveHour struct {
+				Quota float64 `json:"Quota"`
+				Used  float64 `json:"Used"`
+			} `json:"AFPFiveHour"`
+			AFPWeekly struct {
+				Quota     float64 `json:"Quota"`
+				Used      float64 `json:"Used"`
+				ResetTime int64   `json:"ResetTime"`
+			} `json:"AFPWeekly"`
+			AFPMonthly struct {
+				Quota     float64 `json:"Quota"`
+				Used      float64 `json:"Used"`
+				ResetTime int64   `json:"ResetTime"`
+			} `json:"AFPMonthly"`
+		} `json:"Result"`
+	}
+	if err := json.Unmarshal(body, &usageResp); err != nil {
+		return nil, fmt.Errorf("parse usage response: %w", err)
+	}
+	if usageResp.ResponseMetadata.Error != nil {
+		return nil, fmt.Errorf("volcengine api error %s: %s",
+			usageResp.ResponseMetadata.Error.Code, usageResp.ResponseMetadata.Error.Message)
+	}
+
+	r := usageResp.Result
+	result := &TokenPlanResult{
+		QuotaTotal:  r.AFPMonthly.Quota,
+		QuotaUsed:   r.AFPMonthly.Used,
+		WeeklyTotal: r.AFPWeekly.Quota,
+		WeeklyUsed:  r.AFPWeekly.Used,
+	}
+	if r.AFPMonthly.ResetTime > 0 {
+		t := time.UnixMilli(r.AFPMonthly.ResetTime)
+		result.QuotaResetAt = &t
+	}
+	if r.AFPWeekly.ResetTime > 0 {
+		t := time.UnixMilli(r.AFPWeekly.ResetTime)
+		result.WeeklyResetAt = &t
+	}
+	return result, nil
+}
+
+// parseVolcengineCredential 解析用户填入的火山方舟凭据。
+// 格式：`Cookie值|||x-csrf-token值`。容忍前后空白。
+func parseVolcengineCredential(credential string) (cookie, csrfToken string, err error) {
+	credential = strings.TrimSpace(credential)
+	parts := strings.SplitN(credential, volcengineCredentialSep, 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("凭据格式错误：需为 `Cookie值%sx-csrf-token值`（从控制台请求头复制）", volcengineCredentialSep)
+	}
+	cookie = strings.TrimSpace(parts[0])
+	csrfToken = strings.TrimSpace(parts[1])
+	if cookie == "" {
+		return "", "", fmt.Errorf("Cookie 不能为空")
+	}
+	if csrfToken == "" {
+		return "", "", fmt.Errorf("x-csrf-token 不能为空")
+	}
+	return cookie, csrfToken, nil
 }
 
 // --- Helpers ---

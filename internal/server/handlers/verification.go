@@ -18,6 +18,7 @@ import (
 	"github.com/lingyuins/octopus/internal/server/middleware"
 	"github.com/lingyuins/octopus/internal/server/resp"
 	"github.com/lingyuins/octopus/internal/server/router"
+	"github.com/lingyuins/octopus/internal/utils/log"
 	"github.com/lingyuins/octopus/internal/utils/xurl"
 )
 
@@ -88,7 +89,10 @@ func runVerificationForProfile(c *gin.Context) {
 		Model  string   `json:"model"`
 		Probes []string `json:"probes"`
 	}
-	_ = c.ShouldBindJSON(&req)
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
+		return
+	}
 
 	probes := req.Probes
 	if len(probes) == 0 {
@@ -109,7 +113,9 @@ func runVerificationForProfile(c *gin.Context) {
 	if !allOK {
 		status = model.HealthStatusError
 	}
-	_ = credential.UpdateHealth(c.Request.Context(), id, status, now)
+	if err := credential.UpdateHealth(c.Request.Context(), id, status, now); err != nil {
+		log.Warnf("failed to update credential %d health status: %v", id, err)
+	}
 
 	resp.Success(c, results)
 }

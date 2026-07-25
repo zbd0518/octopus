@@ -109,6 +109,14 @@ func outboundAttemptTypes(channelType outbound.OutboundType, request *model.Inte
 			return []outbound.OutboundType{outbound.OutboundTypePassthrough}
 		}
 	}
+	// "raw"（原始穿透（信息体））：与 passthrough 一样原样转发请求体，
+	// 但额外保留客户端原始请求路径，仅改写 model 字段，不做格式转换或回退。
+	if format == "raw" && request != nil {
+		switch request.RawAPIFormat {
+		case model.APIFormatOpenAIChatCompletion, model.APIFormatOpenAIResponse, model.APIFormatAnthropicMessage:
+			return []outbound.OutboundType{outbound.OutboundTypeRaw}
+		}
+	}
 	if request != nil && isLLMRequestFormat(request) && (channelType == outbound.OutboundTypeOpenAIChat || channelType == outbound.OutboundTypeOpenAIResponse) {
 		switch format {
 		case "responses":
@@ -130,7 +138,7 @@ func outboundAttemptTypes(channelType outbound.OutboundType, request *model.Inte
 
 func isLLMRequestFormat(request *model.InternalLLMRequest) bool {
 	switch request.RawAPIFormat {
-	case model.APIFormatOpenAIChatCompletion, model.APIFormatOpenAIResponse:
+	case model.APIFormatOpenAIChatCompletion, model.APIFormatOpenAIResponse, model.APIFormatAnthropicMessage:
 		return true
 	default:
 		return false
@@ -591,8 +599,9 @@ func parseRequest(inboundType inbound.InboundType, c *gin.Context) (*model.Inter
 		return nil, nil, err
 	}
 
-	// Pass through the original query parameters
+	// Pass through the original query parameters and request path
 	internalRequest.Query = c.Request.URL.Query()
+	internalRequest.RawPath = c.Request.URL.Path
 
 	if err := internalRequest.Validate(); err != nil {
 		resp.Error(c, http.StatusBadRequest, err.Error())
@@ -619,7 +628,9 @@ func (ra *relayAttempt) forward() (int, error) {
 
 	requestForOutbound := ra.internalRequest
 	effectiveRewrite := (*rewrite.EffectiveConfig)(nil)
-	if ra.adapterType != outbound.OutboundTypePassthrough {
+	// passthrough / raw（原始穿透）都要求原样转发客户端请求体，
+	// 跳过 param_override 与改写引擎，避免请求体被二次加工。
+	if ra.adapterType != outbound.OutboundTypePassthrough && ra.adapterType != outbound.OutboundTypeRaw {
 		var err error
 		requestForOutbound, effectiveRewrite, err = prepareInternalRequestForOutbound(ra.channel, ra.internalRequest, ra.groupEndpointType)
 		if err != nil {
@@ -965,7 +976,6 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 						log.Warnf("channel %s returned empty stream (immediate strategy, no retry)", ra.channel.Name)
 					}
 					return nil
-					return errEmptyOutput
 				}
 				return nil
 			}

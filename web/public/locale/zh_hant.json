@@ -157,6 +157,8 @@
       "consoleTokenLabel": "控制台 Token",
       "sensenovaTokenPlaceholder": "貼上控制台 Bearer Token 值",
       "sensenovaTokenHint": "需登入 platform.sensenova.cn 控制台，從請求頭複製 Bearer Token 值。有效期約 3 小時，過期後需重新取得。",
+      "volcengineCredentialPlaceholder": "Cookie值|||x-csrf-token值（從控制台請求頭複製，用竪線分隔）",
+      "volcengineCredentialHint": "登入 console.volcengine.com/ark → F12 → Network → 任意 plan 介面，複製完整 Cookie 請求頭和 x-csrf-token 請求頭，用 ||| 連接。工作階段過期後需重新取得。",
       "cookieLabel": "Cookie",
       "mimoPassTokenPlaceholder": "貼上 account.xiaomi.com 的完整 Cookie",
       "mimoServiceTokenPlaceholder": "貼上 platform.xiaomimimo.com 的完整 Cookie",
@@ -2415,13 +2417,14 @@
       },
       "outboundFormat": {
         "label": "出站請求格式",
-        "hint": "選擇首選的出站 API 格式。「自動/Chat/Responses」會在主格式失敗後回退到另一種；Messages 優先使用 Anthropic Messages；原始透傳會直接把客戶端原始請求體發給上游，不做格式轉換或回退；「僅」模式則不回退，適合只支援單一格式（如公益站）的上游。",
+        "hint": "選擇首選的出站 API 格式。「自動/Chat/Responses」會在主格式失敗後回退到另一種；Messages 優先使用 Anthropic Messages；原始透傳會直接把客戶端原始請求體發給上游，不做格式轉換或回退；原始穿透（資訊體）在此基礎上保留客戶端原始請求路徑，僅改寫模型名；「僅」模式則不回退，適合只支援單一格式（如公益站）的上游。",
         "options": {
           "auto": "自動",
           "chat": "Chat Completions",
           "responses": "Responses",
           "messages": "Anthropic Messages",
           "passthrough": "原始透傳",
+          "raw": "原始穿透（資訊體）",
           "chatOnly": "僅 Chat Completions",
           "responsesOnly": "僅 Responses",
           "messagesOnly": "僅 Anthropic Messages"
