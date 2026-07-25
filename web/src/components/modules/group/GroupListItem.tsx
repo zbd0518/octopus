@@ -337,14 +337,20 @@ function EditDialogContent({
     );
 }
 
-/** 受控打开 MorphingDialog：jump 场景下在 expanded 后自动 setIsOpen(true) */
+/**
+ * 受控打开 MorphingDialog：仅在 open 上升沿打开一次。
+ * 不能依赖 isOpen：关闭瞬间 isOpen=false 而 editorOpen 尚未提交为 false，
+ * 若写 `open && !isOpen → setIsOpen(true)` 会立刻把弹窗重新打开。
+ */
 function GroupEditorDialogOpener({ open }: { open: boolean }) {
-    const { isOpen, setIsOpen } = useMorphingDialog();
+    const { setIsOpen } = useMorphingDialog();
+    const prevOpenRef = useRef(false);
     useEffect(() => {
-        if (open && !isOpen) {
+        if (open && !prevOpenRef.current) {
             setIsOpen(true);
         }
-    }, [open, isOpen, setIsOpen]);
+        prevOpenRef.current = open;
+    }, [open, setIsOpen]);
     return null;
 }
 
