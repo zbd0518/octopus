@@ -865,7 +865,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 
 	firstToken := true
 	hasVisibleContent := false // 是否已产生可见内容（issue #155 流式空输出检测）
-	strategy := getReasoningBufferStrategy(ra.group)
+	strategy := getReasoningBufferStrategy(ra.group, ra.internalRequest)
 	shouldBuffer := (strategy == "buffer") // buffer=暂存; immediate=立即发送
 	var reasoningBuffer [][]byte           // 暂存仅含 reasoning 的 chunk，待可见内容到达后 flush
 	clientDone := ra.clientCtx.Done()

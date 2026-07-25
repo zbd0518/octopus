@@ -92,16 +92,22 @@ func isRetryEmptyOutputEnabled() bool {
 }
 
 // getReasoningBufferStrategy 返回有效的推理缓冲策略：
-// 1. 优先使用分组的 reasoning_buffer_strategy（非空时）
-// 2. 回退到全局设置 reasoning_buffer_strategy
-// 3. 最终默认 "buffer"（兼容旧行为）
+// 1. 分组显式配置（buffer/immediate）最高优先，管理员意图不被自动覆盖
+// 2. 长思考请求默认 immediate：避免 reasoning-only 阶段长时间无 SSE 输出导致
+//    客户端/反代空闲超时断开（client disconnected，首字 0ms）
+// 3. 回退到全局设置 reasoning_buffer_strategy
+// 4. 最终默认 "buffer"（兼容旧行为）
 // 返回 "buffer" 或 "immediate"。
-func getReasoningBufferStrategy(group *dbmodel.Group) string {
-	if group != nil && group.ReasoningBufferStrategy != "" {
+func getReasoningBufferStrategy(group *dbmodel.Group, req *model.InternalLLMRequest) string {
+	if group != nil {
 		strategy := strings.TrimSpace(group.ReasoningBufferStrategy)
 		if strategy == "buffer" || strategy == "immediate" {
 			return strategy
 		}
+	}
+	// 分组未显式配置时：长思考优先立即推流，防止空闲断开。
+	if prefersImmediateReasoningStream(req) {
+		return "immediate"
 	}
 	v, err := setting.GetString(dbmodel.SettingKeyReasoningBufferStrategy)
 	if err == nil {
@@ -111,6 +117,26 @@ func getReasoningBufferStrategy(group *dbmodel.Group) string {
 		}
 	}
 	return "buffer" // 默认缓冲策略，保持向后兼容
+}
+
+// prefersImmediateReasoningStream 判断请求是否属于“长思考”场景。
+// 这类请求首个可见 token 前可能长时间只有 reasoning，buffer 策略下客户端无数据易超时。
+func prefersImmediateReasoningStream(req *model.InternalLLMRequest) bool {
+	if req == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(req.ReasoningEffort)) {
+	case "high", "xhigh", "max":
+		return true
+	}
+	if req.AdaptiveThinking {
+		return true
+	}
+	// Anthropic/Gemini 等大 budget 同样会长时间思考后再吐可见内容。
+	if req.ReasoningBudget != nil && *req.ReasoningBudget >= 8000 {
+		return true
+	}
+	return false
 }
 
 // messageHasVisibleContent 检查 Message 是否包含可见内容（文本、多模态、工具调用、音频）。

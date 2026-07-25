@@ -3,6 +3,7 @@ package relay
 import (
 	"testing"
 
+	dbmodel "github.com/lingyuins/octopus/internal/model"
 	tmodel "github.com/lingyuins/octopus/internal/transformer/model"
 	"github.com/samber/lo"
 )
@@ -229,5 +230,62 @@ func TestStreamChunkHasVisibleContent_NoChoices(t *testing.T) {
 	resp := &tmodel.InternalLLMResponse{Choices: []tmodel.Choice{}}
 	if streamChunkHasVisibleContent(resp) {
 		t.Fatal("response with no choices should not have visible content")
+	}
+}
+
+// --- prefersImmediateReasoningStream / getReasoningBufferStrategy ---
+
+func TestPrefersImmediateReasoningStream(t *testing.T) {
+	budgetHigh := int64(8000)
+	budgetLow := int64(1024)
+
+	tests := []struct {
+		name string
+		req  *tmodel.InternalLLMRequest
+		want bool
+	}{
+		{name: "nil request", req: nil, want: false},
+		{name: "empty effort", req: &tmodel.InternalLLMRequest{}, want: false},
+		{name: "medium effort", req: &tmodel.InternalLLMRequest{ReasoningEffort: "medium"}, want: false},
+		{name: "high effort", req: &tmodel.InternalLLMRequest{ReasoningEffort: "high"}, want: true},
+		{name: "HIGH effort case", req: &tmodel.InternalLLMRequest{ReasoningEffort: "HIGH"}, want: true},
+		{name: "xhigh effort", req: &tmodel.InternalLLMRequest{ReasoningEffort: "xhigh"}, want: true},
+		{name: "max effort", req: &tmodel.InternalLLMRequest{ReasoningEffort: "max"}, want: true},
+		{name: "adaptive thinking", req: &tmodel.InternalLLMRequest{AdaptiveThinking: true}, want: true},
+		{name: "large reasoning budget", req: &tmodel.InternalLLMRequest{ReasoningBudget: &budgetHigh}, want: true},
+		{name: "small reasoning budget", req: &tmodel.InternalLLMRequest{ReasoningBudget: &budgetLow}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := prefersImmediateReasoningStream(tt.req); got != tt.want {
+				t.Fatalf("prefersImmediateReasoningStream() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetReasoningBufferStrategy_GroupOverride(t *testing.T) {
+	// 分组显式 buffer 时，即使 high 思考也不自动改成 immediate。
+	group := &dbmodel.Group{ReasoningBufferStrategy: "buffer"}
+	req := &tmodel.InternalLLMRequest{ReasoningEffort: "high"}
+	if got := getReasoningBufferStrategy(group, req); got != "buffer" {
+		t.Fatalf("group explicit buffer should win, got %q", got)
+	}
+
+	group.ReasoningBufferStrategy = "immediate"
+	if got := getReasoningBufferStrategy(group, req); got != "immediate" {
+		t.Fatalf("group explicit immediate should win, got %q", got)
+	}
+}
+
+func TestGetReasoningBufferStrategy_LongThinkingDefaultImmediate(t *testing.T) {
+	// 分组未配置时，长思考默认 immediate，避免 client disconnected。
+	req := &tmodel.InternalLLMRequest{ReasoningEffort: "high"}
+	if got := getReasoningBufferStrategy(nil, req); got != "immediate" {
+		t.Fatalf("long-thinking without group override should be immediate, got %q", got)
+	}
+	if got := getReasoningBufferStrategy(&dbmodel.Group{}, req); got != "immediate" {
+		t.Fatalf("empty group strategy should still prefer immediate for high effort, got %q", got)
 	}
 }
