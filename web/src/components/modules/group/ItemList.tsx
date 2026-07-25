@@ -119,7 +119,8 @@ function MemberItem({
                 isRemoving && 'opacity-0',
                 hasHardRisk && 'opacity-60 grayscale',
                 availabilityStatus === 'unavailable' && 'border-destructive/40 bg-destructive/5',
-                !isRemoving && !isDragging && 'hover:-translate-y-0.5 hover:border-primary/16 hover:bg-card',
+                // 不用 hover translate-y：鼠标停在底边时位移会移出命中区，导致 hover 进出循环抖动
+                !isRemoving && !isDragging && 'hover:border-primary/16 hover:bg-card hover:shadow-sm',
                 isDragging && 'border-primary/30 bg-card'
             )}>
                 <span className={cn(

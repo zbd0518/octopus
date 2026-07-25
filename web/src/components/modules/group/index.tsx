@@ -54,8 +54,11 @@ export function Group() {
     const [autoOpenGroupId, setAutoOpenGroupId] = useState<number | null>(null);
     const groupCardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
+    // 重新构造 pending，使 type guard 收窄到 GroupJumpTarget（直接赋值 pendingJump 时 target 仍是联合类型）
     const pendingGroupJump =
-        pendingJump && isGroupJumpTarget(pendingJump.target) ? pendingJump : null;
+        pendingJump && isGroupJumpTarget(pendingJump.target)
+            ? { requestId: pendingJump.requestId, target: pendingJump.target }
+            : null;
     const forcedGroupId = pendingGroupJump?.target.groupId ?? autoOpenGroupId;
 
     const registerGroupRef = useCallback((groupId: number, node: HTMLDivElement | null) => {
