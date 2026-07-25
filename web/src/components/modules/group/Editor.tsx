@@ -245,8 +245,9 @@ function ModelPickerSection({
                                                     onClick={() => !isSelected && onAdd(m)}
                                                     disabled={isSelected}
                                                     className={cn(
-                                                        'w-full flex items-center justify-between gap-2 rounded-lg border border-border/30 bg-card px-3 py-2.5 text-left transition-[transform,border-color,background-color,box-shadow] duration-300',
-                                                        isSelected ? 'cursor-not-allowed opacity-60' : 'hover:-translate-y-0.5 hover:border-primary/18 hover:bg-card',
+                                                        'w-full flex items-center justify-between gap-2 rounded-lg border border-border/30 bg-card px-3 py-2.5 text-left transition-[border-color,background-color,box-shadow] duration-300',
+                                                        // 不用 hover translate-y：底边命中会进出循环导致抖动
+                                                        isSelected ? 'cursor-not-allowed opacity-60' : 'hover:border-primary/18 hover:bg-card hover:shadow-sm',
                                                         hardRisk && !isSelected && 'opacity-70'
                                                     )}
                                                 >
