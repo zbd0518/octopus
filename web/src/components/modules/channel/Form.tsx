@@ -40,12 +40,21 @@ import {
     MorphingDialogTrigger,
     useMorphingDialog,
 } from '@/components/ui/morphing-dialog';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
 import { toast } from '@/components/common/Toast';
 import { cn } from '@/lib/utils';
 import { useTranslations } from 'next-intl';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw, X, Plus, FlaskConical, CheckCircle2, AlertTriangle, Trash2, Sparkles, Orbit, Layers3, KeyRound, Cable, Search, Check, ListFilter, ChevronRight } from 'lucide-react';
+import { RefreshCw, X, Plus, FlaskConical, CheckCircle2, AlertTriangle, Trash2, Sparkles, Orbit, Layers3, KeyRound, Cable, Search, Check, ListFilter, ChevronRight, ClipboardPaste } from 'lucide-react';
 import { getModelIcon } from '@/lib/model-icons';
+import { mergeBulkKeys, parseBulkKeys } from './bulk-keys';
 
 export interface ChannelKeyFormItem {
     id?: number;
@@ -581,6 +590,8 @@ export function ChannelForm({
     const sectionClassName = 'space-y-4 rounded-lg bg-card/70 p-4 md:p-5';
     const labelClassName = 'text-sm font-medium text-card-foreground';
     const fieldGroupClassName = 'space-y-2';
+    const [bulkImportOpen, setBulkImportOpen] = useState(false);
+    const [bulkImportText, setBulkImportText] = useState('');
 
     const globalKeyStrategy = settings?.find((s) => s.key === SettingKey.KeySelectionStrategy)?.value ?? 'cost';
     const effectiveKeyStrategy = formData.key_selection_strategy || globalKeyStrategy;
@@ -842,6 +853,31 @@ export function ChannelForm({
         onFormDataChange({ ...formData, keys: next });
     };
 
+    const handleOpenBulkImport = () => {
+        setBulkImportText('');
+        setBulkImportOpen(true);
+    };
+
+    const handleApplyBulkImport = () => {
+        const parsed = parseBulkKeys(bulkImportText);
+        if (parsed.length === 0) {
+            toast.error(t('bulkImport.empty'));
+            return;
+        }
+
+        const { keys, added, skippedDuplicate } = mergeBulkKeys(formData.keys ?? [], parsed);
+        if (added === 0) {
+            toast.error(t('bulkImport.noNew', { skipped: skippedDuplicate }));
+            return;
+        }
+
+        onFormDataChange({ ...formData, keys });
+        setBulkImportOpen(false);
+        setBulkImportText('');
+        setTestSummary(null);
+        toast.success(t('bulkImport.success', { added, skipped: skippedDuplicate }));
+    };
+
     const handleAddBaseUrl = () => {
         onFormDataChange({
             ...formData,
@@ -1069,6 +1105,16 @@ export function ChannelForm({
                         type="button"
                         variant="ghost"
                         size="sm"
+                        onClick={handleOpenBulkImport}
+                        className="h-6 px-2 text-xs text-muted-foreground/70 hover:text-muted-foreground hover:bg-transparent"
+                    >
+                        <ClipboardPaste className="h-3 w-3 mr-1" />
+                        {t('bulkImport.button')}
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
                         onClick={handleAddKey}
                         className="h-6 px-2 text-xs text-muted-foreground/70 hover:text-muted-foreground hover:bg-transparent"
                     >
@@ -1076,6 +1122,38 @@ export function ChannelForm({
                         {t('add')}
                     </Button>
                 </div>
+
+                <Dialog open={bulkImportOpen} onOpenChange={setBulkImportOpen}>
+                    <DialogContent className="sm:max-w-lg">
+                        <DialogHeader>
+                            <DialogTitle>{t('bulkImport.title')}</DialogTitle>
+                            <DialogDescription>{t('bulkImport.description')}</DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-2">
+                            <textarea
+                                id={`${idPrefix}-bulk-keys`}
+                                value={bulkImportText}
+                                onChange={(event) => setBulkImportText(event.target.value)}
+                                placeholder={t('bulkImport.placeholder')}
+                                rows={10}
+                                className="w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            />
+                            <p className="text-xs text-muted-foreground">{t('bulkImport.hint')}</p>
+                        </div>
+                        <DialogFooter>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => setBulkImportOpen(false)}
+                            >
+                                {t('bulkImport.cancel')}
+                            </Button>
+                            <Button type="button" onClick={handleApplyBulkImport}>
+                                {t('bulkImport.apply')}
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
                 <div className="space-y-2">
                     {(formData.keys ?? []).map((k, idx) => (
                         <div key={k.id ?? `new-${idx}`} className={cn(

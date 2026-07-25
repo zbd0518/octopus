@@ -2863,6 +2863,18 @@
       "advanced": "高级设置",
       "apiKeyConfig": "API Key 配置",
       "apiKey": "API Key",
+      "bulkImport": {
+        "button": "批量导入",
+        "title": "批量导入 Key",
+        "description": "粘贴多个上游 API Key，确认后会追加到当前渠道。",
+        "placeholder": "每行一个 Key，例如：\nsk-aaa\nsk-bbb|备注\nsk-ccc,主账号",
+        "hint": "支持换行分隔；也可用 key|备注、key\\t备注，或单行用逗号/分号分隔多个 Key。重复 Key 会自动跳过。",
+        "cancel": "取消",
+        "apply": "导入",
+        "empty": "没有可导入的 Key",
+        "noNew": "没有新增 Key（已跳过重复 {skipped} 个）",
+        "success": "已导入 {added} 个 Key，跳过重复 {skipped} 个"
+      },
       "customHeader": "自定义 Header",
       "customHeaderKey": "Header Key",
       "customHeaderValue": "Header Value",

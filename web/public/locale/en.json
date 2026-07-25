@@ -2907,6 +2907,18 @@
       "advanced": "Advanced Settings",
       "apiKeyConfig": "API Key Configuration",
       "apiKey": "API Key",
+      "bulkImport": {
+        "button": "Bulk Import",
+        "title": "Bulk Import Keys",
+        "description": "Paste multiple upstream API keys. Confirmed keys will be appended to this channel.",
+        "placeholder": "One key per line, for example:\nsk-aaa\nsk-bbb|remark\nsk-ccc,primary",
+        "hint": "Supports one key per line; key|remark, key\\tremark, or a single line of keys separated by commas/semicolons. Duplicates are skipped.",
+        "cancel": "Cancel",
+        "apply": "Import",
+        "empty": "No keys to import",
+        "noNew": "No new keys added ({skipped} duplicates skipped)",
+        "success": "Imported {added} keys, skipped {skipped} duplicates"
+      },
       "customHeader": "Custom Headers",
       "customHeaderKey": "Header Key",
       "customHeaderValue": "Header Value",
