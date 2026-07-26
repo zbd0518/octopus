@@ -37,7 +37,7 @@ func listColumns(t *testing.T, db *gorm.DB, table string) map[string]bool {
 	return set
 }
 
-// TestMigrateStatsMetricsLatencyColumnsIdempotent 验证 038 在完整 schema 上幂等，
+// TestMigrateStatsMetricsLatencyColumnsIdempotent 验证 041 在完整 schema 上幂等，
 // 且直方图列使用正确的数字下划线命名。
 func TestMigrateStatsMetricsLatencyColumnsIdempotent(t *testing.T) {
 	db := openStatsMigrateDB(t, "stats-metrics-full.db")

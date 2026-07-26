@@ -111,18 +111,34 @@ func TestQueryVolcenginePlanTokenPlan_Success(t *testing.T) {
 	}
 
 	// 月配额为主配额
+	// API 返回 Used=35210.3625（剩余），实际已用 = 100000 - 35210.3625 = 64789.6375
 	if result.QuotaTotal != 100000 {
 		t.Errorf("QuotaTotal = %v, want 100000", result.QuotaTotal)
 	}
-	if result.QuotaUsed != 35210.3625 {
-		t.Errorf("QuotaUsed = %v, want 35210.3625", result.QuotaUsed)
+	if result.QuotaUsed != 64789.6375 {
+		t.Errorf("QuotaUsed = %v, want 64789.6375", result.QuotaUsed)
 	}
 	// 周配额为次配额
+	// API 返回 Used=34.5528（剩余），实际已用 = 35000 - 34.5528 = 34965.4472
 	if result.WeeklyTotal != 35000 {
 		t.Errorf("WeeklyTotal = %v, want 35000", result.WeeklyTotal)
 	}
-	if result.WeeklyUsed != 34.5528 {
-		t.Errorf("WeeklyUsed = %v, want 34.5528", result.WeeklyUsed)
+	if result.WeeklyUsed != 34965.4472 {
+		t.Errorf("WeeklyUsed = %v, want 34965.4472", result.WeeklyUsed)
+	}
+	// 5 小时档
+	// API 返回 Used=34.5528（剩余），实际已用 = 10000 - 34.5528 = 9965.4472
+	if result.FiveHourTotal != 10000 {
+		t.Errorf("FiveHourTotal = %v, want 10000", result.FiveHourTotal)
+	}
+	if result.FiveHourUsed != 9965.4472 {
+		t.Errorf("FiveHourUsed = %v, want 9965.4472", result.FiveHourUsed)
+	}
+	if result.FiveHourResetAt == nil {
+		t.Fatal("FiveHourResetAt 不应为 nil")
+	}
+	if want := time.UnixMilli(1784966376000); !result.FiveHourResetAt.Equal(want) {
+		t.Errorf("FiveHourResetAt = %v, want %v", result.FiveHourResetAt, want)
 	}
 	// ResetTime 毫秒时间戳转换
 	if result.QuotaResetAt == nil {

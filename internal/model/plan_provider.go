@@ -213,10 +213,14 @@ type PlanProvider struct {
 	WeeklyTotal   float64    `json:"weekly_total" gorm:"default:0"`
 	WeeklyUsed    float64    `json:"weekly_used" gorm:"default:0"`
 	WeeklyResetAt *time.Time `json:"weekly_reset_at"`
-	Status        string     `json:"status" gorm:"type:varchar(32);not null;default:'active'"`
-	LastRefresh   *time.Time `json:"last_refresh"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	// FiveHour 档：仅部分厂商（如火山方舟 Agent Plan）提供 5 小时窗口配额
+	FiveHourTotal   float64    `json:"five_hour_total" gorm:"default:0"`
+	FiveHourUsed    float64    `json:"five_hour_used" gorm:"default:0"`
+	FiveHourResetAt *time.Time `json:"five_hour_reset_at"`
+	Status          string     `json:"status" gorm:"type:varchar(32);not null;default:'active'"`
+	LastRefresh     *time.Time `json:"last_refresh"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // PlanProviderListItem 列表响应

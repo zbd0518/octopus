@@ -28,6 +28,9 @@ export interface PlanProvider {
     weekly_total: number;
     weekly_used: number;
     weekly_reset_at: string | null;
+    five_hour_total: number;
+    five_hour_used: number;
+    five_hour_reset_at: string | null;
     status: string;
     last_refresh: string | null;
     channel_name: string;

@@ -70,7 +70,8 @@ func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKe
 	// 1. 查询余额 / TokenPlan
 	var balance, balanceUsed float64
 	var quotaTotal, quotaUsed, weeklyTotal, weeklyUsed float64
-	var quotaResetAt, weeklyResetAt *string
+	var fiveHourTotal, fiveHourUsed float64
+	var quotaResetAt, weeklyResetAt, fiveHourResetAt *string
 
 	if info.Type == model.PlanProviderTypeBalance {
 		result, err := QueryBalance(ctx, category, apiKey, info.BaseURL)
@@ -95,6 +96,12 @@ func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKe
 		if result.WeeklyResetAt != nil {
 			s := result.WeeklyResetAt.Format("2006-01-02 15:04:05")
 			weeklyResetAt = &s
+		}
+		fiveHourTotal = result.FiveHourTotal
+		fiveHourUsed = result.FiveHourUsed
+		if result.FiveHourResetAt != nil {
+			s := result.FiveHourResetAt.Format("2006-01-02 15:04:05")
+			fiveHourResetAt = &s
 		}
 	}
 
@@ -185,6 +192,8 @@ func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKe
 		QuotaUsed:     quotaUsed,
 		WeeklyTotal:   weeklyTotal,
 		WeeklyUsed:    weeklyUsed,
+		FiveHourTotal: fiveHourTotal,
+		FiveHourUsed:  fiveHourUsed,
 	}
 
 	if quotaResetAt != nil {
@@ -195,6 +204,11 @@ func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKe
 	if weeklyResetAt != nil {
 		if t, err := time.Parse("2006-01-02 15:04:05", *weeklyResetAt); err == nil {
 			provider.WeeklyResetAt = &t
+		}
+	}
+	if fiveHourResetAt != nil {
+		if t, err := time.Parse("2006-01-02 15:04:05", *fiveHourResetAt); err == nil {
+			provider.FiveHourResetAt = &t
 		}
 	}
 
@@ -247,6 +261,9 @@ func RefreshProvider(ctx context.Context, id int) (*model.PlanProvider, error) {
 		if result.WeeklyResetAt != nil {
 			provider.WeeklyResetAt = result.WeeklyResetAt
 		}
+		provider.FiveHourTotal = result.FiveHourTotal
+		provider.FiveHourUsed = result.FiveHourUsed
+		provider.FiveHourResetAt = result.FiveHourResetAt
 	}
 
 	now := time.Now()
