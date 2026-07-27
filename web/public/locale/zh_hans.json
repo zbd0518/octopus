@@ -2693,6 +2693,7 @@
       "failed": "失败",
       "skipped": "跳过",
       "circuitBreak": "熔断",
+      "clientClosed": "客户端断开",
       "forwardedAttempts": "{count} 次真实转发",
       "realInput": "真实输入",
       "requestType": "请求类型",

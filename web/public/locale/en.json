@@ -2737,6 +2737,7 @@
       "failed": "Failed",
       "skipped": "Skipped",
       "circuitBreak": "Circuit Break",
+      "clientClosed": "Client Closed",
       "forwardedAttempts": "{count} forwarded",
       "realInput": "Actual Input",
       "requestType": "Request Type",

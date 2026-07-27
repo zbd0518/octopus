@@ -2693,6 +2693,7 @@
       "failed": "失敗",
       "skipped": "跳過",
       "circuitBreak": "熔斷",
+      "clientClosed": "客戶端斷開",
       "forwardedAttempts": "實際轉發 {count} 次",
       "realInput": "真實輸入",
       "requestType": "請求類型",

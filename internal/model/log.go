@@ -8,6 +8,8 @@ const (
 	AttemptFailed       AttemptStatus = "failed"        // 转发失败
 	AttemptCircuitBreak AttemptStatus = "circuit_break" // 熔断跳过
 	AttemptSkipped      AttemptStatus = "skipped"       // 其他原因跳过（禁用、无Key、类型不兼容等）
+	// AttemptClientClosed 客户端主动断开（非渠道故障）；不计入 RequestFailed / 熔断。
+	AttemptClientClosed AttemptStatus = "client_closed"
 )
 
 // ChannelAttempt 记录单次渠道尝试的决策和结果

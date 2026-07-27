@@ -412,6 +412,39 @@ func (c *Channel) EnabledKeyCount() int {
 	return count
 }
 
+// DescribeNoAvailableKey 在选 key 返回空时给出可区分原因，避免笼统
+// "cooldown or disabled" 误导排障（Codex 502 / 渠道测试假绿）。
+// modelName 非空时才判定模型级冷却；空 model 与 GetChannelKey 一致不查冷却。
+func (c *Channel) DescribeNoAvailableKey(modelName string) string {
+	if c == nil || len(c.Keys) == 0 {
+		return "no available key (channel has no keys)"
+	}
+
+	modelName = strings.TrimSpace(modelName)
+	var enabledNonEmpty, cooledEnabled int
+	for _, k := range c.Keys {
+		if !k.Enabled || strings.TrimSpace(k.ChannelKey) == "" {
+			continue
+		}
+		enabledNonEmpty++
+		if modelName != "" && KeyCooldownFunc != nil && KeyCooldownFunc(c.ID, k.ID, modelName) {
+			cooledEnabled++
+		}
+	}
+
+	if enabledNonEmpty == 0 {
+		return "no available key (all keys disabled or empty)"
+	}
+	if modelName != "" && cooledEnabled >= enabledNonEmpty {
+		return fmt.Sprintf("no available key (all keys in cooldown for model %s)", modelName)
+	}
+	// 混合态或策略过滤后无候选时的兜底（仍比旧文案更明确）。
+	if modelName != "" && cooledEnabled > 0 {
+		return fmt.Sprintf("no available key (remaining keys in cooldown or filtered for model %s)", modelName)
+	}
+	return "no available key"
+}
+
 // GetChannelKeyExcluding 选择一个未被排除的可用 Key，用于后台任务（不涉及冷却）。
 func (c *Channel) GetChannelKeyExcluding(excludeKeyIDs []int) ChannelKey {
 	return c.GetChannelKeyExcludingWithCooldown(excludeKeyIDs, "", 300)

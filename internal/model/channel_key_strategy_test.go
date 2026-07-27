@@ -275,6 +275,43 @@ func TestSelectKeyByPrioritySkipsExcludedDisabledEmptyAndCooldown(t *testing.T) 
 	}
 }
 
+func TestDescribeNoAvailableKeyDistinguishesStates(t *testing.T) {
+	prev := KeyCooldownFunc
+	t.Cleanup(func() { KeyCooldownFunc = prev })
+
+	if msg := (*Channel)(nil).DescribeNoAvailableKey("m"); msg != "no available key (channel has no keys)" {
+		t.Fatalf("nil channel: got %q", msg)
+	}
+
+	emptyCh := &Channel{ID: 1}
+	if msg := emptyCh.DescribeNoAvailableKey("m"); msg != "no available key (channel has no keys)" {
+		t.Fatalf("no keys: got %q", msg)
+	}
+
+	disabled := priorityKey(1, 1, 0)
+	disabled.Enabled = false
+	emptyKey := priorityKey(2, 1, 0)
+	emptyKey.ChannelKey = ""
+	disabledOnly := makeChannelWithKeys(disabled, emptyKey)
+	if msg := disabledOnly.DescribeNoAvailableKey("m"); msg != "no available key (all keys disabled or empty)" {
+		t.Fatalf("disabled/empty: got %q", msg)
+	}
+
+	KeyCooldownFunc = func(channelID, keyID int, modelName string) bool {
+		return channelID == 1 && keyID == 9 && modelName == "deepseek-v4-flash"
+	}
+	cooled := priorityKey(9, 1, 0)
+	cooledOnly := makeChannelWithKeys(cooled)
+	msg := cooledOnly.DescribeNoAvailableKey("deepseek-v4-flash")
+	if msg != "no available key (all keys in cooldown for model deepseek-v4-flash)" {
+		t.Fatalf("all cooled: got %q", msg)
+	}
+	// 空 model 不查冷却 → 仍有 enabled key，选 key 不会空；诊断兜底 no available key
+	if msg := cooledOnly.DescribeNoAvailableKey(""); msg != "no available key" {
+		t.Fatalf("empty model diagnostic: got %q", msg)
+	}
+}
+
 func TestChannelInheritsGlobalPriorityStrategy(t *testing.T) {
 	cleanup := setupPriorityTest()
 	defer cleanup()

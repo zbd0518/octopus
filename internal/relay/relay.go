@@ -451,7 +451,7 @@ func (ra *relayAttempt) attempt() attemptResult {
 	// Client disconnected — do not record failure stats, circuit-breaker
 	// counts, or retry hints. The client chose to stop, not the channel.
 	if errors.Is(fwdErr, errClientDisconnected) {
-		span.End(dbmodel.AttemptFailed, statusCode, "client disconnected")
+		span.End(dbmodel.AttemptClientClosed, statusCode, "client disconnected")
 		return attemptResult{
 			Success:  false,
 			Written:  ra.c.Writer.Written(),
@@ -902,7 +902,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			return
 		}
 		clientDisconnectLogged = true
-		log.Warnf(clientDisconnectedLogMessage)
+		log.Debugf(clientDisconnectedLogMessage)
 	}
 
 	type sseReadResult struct {
@@ -1481,8 +1481,9 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					// relay log captures the channel info and reason. Without this,
 					// single-channel groups return 502 with empty channel name.
 					if keyRound == 1 {
-						routeIter.Skip(channel.ID, usedKey.ID, channel.Name, "no available key (all keys in cooldown or disabled)")
-						lastErr = fmt.Errorf("channel %s: no available key (all keys in cooldown or disabled)", channel.Name)
+						skipReason := channel.DescribeNoAvailableKey(resolvedModelName)
+						routeIter.Skip(channel.ID, usedKey.ID, channel.Name, skipReason)
+						lastErr = fmt.Errorf("channel %s: %s", channel.Name, skipReason)
 					}
 					break
 				}
@@ -1550,6 +1551,17 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					return newInflightRelayResult(cloneInternalResponse(req.metrics.InternalResponse), req.internalRequest.Model, currentAttempts, namespace, requestText), nil
 				}
 
+				// Client disconnected — stop before pool failure / circuit-breaker
+				// / auto-failure accounting. The client chose to stop, not the channel.
+				if errors.Is(result.Err, errClientDisconnected) {
+					if poolAccount != nil {
+						// 仅释放槽位，不上报失败（避免污染号池健康）。
+						poolscheduler.ReleaseSlot(channel.PoolID, poolAccount.ID)
+					}
+					req.metrics.Save(false, result.Err, currentAttempts)
+					return nil, result.Err
+				}
+
 				// 号池模式：上报失败 + 释放槽位 + 设置冷却。
 				if poolAccount != nil {
 					poolscheduler.ReportResult(channel.PoolID, poolAccount.ID, false, 0, 0)
@@ -1566,13 +1578,6 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				if channel.PoolID == 0 && (result.Decision.Scope == ScopeNextChannel || result.Decision.Scope == ScopeAbortAll) {
 					balancer.RecordFailure(channel.ID, usedKey.ID, resolvedModelName)
 					balancer.RecordAutoFailure(channel.ID, resolvedModelName)
-				}
-
-				// Client disconnected — stop all retries immediately without
-				// recording failure hints or attempting further channels.
-				if errors.Is(result.Err, errClientDisconnected) {
-					req.metrics.Save(false, result.Err, currentAttempts)
-					return nil, result.Err
 				}
 
 				if channel.PoolID == 0 {

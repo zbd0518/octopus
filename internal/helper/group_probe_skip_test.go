@@ -3,6 +3,7 @@ package helper
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lingyuins/octopus/internal/db"
@@ -73,8 +74,44 @@ func TestTestGroupModelItem_DoesNotSkipWhenFlagFalse(t *testing.T) {
 	if result.Message == "channel skipped model test (issue #98)" {
 		t.Fatalf("channel without SkipModelTest should not be skipped")
 	}
-	// 无 key 时应走到 "no available key" 分支，证明未被跳过逻辑提前返回。
-	if result.Message != "no available key" {
-		t.Fatalf("expected 'no available key' for keyless channel, got %q", result.Message)
+	// 无 key 时应走到诊断文案分支，证明未被跳过逻辑提前返回。
+	if result.Message != "no available key (channel has no keys)" {
+		t.Fatalf("expected no-keys diagnostic for keyless channel, got %q", result.Message)
+	}
+}
+
+// TestTestGroupModelItem_RespectsModelKeyCooldown 验证渠道测试与中继一致：
+// 对指定模型处于冷却的 key 不再假绿放行。
+func TestTestGroupModelItem_RespectsModelKeyCooldown(t *testing.T) {
+	setupHelperDB(t)
+
+	prev := appmodel.KeyCooldownFunc
+	t.Cleanup(func() { appmodel.KeyCooldownFunc = prev })
+	appmodel.KeyCooldownFunc = func(channelID, keyID int, modelName string) bool {
+		return channelID == 44 && keyID == 7 && modelName == "deepseek-v4-flash"
+	}
+
+	channels := map[int]appmodel.Channel{
+		44: {
+			ID:      44,
+			Name:    "cooled-channel",
+			Enabled: true,
+			Keys: []appmodel.ChannelKey{{
+				ID:         7,
+				ChannelID:  44,
+				Enabled:    true,
+				ChannelKey: "sk-test-key",
+			}},
+		},
+	}
+	item := appmodel.GroupItem{ID: 3, ChannelID: 44, ModelName: "deepseek-v4-flash"}
+
+	result := testGroupModelItem(context.Background(), appmodel.EndpointTypeChat, item, channels)
+
+	if result.Passed {
+		t.Fatalf("expected Passed=false when all keys cooled for model")
+	}
+	if !strings.Contains(result.Message, "cooldown") {
+		t.Fatalf("expected cooldown diagnostic, got %q", result.Message)
 	}
 }

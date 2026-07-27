@@ -2,7 +2,7 @@ package relay
 
 import (
 	"context"
-
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -96,6 +96,18 @@ func (m *RelayMetrics) Save(success bool, err error, attempts []model.ChannelAtt
 	ctx, cancel := newRelayPersistenceContext()
 	defer cancel()
 
+	// 客户端主动断开不是渠道故障：不记 RequestFailed，不写 RelayLog.Error。
+	// 已有可见输出/首 token/usage 时记 RequestSuccess；过早 abort 中性落库（两边都不加）。
+	clientClosed := errors.Is(err, errClientDisconnected)
+	if clientClosed {
+		err = nil
+		if clientDisconnectHadProgress(m, attempts) {
+			success = true
+		} else {
+			success = false // 仅用于下面分支跳过 success/failed 计数
+		}
+	}
+
 	duration := time.Since(m.StartTime)
 	totalAttempts := len(attempts)
 	forwardedAttempts := countForwardedAttempts(attempts)
@@ -109,7 +121,9 @@ func (m *RelayMetrics) Save(success bool, err error, attempts []model.ChannelAtt
 		InputCost:   m.Stats.InputCost,
 		OutputCost:  m.Stats.OutputCost,
 	}
-	if success {
+	if clientClosed && !success {
+		// early client abort: neutral — neither success nor failed
+	} else if success {
 		globalStats.RequestSuccess = 1
 	} else {
 		globalStats.RequestFailed = 1
@@ -158,15 +172,18 @@ func (m *RelayMetrics) Save(success bool, err error, attempts []model.ChannelAtt
 	}
 	m.recordDailyDimensions(ctx, globalStats, attempts, channelID, channelName, actualModel)
 
-	log.Infof("relay complete: model=%s, channel=%d(%s), success=%t, duration=%dms, input_token=%d, output_token=%d, input_cost=%f, output_cost=%f, total_cost=%f, attempts=%d, forwarded_attempts=%d",
-		m.RequestModel, channelID, channelName, success, duration.Milliseconds(),
+	logSuccess := success || clientClosed // early abort still logs as non-error complete
+	log.Infof("relay complete: model=%s, channel=%d(%s), success=%t, client_closed=%t, duration=%dms, input_token=%d, output_token=%d, input_cost=%f, output_cost=%f, total_cost=%f, attempts=%d, forwarded_attempts=%d",
+		m.RequestModel, channelID, channelName, success, clientClosed, duration.Milliseconds(),
 		m.Stats.InputToken, m.Stats.OutputToken,
 		m.Stats.InputCost, m.Stats.OutputCost, m.Stats.InputCost+m.Stats.OutputCost,
 		totalAttempts, forwardedAttempts)
 
 	m.saveLog(ctx, err, duration, attempts, channelID, channelName)
 	op.StatsSiteModelHourlyRecordAttempts(attempts, actualModel)
-	telemetry.Global().RecordRequest(duration.Milliseconds(), success)
+	// telemetry: treat progressed client-close as success; early abort as non-error (true)
+	// to avoid inflating error rate for expected client cancels.
+	telemetry.Global().RecordRequest(duration.Milliseconds(), logSuccess)
 }
 
 func finalChannel(attempts []model.ChannelAttempt) (int, string) {
@@ -203,6 +220,35 @@ func countForwardedAttempts(attempts []model.ChannelAttempt) int {
 		count++
 	}
 	return count
+}
+
+// clientDisconnectHadProgress reports whether the request made meaningful progress
+// before the client closed (first token, usage, or a non-skipped attempt with duration).
+func clientDisconnectHadProgress(m *RelayMetrics, attempts []model.ChannelAttempt) bool {
+	if m == nil {
+		return false
+	}
+	if !m.FirstTokenTime.IsZero() {
+		return true
+	}
+	if m.Stats.InputToken > 0 || m.Stats.OutputToken > 0 {
+		return true
+	}
+	if m.InternalResponse != nil && m.InternalResponse.Usage != nil {
+		u := m.InternalResponse.Usage
+		if u.PromptTokens > 0 || u.CompletionTokens > 0 {
+			return true
+		}
+	}
+	for _, a := range attempts {
+		if a.Status == model.AttemptClientClosed && a.Duration > 0 {
+			return true
+		}
+		if a.Status == model.AttemptSuccess {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *RelayMetrics) recordDailyDimensions(ctx context.Context, requestStats model.StatsMetrics, attempts []model.ChannelAttempt, channelID int, channelName, actualModel string) {

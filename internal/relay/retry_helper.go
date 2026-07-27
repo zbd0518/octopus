@@ -46,7 +46,7 @@ func PrepareCandidate(
 
 	usedKey := channel.GetChannelKeyWithCooldown(requestModel, ratelimitCooldown)
 	if usedKey.ChannelKey == "" {
-		result.SkipReason = "no available key"
+		result.SkipReason = channel.DescribeNoAvailableKey(requestModel)
 		result.SkipStatus = dbmodel.AttemptSkipped
 		return result
 	}

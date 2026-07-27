@@ -403,9 +403,10 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 		return result
 	}
 
-	usedKey := channel.GetChannelKey()
+	// 与中继一致：按待测模型尊重 key 冷却，避免 UI 测试 200 / 实际请求 502 认知差。
+	usedKey := channel.GetChannelKeyWithCooldown(item.ModelName, 300)
 	if strings.TrimSpace(usedKey.ChannelKey) == "" {
-		result.Message = "no available key"
+		result.Message = channel.DescribeNoAvailableKey(item.ModelName)
 		recordTestLog(ctx, endpointType, item, result, channel, nil, 0, nil, nil)
 		return result
 	}

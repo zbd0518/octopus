@@ -93,7 +93,7 @@ function formatCacheHitRate(cacheRead: number, total: number): string {
  */
 function attemptStatusBadge(status: ChannelAttempt['status']): {
     className: string;
-    labelKey: 'success' | 'failed' | 'skipped' | 'circuitBreak';
+    labelKey: 'success' | 'failed' | 'skipped' | 'circuitBreak' | 'clientClosed';
 } {
     switch (status) {
         case 'success':
@@ -101,7 +101,9 @@ function attemptStatusBadge(status: ChannelAttempt['status']): {
         case 'circuit_break':
             return { className: 'bg-amber-500/15 text-amber-600 dark:text-amber-400', labelKey: 'circuitBreak' };
         case 'skipped':
-            return { className: 'bg-muted text-muted-foreground', labelKey: 'skipped' };
+        case 'client_closed':
+            // 客户端断开不是渠道故障，与 skipped 同级 muted，避免红墙误导。
+            return { className: 'bg-muted text-muted-foreground', labelKey: status === 'client_closed' ? 'clientClosed' : 'skipped' };
         case 'failed':
         default:
             return { className: 'bg-destructive/15 text-destructive', labelKey: 'failed' };
@@ -124,6 +126,7 @@ function attemptStatusCard(status: ChannelAttempt['status']): {
         case 'circuit_break':
             return { card: 'bg-amber-500/5 border-amber-500/20 hover:bg-amber-500/10', msg: 'text-amber-700 dark:text-amber-300 border-amber-500/30' };
         case 'skipped':
+        case 'client_closed':
             return { card: 'bg-muted/40 border-border/50 hover:bg-muted/60', msg: 'text-muted-foreground border-border/40' };
         case 'failed':
         default:
@@ -295,7 +298,8 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
     // 当它小于总尝试次数时，单独展示以便区分「实际请求报错」与「冷却中未请求」
     // （issue #95 改动6）。
     const forwardedCount = useMemo(
-        () => (log.attempts ?? []).filter((a) => a.status === 'success' || a.status === 'failed').length,
+        // 与后端 countForwardedAttempts 一致：排除 skipped / circuit_break，计入 client_closed。
+        () => (log.attempts ?? []).filter((a) => a.status !== 'skipped' && a.status !== 'circuit_break').length,
         [log.attempts],
     );
     const [isDiagnosticExpanded, setIsDiagnosticExpanded] = useState(false);

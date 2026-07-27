@@ -10,6 +10,29 @@ import (
 	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 )
 
+func TestClientDisconnectHadProgress(t *testing.T) {
+	if model.AttemptClientClosed != "client_closed" {
+		t.Fatalf("AttemptClientClosed = %q", model.AttemptClientClosed)
+	}
+	m := &RelayMetrics{}
+	if clientDisconnectHadProgress(m, nil) {
+		t.Fatal("empty metrics should be early abort")
+	}
+	m.Stats.OutputToken = 10
+	if !clientDisconnectHadProgress(m, nil) {
+		t.Fatal("output tokens should count as progress")
+	}
+	m2 := &RelayMetrics{}
+	attempts := []model.ChannelAttempt{{Status: model.AttemptClientClosed, Duration: 1200}}
+	if !clientDisconnectHadProgress(m2, attempts) {
+		t.Fatal("client_closed with duration should count as progress")
+	}
+	m3 := &RelayMetrics{}
+	if clientDisconnectHadProgress(m3, []model.ChannelAttempt{{Status: model.AttemptClientClosed, Duration: 0}}) {
+		t.Fatal("zero-duration client_closed alone should be early abort")
+	}
+}
+
 func TestFinalChannelFallsBackToSkippedAttempt(t *testing.T) {
 	attempts := []model.ChannelAttempt{
 		{

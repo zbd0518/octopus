@@ -234,8 +234,9 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					// (e.g. all keys in rate-limit cooldown), record a skip so the
 					// relay log captures the channel info and reason.
 					if keyRound == 1 {
-						routeIter.Skip(channel.ID, usedKey.ID, channel.Name, "no available key (all keys in cooldown or disabled)")
-						lastErr = fmt.Errorf("channel %s: no available key (all keys in cooldown or disabled)", channel.Name)
+						skipReason := channel.DescribeNoAvailableKey(resolvedModel)
+						routeIter.Skip(channel.ID, usedKey.ID, channel.Name, skipReason)
+						lastErr = fmt.Errorf("channel %s: %s", channel.Name, skipReason)
 					}
 					break
 				}
