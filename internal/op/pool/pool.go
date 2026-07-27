@@ -155,3 +155,36 @@ func ListSchedulableAccounts(poolID int) ([]model.PoolAccount, error) {
 	}
 	return result, nil
 }
+
+// --- Account Test / Import ---
+
+// AccountTestResult 账号连通性测试结果。
+type AccountTestResult struct {
+	Success bool   `json:"success"`
+	Status  int    `json:"status"`
+	Latency int64  `json:"latency_ms"`
+	Error   string `json:"error,omitempty"`
+}
+
+// ImportAccounts 批量导入账号。已在调用方完成解析与凭据加密。
+func ImportAccounts(accounts []model.PoolAccount) error {
+	if len(accounts) == 0 {
+		return nil
+	}
+	for i := range accounts {
+		if accounts[i].PoolID <= 0 {
+			return errors.New("pool_id is required")
+		}
+		if accounts[i].Status == "" {
+			accounts[i].Status = "active"
+		}
+	}
+	return db.GetDB().Create(&accounts).Error
+}
+
+// ListAllAccounts 返回所有池的所有账号（供后台刷新/额度同步任务遍历）。
+func ListAllAccounts() ([]model.PoolAccount, error) {
+	var accounts []model.PoolAccount
+	err := db.GetDB().Order("id").Find(&accounts).Error
+	return accounts, err
+}

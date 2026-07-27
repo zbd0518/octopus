@@ -28,7 +28,13 @@ type circuitEntry struct {
 	ConsecutiveFailures int64
 	LastFailureTime     time.Time
 	TripCount           int // 累计熔断触发次数（用于指数退避）
-	mu                  sync.Mutex
+	// HalfOpenSince 记录进入 HalfOpen 状态的时刻，用于探测超时判定。
+	// 半开态本应允许单个试探请求并在其完成后转 Closed/Open，但若试探请求被
+	// 中途放弃（客户端断连、响应关键词拦截等 attempt 未记录结果），状态会
+	// 卡死在 HalfOpen，IsTripped 永远返回 true → 渠道被永久跳过（issue #162）。
+	// 通过 HalfOpenSince + 探测超时，让丢失的试探可在超时后被新的试探接管。
+	HalfOpenSince time.Time
+	mu            sync.Mutex
 }
 
 // 全局熔断器存储
@@ -96,6 +102,24 @@ func GetCooldown(tripCount int) time.Duration {
 	return time.Duration(cooldown) * time.Second
 }
 
+// getHalfOpenProbeTimeout 返回 HalfOpen 探测超时（秒）。
+// 半开态只允许单个试探请求；若试探被中途放弃（客户端断连、响应关键词拦截等
+// 未记录结果的路径），状态会卡死在 HalfOpen 永远跳过该渠道（issue #162）。
+// 超过此超时后，下一次 IsTripped 会视为"试探已丢失"并允许发起一次新的试探，
+// 同时刷新 HalfOpenSince 重置超时窗口。0 表示禁用超时（保持旧行为，不推荐）。
+//
+// 通过 halfOpenProbeTimeoutFunc 函数变量间接调用，便于测试注入短超时，
+// 不必依赖 setting 缓存。
+var halfOpenProbeTimeoutFunc = getHalfOpenProbeTimeoutConfig
+
+func getHalfOpenProbeTimeoutConfig() time.Duration {
+	v, err := setting.GetInt(model.SettingKeyCircuitBreakerHalfOpenProbeTimeout)
+	if err != nil || v < 0 {
+		return 60 * time.Second
+	}
+	return time.Duration(v) * time.Second
+}
+
 // IsTripped 检查通道是否处于熔断状态
 // 返回 tripped=true 表示该通道应被跳过，remaining 为剩余冷却时间
 func IsTripped(channelID, keyID int, modelName string) (tripped bool, remaining time.Duration) {
@@ -121,6 +145,7 @@ func IsTripped(channelID, keyID int, modelName string) (tripped bool, remaining 
 		elapsed := time.Since(entry.LastFailureTime)
 		if elapsed >= cooldown {
 			entry.State = StateHalfOpen
+			entry.HalfOpenSince = time.Now()
 			log.Infof("circuit breaker [%s] Open -> HalfOpen (cooldown %v elapsed)", key, cooldown)
 			return false, 0
 		}
@@ -128,7 +153,16 @@ func IsTripped(channelID, keyID int, modelName string) (tripped bool, remaining 
 		return true, cooldown - elapsed
 
 	case StateHalfOpen:
-		// 已有试探请求在进行中，拒绝其他请求
+		// 已有试探请求在进行中，拒绝其他请求。
+		// 但若试探请求被中途放弃（客户端断连、响应关键词拦截等未记录结果路径），
+		// 状态会卡死在 HalfOpen 永远跳过该渠道（issue #162）。超过探测超时后，
+		// 视为"试探已丢失"，允许一次新的试探并刷新超时窗口，避免永久跳过。
+		probeTimeout := halfOpenProbeTimeoutFunc()
+		if probeTimeout > 0 && time.Since(entry.HalfOpenSince) >= probeTimeout {
+			entry.HalfOpenSince = time.Now()
+			log.Infof("circuit breaker [%s] HalfOpen probe timed out, allowing a new probe", key)
+			return false, 0
+		}
 		return true, 0
 
 	default:
@@ -157,6 +191,13 @@ func isKeyTrippedReadOnly(channelID, keyID int, modelName string) bool {
 		cooldown := GetCooldown(entry.TripCount)
 		return time.Since(entry.LastFailureTime) < cooldown
 	case StateHalfOpen:
+		// 与 IsTripped 的探测超时语义一致：超过探测超时的 HalfOpen 视为"试探已丢失"，
+		// 不计为 tripped，避免 Auto 策略把卡死的 HalfOpen 渠道误判为全熔断并永久降权，
+		// 进而因被降权跳过而无法发起新的试探（issue #162）。
+		probeTimeout := halfOpenProbeTimeoutFunc()
+		if probeTimeout > 0 && time.Since(entry.HalfOpenSince) >= probeTimeout {
+			return false
+		}
 		return true
 	default:
 		return false
@@ -207,6 +248,7 @@ func RecordSuccess(channelID, keyID int, modelName string) {
 	entry.State = StateClosed
 	entry.ConsecutiveFailures = 0
 	entry.TripCount = 0
+	entry.HalfOpenSince = time.Time{}
 }
 
 // RecordFailure 记录失败，可能触发熔断
@@ -228,13 +270,13 @@ func RecordFailure(channelID, keyID int, modelName string) {
 			log.Warnf("circuit breaker [%s] Closed -> Open (failures=%d >= threshold=%d, tripCount=%d, cooldown=%v)",
 				key, entry.ConsecutiveFailures, threshold, entry.TripCount, GetCooldown(entry.TripCount))
 		}
-
 	case StateHalfOpen:
 		// 试探失败，重新进入 Open 状态，TripCount 递增（冷却时间翻倍）
 		entry.LastFailureTime = time.Now()
 		entry.State = StateOpen
 		entry.TripCount++
 		entry.ConsecutiveFailures = 0 // 重新开始计数
+		entry.HalfOpenSince = time.Time{}
 		log.Warnf("circuit breaker [%s] HalfOpen -> Open (probe failed, tripCount=%d, cooldown=%v)",
 			key, entry.TripCount, GetCooldown(entry.TripCount))
 

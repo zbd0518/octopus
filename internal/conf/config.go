@@ -22,6 +22,9 @@ type Server struct {
 	// 反代/Docker 部署应配置实际代理网段，例如 "172.17.0.0/16"。
 	// "*" 表示信任所有来源（等价于 Gin 旧行为，仅开发用，有安全风险）。
 	TrustedProxies string `mapstructure:"trusted_proxies"`
+	// ExternalURL 是本服务对外的可访问基础 URL（含 scheme://host[:port]），
+	// 用于 OAuth 回调地址拼接。为空时回退到 http://host:port。重启生效（engine 级配置）。
+	ExternalURL string `mapstructure:"external_url"`
 }
 
 type Log struct {
@@ -223,6 +226,7 @@ func SaveCacheConfig(cacheType string, redis RedisConfig) error {
 func setDefaults() {
 	viper.SetDefault("server.host", "0.0.0.0")
 	viper.SetDefault("server.port", 8080)
+	viper.SetDefault("server.external_url", "")
 	viper.SetDefault("database.type", "sqlite")
 	viper.SetDefault("database.path", defaultDatabasePath())
 	// 日志库默认留空：留空表示与主库共用连接（向后兼容）。

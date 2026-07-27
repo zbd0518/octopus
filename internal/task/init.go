@@ -7,11 +7,13 @@ import (
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/backup"
+	porop "github.com/lingyuins/octopus/internal/op/pool"
 	"github.com/lingyuins/octopus/internal/op/ratelimitstore"
 	"github.com/lingyuins/octopus/internal/op/relaylog"
 	"github.com/lingyuins/octopus/internal/op/remotesite"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/op/stats"
+	"github.com/lingyuins/octopus/internal/pooltokenrefresh"
 	"github.com/lingyuins/octopus/internal/price"
 	"github.com/lingyuins/octopus/internal/relay"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
@@ -211,4 +213,20 @@ func Init() {
 		keyHealthIntervalMin = 30
 	}
 	Register(TaskKeyHealthCheck, time.Duration(keyHealthIntervalMin)*time.Minute, false, CheckKeyHealth)
+
+	// 号池 OAuth token 刷新：按设置间隔扫描即将过期的 oauth 账号并刷新。
+	poolTokenRefreshMin, err := setting.GetInt(model.SettingKeyPoolTokenRefreshInterval)
+	if err != nil || poolTokenRefreshMin < 1 {
+		poolTokenRefreshMin = 10
+	}
+	Register(string(model.SettingKeyPoolTokenRefreshInterval), time.Duration(poolTokenRefreshMin)*time.Minute, true, pooltokenrefresh.RefreshLoop)
+
+	// 号池额度同步：按设置间隔查询支持额度的账号并写回 quota 快照。
+	poolQuotaSyncMin, err := setting.GetInt(model.SettingKeyPoolQuotaSyncInterval)
+	if err != nil || poolQuotaSyncMin < 1 {
+		poolQuotaSyncMin = 360
+	}
+	Register(string(model.SettingKeyPoolQuotaSyncInterval), time.Duration(poolQuotaSyncMin)*time.Minute, true, func() {
+		porop.SyncAllQuotas(context.Background())
+	})
 }

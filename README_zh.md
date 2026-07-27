@@ -1102,3 +1102,4 @@ Octopus 涉及时区的三层独立概念：
 - 📊 [sst/models.dev](https://github.com/sst/models.dev) - AI 模型数据库，提供模型价格数据
 - 💡 [qixing-jk/all-api-hub](https://github.com/qixing-jk/all-api-hub) - Hub 概念和功能设计灵感来源
 - 🛠️ [Hureru/octopus](https://github.com/Hureru/octopus) - Hub 的原始实现
+- 🏊 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api) - 号池账号管理的 OAuth 流程（Anthropic / OpenAI / Gemini CLI / xAI）与账号管理交互设计移植自该项目

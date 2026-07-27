@@ -1129,4 +1129,5 @@ The three layers are independent: the container timezone affects the server runt
 - 📊 [sst/models.dev](https://github.com/sst/models.dev) - AI model database providing model pricing data
 - 💡 [qixing-jk/all-api-hub](https://github.com/qixing-jk/all-api-hub) - The Hub concept and feature design inspiration
 - 🛠️ [Hureru/octopus](https://github.com/Hureru/octopus) - The original Hub implementation
+- 🏊 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api) - The account-pool OAuth flows (Anthropic / OpenAI / Gemini CLI / xAI) and account-management UX are ported from this project
 

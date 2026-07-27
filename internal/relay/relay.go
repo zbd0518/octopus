@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -641,10 +642,14 @@ func (ra *relayAttempt) forward() (int, error) {
 	}
 
 	// 构建出站请求
+	baseURL := ra.channel.GetNormalizedBaseUrl()
+	if ra.poolBaseURL != "" {
+		baseURL = ra.poolBaseURL
+	}
 	outboundRequest, err := ra.outAdapter.TransformRequest(
 		ctx,
 		requestForOutbound,
-		ra.channel.GetNormalizedBaseUrl(),
+		baseURL,
 		ra.usedKey.ChannelKey,
 	)
 	if err != nil {
@@ -652,11 +657,8 @@ func (ra *relayAttempt) forward() (int, error) {
 		return 0, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// 号池 cookie 凭据：将 Authorization 替换为 Cookie header。
-	if ra.poolCredType == "cookie" {
-		outboundRequest.Header.Del("Authorization")
-		outboundRequest.Header.Set("Cookie", ra.usedKey.ChannelKey)
-	}
+	// 号池凭据按 platform/type 路由出站鉴权头。
+	ra.applyPoolCredentialHeaders(outboundRequest)
 
 	// 复制请求头
 	ra.copyHeaders(outboundRequest, effectiveRewrite)
@@ -685,6 +687,40 @@ func (ra *relayAttempt) forward() (int, error) {
 		return response.StatusCode, err
 	}
 	return response.StatusCode, nil
+}
+
+// applyPoolCredentialHeaders 按号池账号 platform/type 调整出站鉴权头。
+//
+// 出站适配器已按 ChannelKey 设置默认 Authorization（Bearer 或 X-API-Key）。
+// 这里仅处理需要覆盖的情况：
+//   - cookie 类型：删除 Authorization，改为 Cookie header（ChannelKey 即 cookie 值）。
+//   - openai-oauth 且非 codex 适配器：ChannelKey 是 OAuth JSON，适配器无法解析，
+//     手动设置 Authorization: Bearer {access_token} + chatgpt-account-id: {account_id}。
+//     codex 适配器自身解析 OAuth JSON，无需覆盖。
+//   - 其他 oauth/apikey/upstream：适配器默认 Bearer 行为正确，无需覆盖。
+func (ra *relayAttempt) applyPoolCredentialHeaders(req *http.Request) {
+	if ra.poolType == "" {
+		return
+	}
+	switch ra.poolType {
+	case dbmodel.PoolTypeCookie:
+		req.Header.Del("Authorization")
+		req.Header.Set("Cookie", ra.usedKey.ChannelKey)
+	case dbmodel.PoolTypeOAuth:
+		if ra.poolPlatform == dbmodel.PoolPlatformOpenAI && ra.adapterType != outbound.OutboundTypeCodex {
+			// ChannelKey 对 openai-oauth 是 OAuth JSON（由 EffectiveKey 构造）。
+			var oauth struct {
+				AccessToken string `json:"access_token"`
+				AccountID   string `json:"account_id"`
+			}
+			if json.Unmarshal([]byte(ra.usedKey.ChannelKey), &oauth) == nil && oauth.AccessToken != "" {
+				req.Header.Set("Authorization", "Bearer "+oauth.AccessToken)
+				if oauth.AccountID != "" {
+					req.Header.Set("chatgpt-account-id", oauth.AccountID)
+				}
+			}
+		}
+	}
 }
 
 func (ra *relayAttempt) handleForwardResponse(response *http.Response) (int, error) {
@@ -1444,6 +1480,8 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				var poolAccount *dbmodel.PoolAccount
 				var poolCredType string
 				var poolProxyConfigID *int
+				var poolBaseURL, poolPlatform, poolType string
+				var poolAccountID int
 				if channel.PoolID > 0 {
 					// 号池模式：从池调度器选账号。
 					sessionHash := strconv.Itoa(req.apiKeyID) + ":" + requestModel
@@ -1451,7 +1489,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					for _, kid := range failedKeyIDs {
 						excludeAccountIDs = append(excludeAccountIDs, kid)
 					}
-					acct, selErr := poolscheduler.SelectAccount(channel.PoolID, sessionHash, excludeAccountIDs, 1)
+					acct, selErr := poolscheduler.SelectAccount(channel.PoolID, sessionHash, excludeAccountIDs, 1, resolvedModelName)
 					if selErr != nil || acct == nil {
 						routeIter.Skip(channel.ID, 0, channel.Name, "no available pool account")
 						lastErr = fmt.Errorf("channel %s: no available pool account", channel.Name)
@@ -1461,11 +1499,15 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					cred := dbmodel.ParsePoolCredential(acct.Credentials)
 					poolCredType = cred.Type
 					poolProxyConfigID = acct.ProxyConfigID
+					poolBaseURL = acct.BaseURL
+					poolPlatform = acct.Platform
+					poolType = cred.Type
+					poolAccountID = acct.ID
 					usedKey = dbmodel.ChannelKey{
 						ID:         acct.ID,
 						ChannelID:  channel.ID,
 						Enabled:    true,
-						ChannelKey: cred.Token,
+						ChannelKey: cred.EffectiveKey(acct.Platform),
 						Priority:   acct.Priority,
 					}
 				} else {
@@ -1524,6 +1566,10 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 						tryTotal:             maxKeyRetriesPerRoute,
 						poolCredType:         poolCredType,
 						poolProxyConfigID:    poolProxyConfigID,
+						poolBaseURL:          poolBaseURL,
+						poolPlatform:         poolPlatform,
+						poolType:             poolType,
+						poolAccountID:        poolAccountID,
 					}
 
 					result = ra.attempt()

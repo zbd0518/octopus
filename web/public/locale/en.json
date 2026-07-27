@@ -1390,7 +1390,11 @@
         "label": "Max Cooldown (seconds)",
         "placeholder": "Enter max cooldown in seconds"
       },
-      "hint": "When a channel fails consecutively up to the threshold, circuit breaker trips. Cooldown grows exponentially up to the max cooldown"
+      "probeTimeout": {
+        "label": "Half-Open Probe Timeout (seconds)",
+        "placeholder": "Enter probe timeout in seconds"
+      },
+      "hint": "When a channel fails consecutively up to the threshold, circuit breaker trips. Cooldown grows exponentially up to the max cooldown. Half-open probe timeout allows a lost probe (client disconnect, etc.) to retry after timeout, preventing channels from being permanently skipped"
     },
     "responseFilter": {
       "title": "Response Keyword Filter",
@@ -3448,19 +3452,67 @@
     "description": "Description",
     "addAccount": "Add Account",
     "accountCreated": "Account added",
+    "accountUpdated": "Account updated",
     "accountDeleted": "Account deleted",
     "accountName": "Account",
     "status": "Status",
+    "active": "Active",
     "requests": "Requests",
     "errors": "Errors",
     "cooldownStatus": "Cooldown",
     "cooling": "Cooling",
+    "tokenExpired": "Token expired",
     "noAccounts": "No accounts in this pool",
     "credentials": "Credentials (JSON)",
+    "credentialsHint": "Or paste JSON directly:",
     "baseUrl": "Base URL",
     "priority": "Priority",
     "inheritPool": "inherit pool",
-    "proxyConfig": "Proxy Config ID",
-    "proxyConfigPlaceholder": "Optional: proxy pool config ID"
+    "proxyConfig": "Proxy",
+    "proxyConfigPlaceholder": "Optional: proxy pool config ID",
+    "platform": "Platform",
+    "type": "Credential Type",
+    "typeLabels": {
+      "oauth": "OAuth",
+      "apikey": "API Key",
+      "cookie": "Cookie",
+      "upstream": "Upstream Relay",
+      "setup-token": "Setup Token"
+    },
+    "platformLabels": {
+      "anthropic": "Anthropic",
+      "openai": "OpenAI",
+      "gemini": "Gemini",
+      "grok": "Grok",
+      "volcengine": "Volcengine",
+      "custom": "Custom"
+    },
+    "models": "Models",
+    "modelsPlaceholder": "Comma-separated, empty = all",
+    "allModels": "All",
+    "notes": "Notes",
+    "apiKey": "API Key",
+    "cookie": "Cookie",
+    "quota": "Quota",
+    "quotaRefreshed": "Quota refreshed",
+    "refreshQuota": "Refresh Quota",
+    "refreshToken": "Refresh Token",
+    "tokenRefreshed": "Token refreshed",
+    "testAccount": "Test Account",
+    "testSuccess": "Test success ({{latency}}ms)",
+    "testFailed": "Test failed: {{error}}",
+    "editAccount": "Edit Account",
+    "save": "Save",
+    "cancel": "Cancel",
+    "actions": "Actions",
+    "oauthLogin": "OAuth Login",
+    "oauthLoginBtn": "Authorize",
+    "oauthLoginHint": "Click to go to the platform authorization page. An account is created automatically after authorization. You can also paste OAuth JSON manually.",
+    "oauthManualPaste": "Paste OAuth JSON manually (optional)",
+    "importAccounts": "Import",
+    "import": "Import",
+    "importHint": "Paste an array of account JSON objects, each with platform/type/credentials fields.",
+    "importPlaceholder": "[{\"name\":\"acct1\",\"platform\":\"anthropic\",\"type\":\"apikey\",\"credentials\":{\"api_key\":\"sk-...\"}}]",
+    "importSuccess": "Imported {{count}} accounts"
   }
 }

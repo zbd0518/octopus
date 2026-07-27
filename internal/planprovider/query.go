@@ -1279,15 +1279,19 @@ func queryBailianPlanTokenPlan(ctx context.Context, cookie string) (*TokenPlanRe
 	usage := usageResp.Data.DataV2.Data.Data
 
 	// 3. 映射到 TokenPlanResult
-	// 百炼用量百分比（0-1）表示"剩余"而非"已使用"，需用 1 减去。
+	// 百炼用量百分比（0-1）表示"已使用率"，直接乘 100 即已用量。
+	// 据 2026-07-27 控制台抓包对照：控制台「用量消耗」区显示 5小时用量 81.07%、
+	// 7天用量 28.97%，与 API per5HourPercentage=0.8107266 / per1WeekPercentage=0.2897
+	// 完全一致，证明字段即"已使用率"而非"剩余率"。
+	// （此前 commit 0f3e21e00 误判为剩余率做了 1-x 取反，导致显示与控制台颠倒。）
 	// 百炼仅提供 5 小时与 1 周两档，无月配额：
 	//   Per5HourPercentage -> FiveHour 槽（近5小时用量）
 	//   Per1WeekPercentage -> Weekly 槽（近一周用量）
 	result := &TokenPlanResult{
 		FiveHourTotal: 100,
-		FiveHourUsed:  (1 - usage.Per5HourPercentage) * 100,
+		FiveHourUsed:  usage.Per5HourPercentage * 100,
 		WeeklyTotal:   100,
-		WeeklyUsed:    (1 - usage.Per1WeekPercentage) * 100,
+		WeeklyUsed:    usage.Per1WeekPercentage * 100,
 	}
 	if usage.Per5HourResetTime > 0 {
 		t := time.UnixMilli(usage.Per5HourResetTime)

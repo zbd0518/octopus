@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useTranslations } from 'next-intl';
-import { Zap, Hash, Timer, TimerOff, HelpCircle } from 'lucide-react';
+import { Zap, Hash, Timer, TimerOff, TimerReset, HelpCircle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { useSettingList, useSetSetting, SettingKey } from '@/api/endpoints/setting';
 import { toast } from '@/components/common/Toast';
@@ -16,16 +16,19 @@ export function SettingCircuitBreaker() {
     const [threshold, setThreshold] = useState('');
     const [cooldown, setCooldown] = useState('');
     const [maxCooldown, setMaxCooldown] = useState('');
+    const [probeTimeout, setProbeTimeout] = useState('');
 
     const initialThreshold = useRef('');
     const initialCooldown = useRef('');
     const initialMaxCooldown = useRef('');
+    const initialProbeTimeout = useRef('');
 
     useEffect(() => {
         if (settings) {
             const th = settings.find(s => s.key === SettingKey.CircuitBreakerThreshold);
             const cd = settings.find(s => s.key === SettingKey.CircuitBreakerCooldown);
             const mcd = settings.find(s => s.key === SettingKey.CircuitBreakerMaxCooldown);
+            const pt = settings.find(s => s.key === SettingKey.CircuitBreakerHalfOpenProbeTimeout);
             if (th) {
                 queueMicrotask(() => setThreshold(th.value));
                 initialThreshold.current = th.value;
@@ -37,6 +40,10 @@ export function SettingCircuitBreaker() {
             if (mcd) {
                 queueMicrotask(() => setMaxCooldown(mcd.value));
                 initialMaxCooldown.current = mcd.value;
+            }
+            if (pt) {
+                queueMicrotask(() => setProbeTimeout(pt.value));
+                initialProbeTimeout.current = pt.value;
             }
         }
     }, [settings]);
@@ -53,6 +60,8 @@ export function SettingCircuitBreaker() {
                     initialCooldown.current = value;
                 } else if (key === SettingKey.CircuitBreakerMaxCooldown) {
                     initialMaxCooldown.current = value;
+                } else if (key === SettingKey.CircuitBreakerHalfOpenProbeTimeout) {
+                    initialProbeTimeout.current = value;
                 }
             }
         });
@@ -119,6 +128,22 @@ export function SettingCircuitBreaker() {
                     onChange={(e) => setMaxCooldown(e.target.value)}
                     onBlur={() => handleSave(SettingKey.CircuitBreakerMaxCooldown, maxCooldown, initialMaxCooldown.current)}
                     placeholder={t('circuitBreaker.maxCooldown.placeholder')}
+                    className="w-48 rounded-xl"
+                />
+            </div>
+
+            {/* HalfOpen 探测超时 */}
+            <div className="flex flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
+                <div className="flex items-center gap-3">
+                    <TimerReset className="h-5 w-5 text-muted-foreground" />
+                    <span className="text-sm font-medium">{t('circuitBreaker.probeTimeout.label')}</span>
+                </div>
+                <Input
+                    type="number"
+                    value={probeTimeout}
+                    onChange={(e) => setProbeTimeout(e.target.value)}
+                    onBlur={() => handleSave(SettingKey.CircuitBreakerHalfOpenProbeTimeout, probeTimeout, initialProbeTimeout.current)}
+                    placeholder={t('circuitBreaker.probeTimeout.placeholder')}
                     className="w-48 rounded-xl"
                 />
             </div>

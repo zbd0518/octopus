@@ -1346,7 +1346,11 @@
         "label": "最大冷却时间（秒）",
         "placeholder": "请输入最大冷却时间"
       },
-      "hint": "当渠道连续失败达到阈值后触发熔断，冷却时间按指数退避增长，上限为最大冷却时间"
+      "probeTimeout": {
+        "label": "半开探测超时（秒）",
+        "placeholder": "请输入探测超时"
+      },
+      "hint": "当渠道连续失败达到阈值后触发熔断，冷却时间按指数退避增长，上限为最大冷却时间。半开探测超时可在试探请求丢失（如客户端断连）后重新发起试探，避免渠道被永久跳过"
     },
     "responseFilter": {
       "title": "输出关键词拦截",
@@ -3448,19 +3452,67 @@
     "description": "描述",
     "addAccount": "添加账号",
     "accountCreated": "账号已添加",
+    "accountUpdated": "账号已更新",
     "accountDeleted": "账号已删除",
     "accountName": "账号",
     "status": "状态",
+    "active": "活跃",
     "requests": "请求数",
     "errors": "错误数",
     "cooldownStatus": "冷却",
     "cooling": "冷却中",
+    "tokenExpired": "Token 过期",
     "noAccounts": "此号池暂无账号",
     "credentials": "凭据 (JSON)",
+    "credentialsHint": "或直接填 JSON：",
     "baseUrl": "上游地址",
     "priority": "优先级",
     "inheritPool": "继承池默认",
-    "proxyConfig": "代理配置 ID",
-    "proxyConfigPlaceholder": "可选：代理池配置 ID"
+    "proxyConfig": "代理配置",
+    "proxyConfigPlaceholder": "可选：代理池配置 ID",
+    "platform": "平台",
+    "type": "凭据类型",
+    "typeLabels": {
+      "oauth": "OAuth",
+      "apikey": "API Key",
+      "cookie": "Cookie",
+      "upstream": "上游中转",
+      "setup-token": "Setup Token"
+    },
+    "platformLabels": {
+      "anthropic": "Anthropic",
+      "openai": "OpenAI",
+      "gemini": "Gemini",
+      "grok": "Grok",
+      "volcengine": "火山方舟",
+      "custom": "自定义"
+    },
+    "models": "绑定模型",
+    "modelsPlaceholder": "逗号分隔，留空表示不限",
+    "allModels": "不限",
+    "notes": "备注",
+    "apiKey": "API Key",
+    "cookie": "Cookie",
+    "quota": "额度",
+    "quotaRefreshed": "额度已刷新",
+    "refreshQuota": "刷新额度",
+    "refreshToken": "刷新 Token",
+    "tokenRefreshed": "Token 已刷新",
+    "testAccount": "测试账号",
+    "testSuccess": "测试成功（{{latency}}ms）",
+    "testFailed": "测试失败：{{error}}",
+    "editAccount": "编辑账号",
+    "save": "保存",
+    "cancel": "取消",
+    "actions": "操作",
+    "oauthLogin": "OAuth 登录",
+    "oauthLoginBtn": "去授权",
+    "oauthLoginHint": "点击跳转到平台授权页，授权完成后自动创建账号。也可手动粘贴 OAuth JSON。",
+    "oauthManualPaste": "手动粘贴 OAuth JSON（可选）",
+    "importAccounts": "批量导入",
+    "import": "导入",
+    "importHint": "粘贴账号 JSON 数组，每项含 platform/type/credentials 等字段。",
+    "importPlaceholder": "[{\"name\":\"acct1\",\"platform\":\"anthropic\",\"type\":\"apikey\",\"credentials\":{\"api_key\":\"sk-...\"}}]",
+    "importSuccess": "已导入 {{count}} 个账号"
   }
 }

@@ -153,9 +153,14 @@ var auditedManagementWriteRoutes = map[string]struct{}{
 	"POST /api/v1/pool/create":                                                       {},
 	"POST /api/v1/pool/update":                                                       {},
 	"DELETE /api/v1/pool/delete/:id":                                                 {},
+	"POST /api/v1/pool/import":                                                       {},
 	"POST /api/v1/pool/:id/account/create":                                           {},
 	"POST /api/v1/pool/:id/account/update/:aid":                                      {},
+	"POST /api/v1/pool/:id/account/test":                                             {},
+	"POST /api/v1/pool/:id/account/quota/:aid":                                       {},
+	"POST /api/v1/pool/:id/account/refresh-token/:aid":                               {},
 	"DELETE /api/v1/pool/:id/account/delete/:aid":                                    {},
+	"PUT /api/v1/plan-provider/credentials/:id":                                      {},
 }
 
 func AuditManagementWrite() gin.HandlerFunc {

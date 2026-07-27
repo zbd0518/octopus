@@ -17,8 +17,12 @@ export type PoolAccount = {
     id: number;
     pool_id: number;
     name: string;
+    platform: string;
+    type: string;
+    models: string;
     credentials: string;
     base_url: string;
+    quota: string;
     status: string;
     schedulable: boolean;
     priority: number;
@@ -26,9 +30,13 @@ export type PoolAccount = {
     proxy_config_id?: number | null;
     rate_limit_reset_at: number;
     overload_until: number;
+    token_expires_at: number;
     total_requests: number;
     total_errors: number;
     total_tokens: number;
+    last_used_at?: string | null;
+    error_message: string;
+    notes: string;
     created_at: string;
     updated_at: string;
 };
@@ -52,8 +60,11 @@ export type UpdatePoolRequest = {
     enabled?: boolean;
 };
 
-export type CreatePoolAccountRequest = {
+export type PoolAccountRequest = {
     name?: string;
+    platform?: string;
+    type?: string;
+    models?: string;
     credentials?: string;
     base_url?: string;
     status?: string;
@@ -61,17 +72,25 @@ export type CreatePoolAccountRequest = {
     priority?: number;
     concurrency?: number;
     proxy_config_id?: number | null;
+    notes?: string;
+    token_expires_at?: number;
 };
 
-export type UpdatePoolAccountRequest = {
-    name?: string;
-    credentials?: string;
-    base_url?: string;
-    status?: string;
-    schedulable?: boolean;
-    priority?: number;
-    concurrency?: number;
-    proxy_config_id?: number | null;
+export type CreatePoolAccountRequest = PoolAccountRequest;
+export type UpdatePoolAccountRequest = PoolAccountRequest;
+
+export type AccountTestResult = {
+    success: boolean;
+    status: number;
+    latency_ms: number;
+    error?: string;
+};
+
+export type QuotaResult = {
+    used: number;
+    total: number;
+    reset_at: number;
+    raw?: string;
 };
 
 // --- Queries ---
@@ -88,6 +107,14 @@ export function usePoolAccounts(poolId: number | null) {
         queryKey: ['pools', poolId, 'accounts'],
         queryFn: () => apiClient.get<PoolAccount[]>(`/api/v1/pool/${poolId}/account/list`),
         enabled: poolId !== null,
+    });
+}
+
+export function usePoolAccount(poolId: number | null, accountId: number | null) {
+    return useQuery({
+        queryKey: ['pools', poolId, 'accounts', accountId],
+        queryFn: () => apiClient.get<PoolAccount>(`/api/v1/pool/${poolId}/account/${accountId}`),
+        enabled: poolId !== null && accountId !== null,
     });
 }
 
@@ -139,5 +166,41 @@ export function useDeletePoolAccount(poolId: number) {
     return useMutation({
         mutationFn: (accountId: number) => apiClient.delete(`/api/v1/pool/${poolId}/account/delete/${accountId}`),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pools', poolId, 'accounts'] }),
+    });
+}
+
+export function useTestPoolAccount(poolId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ accountId, model }: { accountId: number; model: string }) =>
+            apiClient.post<AccountTestResult>(`/api/v1/pool/${poolId}/account/test`, { account_id: accountId, model }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pools', poolId, 'accounts'] }),
+    });
+}
+
+export function useFetchPoolQuota(poolId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (accountId: number) =>
+            apiClient.post<QuotaResult>(`/api/v1/pool/${poolId}/account/quota/${accountId}`, {}),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pools', poolId, 'accounts'] }),
+    });
+}
+
+export function useRefreshPoolToken(poolId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (accountId: number) =>
+            apiClient.post(`/api/v1/pool/${poolId}/account/refresh-token/${accountId}`, {}),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pools', poolId, 'accounts'] }),
+    });
+}
+
+export function useImportPoolAccounts() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ poolId, accounts }: { poolId: number; accounts: string }) =>
+            apiClient.post<{ imported: number }>('/api/v1/pool/import', { pool_id: poolId, accounts }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pools'] }),
     });
 }

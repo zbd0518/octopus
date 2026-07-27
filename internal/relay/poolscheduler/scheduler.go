@@ -19,14 +19,19 @@ const ewmaAlpha = 0.3
 var (
 	ErrNoAvailableAccount = errors.New("no available account in pool")
 
-	// globalPoolStats key: "poolID:accountID" → *accountStats
+	// globalPoolStats key: "poolID:accountID" -> *accountStats
 	globalPoolStats sync.Map
-	// globalPoolSlots key: "poolID:accountID" → *int64 (atomic current concurrency)
+	// globalPoolSlots key: "poolID:accountID" -> *int64 (atomic current concurrency)
 	globalPoolSlots sync.Map
-	// globalPoolSticky key: "poolID:sessionHash" → accountID
+	// globalPoolSticky key: "poolID:sessionHash" -> accountID
 	globalPoolSticky sync.Map
-	// globalRoundRobin key: poolID → *uint64 (atomic counter)
+	// globalRoundRobin key: poolID -> *uint64 (atomic counter)
 	globalRoundRobin sync.Map
+
+	// TriggerRefreshAsync 由 pooltokenrefresh 包在 init 时注入。
+	// 选号遇到 token 过期的 OAuth 账号时异步触发刷新，不阻塞本次选号。
+	// nil 表示刷新服务未启用（跳过触发）。
+	TriggerRefreshAsync func(poolID, accountID int)
 )
 
 type accountStats struct {
@@ -46,11 +51,12 @@ func stickyKey(poolID int, sessionHash string) string {
 
 // SelectAccount 从指定池选择一个可用账号。
 // sessionHash 非空时启用粘性；excludeIDs 排除已尝试过的账号。
+// modelName 非空时按账号绑定的模型列表过滤（空 Models 表示不限）。
 // 返回选中的账号（已 acquire 并发槽位），调用方完成后必须调用 ReleaseSlot。
-func SelectAccount(poolID int, sessionHash string, excludeIDs []int, poolDefaultConcurrency int) (*model.PoolAccount, error) {
+func SelectAccount(poolID int, sessionHash string, excludeIDs []int, poolDefaultConcurrency int, modelName string) (*model.PoolAccount, error) {
 	// L1: 粘性会话
 	if sessionHash != "" {
-		if acct, ok := trySticky(poolID, sessionHash, excludeIDs, poolDefaultConcurrency); ok {
+		if acct, ok := trySticky(poolID, sessionHash, excludeIDs, poolDefaultConcurrency, modelName); ok {
 			return acct, nil
 		}
 	}
@@ -61,7 +67,10 @@ func SelectAccount(poolID int, sessionHash string, excludeIDs []int, poolDefault
 		return nil, err
 	}
 	candidates = filterExcluded(candidates, excludeIDs)
+	candidates = filterByModel(candidates, modelName)
 	if len(candidates) == 0 {
+		// 候选为空时，尝试触发池内 token 过期的 OAuth 账号刷新（异步，不阻塞）。
+		triggerRefreshForExpired(poolID, modelName)
 		return nil, ErrNoAvailableAccount
 	}
 
@@ -197,9 +206,7 @@ func PurgeStale(idleThreshold time.Duration) {
 	})
 }
 
-// --- internal helpers ---
-
-func trySticky(poolID int, sessionHash string, excludeIDs []int, poolDefaultConcurrency int) (*model.PoolAccount, bool) {
+func trySticky(poolID int, sessionHash string, excludeIDs []int, poolDefaultConcurrency int, modelName string) (*model.PoolAccount, bool) {
 	val, ok := globalPoolSticky.Load(stickyKey(poolID, sessionHash))
 	if !ok {
 		return nil, false
@@ -215,11 +222,55 @@ func trySticky(poolID int, sessionHash string, excludeIDs []int, poolDefaultConc
 		globalPoolSticky.Delete(stickyKey(poolID, sessionHash))
 		return nil, false
 	}
+	if !model.ModelMatches(acct.Models, modelName) {
+		return nil, false
+	}
 	limit := acct.EffectiveConcurrency(poolDefaultConcurrency)
 	if !tryAcquireSlot(poolID, accountID, limit) {
 		return nil, false
 	}
 	return acct, true
+}
+
+// filterByModel 按账号绑定的模型列表过滤候选。models 为空表示不限。
+func filterByModel(candidates []model.PoolAccount, modelName string) []model.PoolAccount {
+	if modelName == "" {
+		return candidates
+	}
+	result := make([]model.PoolAccount, 0, len(candidates))
+	for i := range candidates {
+		if model.ModelMatches(candidates[i].Models, modelName) {
+			result = append(result, candidates[i])
+		}
+	}
+	return result
+}
+
+// triggerRefreshForExpired 扫描池内 token 过期的 OAuth 账号，异步触发刷新。
+// 仅在候选为空时调用，避免每次请求都扫描。失败不影响调用方。
+func triggerRefreshForExpired(poolID int, modelName string) {
+	if TriggerRefreshAsync == nil {
+		return
+	}
+	// ListAccounts 返回池内全部账号（不过滤可调度性），用于发现过期 OAuth 账号。
+	accounts, err := pool.ListAccounts(poolID)
+	if err != nil {
+		return
+	}
+	for i := range accounts {
+		acct := &accounts[i]
+		if acct.Type != model.PoolTypeOAuth {
+			continue
+		}
+		if !acct.IsTokenExpired() {
+			continue
+		}
+		// 仅刷新与请求模型匹配的账号（避免刷新无关账号）。
+		if !model.ModelMatches(acct.Models, modelName) {
+			continue
+		}
+		go TriggerRefreshAsync(poolID, acct.ID)
+	}
 }
 
 func filterExcluded(candidates []model.PoolAccount, excludeIDs []int) []model.PoolAccount {

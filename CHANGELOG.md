@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 🚀 Features
+- **Pool (号池对齐 sub2api)**: 号池账号管理全量重写--平台分段选择器（anthropic/openai/gemini/grok/volcengine/custom）、per-platform 凭据类型（oauth/apikey/cookie/upstream）、OAuth 两步登录（4 平台 PKCE 回调）、结构化凭据表单、编辑、测试、额度/用量展示、批量导入、token 自动刷新。号池账号现在直接绑模型（调度按模型过滤候选），`base_url` 在中转链路生效（此前为死字段）。凭据 AES-GCM 加密存储，返回前端脱敏。新增 `server.external_url` 配置项（OAuth 回调地址，重启生效）与号池 token 刷新/额度同步两个定时任务设置项。
 - **Group/Relay**: 分组出站格式新增「原始穿透（信息体）」（`raw`）——保留客户端原始请求体与原始请求路径原样转发上游，唯一改写请求体中的 `model` 字段为分组解析后的上游模型名，不做格式转换或回退。
 - **Log**: show effective outbound reasoning effort and upstream reasoning tokens on log cards (hidden when empty; field toggles default on).
 - **Log**: when official reasoning tokens are absent, fall back to thinking text character count (UTF-8 runes) and display as "思考 XXt" / "思考 XX字".
