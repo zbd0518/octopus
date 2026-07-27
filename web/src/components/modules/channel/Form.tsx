@@ -16,6 +16,7 @@ import {
 } from '@/api/endpoints/channel';
 import { useAlertNotifChannelList } from '@/api/endpoints/alert';
 import { useSettingList, SettingKey } from '@/api/endpoints/setting';
+import { usePoolList } from '@/api/endpoints/pool';
 import { channelTemplates } from './templates';
 import { CHANNEL_TYPE_OPTIONS } from './type-options';
 import { isOpenAICompatBaseUrlSuffixMode } from './base-url-suffix';
@@ -89,6 +90,7 @@ export interface ChannelFormData {
     notif_channel_id: number | null;
     key_selection_strategy: string;
     match_regex: string;
+    pool_id: number;
 }
 
 export function createDefaultRequestRewriteFormData(): RequestRewriteConfig {
@@ -586,6 +588,7 @@ export function ChannelForm({
     const { data: settings } = useSettingList();
     const { data: channelGroups = [] } = useChannelGroupList();
     const { data: notifChannels = [] } = useAlertNotifChannelList();
+    const { data: pools = [] } = usePoolList();
     const requestRewriteSupported = isRequestRewriteSupportedChannelType(formData.type);
     const sectionClassName = 'space-y-4 rounded-lg bg-card/70 p-4 md:p-5';
     const labelClassName = 'text-sm font-medium text-card-foreground';
@@ -1081,6 +1084,32 @@ export function ChannelForm({
             </section>
 
             <section className={sectionClassName}>
+                <SectionHeader icon={Layers3} title={t('poolBinding')} />
+                <div className="space-y-2">
+                    <Select
+                        value={String(formData.pool_id || 0)}
+                        onValueChange={(value) => onFormDataChange({ ...formData, pool_id: Number(value) })}
+                    >
+                        <SelectTrigger className="h-8 rounded-lg">
+                            <SelectValue placeholder={t('poolPlaceholder')} />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="0">{t('poolNone')}</SelectItem>
+                            {pools.map((pool) => (
+                                <SelectItem key={pool.id} value={String(pool.id)}>
+                                    {pool.name}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    {formData.pool_id > 0 && (
+                        <p className="text-xs text-muted-foreground">{t('poolHint')}</p>
+                    )}
+                </div>
+            </section>
+
+            {formData.pool_id === 0 && (
+            <section className={sectionClassName}>
                 <SectionHeader icon={KeyRound} title={t('apiKeyConfig')} />
                 <div className="flex items-center justify-end gap-2">
                     <Badge variant="secondary" className="rounded-full">
@@ -1256,6 +1285,7 @@ export function ChannelForm({
                     </div>
                 )}
             </section>
+            )}
 
             <section className={sectionClassName}>
                 <SectionHeader icon={Layers3} title={t('modelConfig')} />

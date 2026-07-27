@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../client';
+import type { ProxyMode } from './proxy-pool';
 
 export interface PlanProviderCategoryInfo {
     category: string;
@@ -75,8 +76,15 @@ export function useTokenPlanCategories() {
 export function useAddPlanProvider() {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: (data: { category: string; api_key: string; forward_api_key?: string; name?: string }) =>
-            apiClient.post('/api/v1/plan-provider/add', data),
+        mutationFn: (data: {
+            category: string;
+            api_key: string;
+            forward_api_key?: string;
+            name?: string;
+            // 代理配置：目前仅 Codex 类生效（chatgpt.com 国内不可直连）
+            proxy_mode?: ProxyMode;
+            proxy_config_id?: number | null;
+        }) => apiClient.post('/api/v1/plan-provider/add', data),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['plan-provider'] });
         },

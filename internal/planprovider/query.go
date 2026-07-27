@@ -18,6 +18,52 @@ import (
 
 const requestTimeout = 15 * time.Second
 
+// ProxyURLByConfigFunc 由 op 包在启动时注入（op/channel.go init），用于 pool 模式解析代理 URL。
+// planprovider 不能直接 import op（op 反向依赖 helper，会形成循环），与 helper.ProxyURLByConfigFunc 同一模式。
+// 未注入时 pool 模式查询返回错误。
+var ProxyURLByConfigFunc func(id int, ctx context.Context) (string, error)
+
+// planQueryHTTPClient 按代理模式构建套餐查询用 HTTP client。
+//   - direct / 空：无代理（保持现有行为）；
+//   - system：使用系统环境变量代理（http.ProxyFromEnvironment）；
+//   - pool：通过 ProxyURLByConfigFunc 解析代理池配置 URL。
+func planQueryHTTPClient(mode model.ProxyUsageMode, configID *int) (*http.Client, error) {
+	switch mode {
+	case model.ProxyUsageModeSystem:
+		transport, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			return nil, fmt.Errorf("default transport is not *http.Transport")
+		}
+		cloned := transport.Clone()
+		cloned.Proxy = http.ProxyFromEnvironment
+		return &http.Client{Timeout: requestTimeout, Transport: cloned}, nil
+	case model.ProxyUsageModePool:
+		if configID == nil || *configID <= 0 {
+			return nil, fmt.Errorf("proxy config id is required when proxy mode is pool")
+		}
+		if ProxyURLByConfigFunc == nil {
+			return nil, fmt.Errorf("proxy configuration resolver is not initialized")
+		}
+		resolved, err := ProxyURLByConfigFunc(*configID, context.Background())
+		if err != nil {
+			return nil, err
+		}
+		proxyURL, err := url.Parse(resolved)
+		if err != nil {
+			return nil, fmt.Errorf("invalid proxy url: %w", err)
+		}
+		transport, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			return nil, fmt.Errorf("default transport is not *http.Transport")
+		}
+		cloned := transport.Clone()
+		cloned.Proxy = http.ProxyURL(proxyURL)
+		return &http.Client{Timeout: requestTimeout, Transport: cloned}, nil
+	default:
+		return &http.Client{Timeout: requestTimeout}, nil
+	}
+}
+
 // BalanceResult 余额查询结果
 type BalanceResult struct {
 	Balance     float64 `json:"balance"`
@@ -73,7 +119,8 @@ func QueryBalance(ctx context.Context, category model.PlanProviderCategory, apiK
 }
 
 // QueryTokenPlan 查询套餐用量（TokenPlan 类厂商）
-func QueryTokenPlan(ctx context.Context, category model.PlanProviderCategory, apiKey string, baseURL string) (*TokenPlanResult, error) {
+// proxyMode / proxyConfigID 目前仅 Codex 类使用（chatgpt.com 国内不可直连），其他厂商忽略。
+func QueryTokenPlan(ctx context.Context, category model.PlanProviderCategory, apiKey string, baseURL string, proxyMode model.ProxyUsageMode, proxyConfigID *int) (*TokenPlanResult, error) {
 	switch category {
 	case model.PlanProviderMiniMax:
 		return queryMiniMaxTokenPlan(ctx, apiKey)
@@ -86,7 +133,7 @@ func QueryTokenPlan(ctx context.Context, category model.PlanProviderCategory, ap
 	case model.PlanProviderZhipu:
 		return queryZhipuTokenPlan(ctx, apiKey)
 	case model.PlanProviderCodex:
-		return queryCodexTokenPlan(ctx, apiKey)
+		return queryCodexTokenPlan(ctx, apiKey, proxyMode, proxyConfigID)
 	case model.PlanProviderBailianPlan:
 		return queryBailianPlanTokenPlan(ctx, apiKey)
 	case model.PlanProviderVolcenginePlan:
@@ -1027,7 +1074,7 @@ func queryOpenAIBalance(ctx context.Context, apiKey string) (*BalanceResult, err
 // used_percent 是 0-100 的百分比，转为 QuotaUsed/QuotaTotal 表示。
 var codexWhamUsageURL = "https://chatgpt.com/backend-api/wham/usage"
 
-func queryCodexTokenPlan(ctx context.Context, oauthKeyJSON string) (*TokenPlanResult, error) {
+func queryCodexTokenPlan(ctx context.Context, oauthKeyJSON string, proxyMode model.ProxyUsageMode, proxyConfigID *int) (*TokenPlanResult, error) {
 	oauthKey, err := parseCodexOAuthKey(oauthKeyJSON)
 	if err != nil {
 		return nil, fmt.Errorf("codex: %w", err)
@@ -1039,6 +1086,11 @@ func queryCodexTokenPlan(ctx context.Context, oauthKeyJSON string) (*TokenPlanRe
 		return nil, fmt.Errorf("codex: account_id is required")
 	}
 
+	client, err := planQueryHTTPClient(proxyMode, proxyConfigID)
+	if err != nil {
+		return nil, fmt.Errorf("codex: %w", err)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, codexWhamUsageURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("codex: create request: %w", err)
@@ -1048,7 +1100,6 @@ func queryCodexTokenPlan(ctx context.Context, oauthKeyJSON string) (*TokenPlanRe
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("originator", "codex_cli_rs")
 
-	client := &http.Client{Timeout: requestTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("codex: http get: %w", err)
@@ -1403,14 +1454,16 @@ func queryVolcenginePlanTokenPlan(ctx context.Context, credential string) (*Toke
 	}
 
 	r := usageResp.Result
-	// 火山方舟 API 的 Used 字段表示"剩余可用量"，需转换为"已使用量"
+	// 火山方舟 GetAgentPlanAFPUsage 的 Used 字段即"已使用量"：官网控制台
+	// "已使用 X%" 直接以 Used/Quota 计算，大数字亦为 Used。早期误判为剩余量
+	// 并做 Quota-Used 取反，使前端进度条/百分比与官网颠倒。
 	result := &TokenPlanResult{
 		QuotaTotal:    r.AFPMonthly.Quota,
-		QuotaUsed:     r.AFPMonthly.Quota - r.AFPMonthly.Used,
+		QuotaUsed:     r.AFPMonthly.Used,
 		WeeklyTotal:   r.AFPWeekly.Quota,
-		WeeklyUsed:    r.AFPWeekly.Quota - r.AFPWeekly.Used,
+		WeeklyUsed:    r.AFPWeekly.Used,
 		FiveHourTotal: r.AFPFiveHour.Quota,
-		FiveHourUsed:  r.AFPFiveHour.Quota - r.AFPFiveHour.Used,
+		FiveHourUsed:  r.AFPFiveHour.Used,
 	}
 	if r.AFPFiveHour.ResetTime > 0 {
 		t := time.UnixMilli(r.AFPFiveHour.ResetTime)

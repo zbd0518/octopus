@@ -98,7 +98,8 @@
     "setting": "设置",
     "ariaLabel": "主导航",
     "apikey": "API 密钥",
-    "notification": "通知中心"
+    "notification": "通知中心",
+    "pool": "号池"
   },
   "endpoints": {
     "title": "可用端点",
@@ -2869,6 +2870,10 @@
       "baseUrlDelay": "延迟(ms)",
       "advanced": "高级设置",
       "apiKeyConfig": "API Key 配置",
+      "poolBinding": "关联号池",
+      "poolPlaceholder": "选择号池...",
+      "poolNone": "无（使用内联 Key）",
+      "poolHint": "选择号池后，API Key 由号池调度器统一管理。",
       "apiKey": "API Key",
       "bulkImport": {
         "button": "批量导入",
@@ -3419,5 +3424,34 @@
         "content": "渠道「{name}」(ID: {id}) Key 验证已恢复正常。"
       }
     }
+  },
+  "pool": {
+    "title": "号池",
+    "create": "创建号池",
+    "created": "号池已创建",
+    "deleted": "号池已删除",
+    "enabled": "启用",
+    "disabled": "禁用",
+    "strategy": "调度策略",
+    "concurrency": "并发上限",
+    "cooldown": "冷却时长(秒)",
+    "name": "名称",
+    "description": "描述",
+    "addAccount": "添加账号",
+    "accountCreated": "账号已添加",
+    "accountDeleted": "账号已删除",
+    "accountName": "账号",
+    "status": "状态",
+    "requests": "请求数",
+    "errors": "错误数",
+    "cooldownStatus": "冷却",
+    "cooling": "冷却中",
+    "noAccounts": "此号池暂无账号",
+    "credentials": "凭据 (JSON)",
+    "baseUrl": "上游地址",
+    "priority": "优先级",
+    "inheritPool": "继承池默认",
+    "proxyConfig": "代理配置 ID",
+    "proxyConfigPlaceholder": "可选：代理池配置 ID"
   }
 }

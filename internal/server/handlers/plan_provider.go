@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/op"
 	"github.com/lingyuins/octopus/internal/planprovider"
 	"github.com/lingyuins/octopus/internal/server/auth"
 	"github.com/lingyuins/octopus/internal/server/middleware"
@@ -14,6 +15,9 @@ import (
 )
 
 func init() {
+	// 注入代理池 URL 解析器（planprovider 与 op 双向依赖，无法由 op 注入，在此注入）。
+	planprovider.ProxyURLByConfigFunc = op.ProxyURLForConfig
+
 	// 额度管理路由 (读)
 	router.NewGroupRouter("/api/v1/plan-provider").
 		Use(middleware.Auth()).
@@ -65,6 +69,9 @@ type addPlanProviderRequest struct {
 	APIKey        string                     `json:"api_key"`
 	ForwardAPIKey string                     `json:"forward_api_key,omitempty"`
 	Name          string                     `json:"name"`
+	// 代理配置：目前仅 Codex 类生效（chatgpt.com 国内不可直连）。
+	ProxyMode     model.ProxyUsageMode `json:"proxy_mode,omitempty"`
+	ProxyConfigID *int                 `json:"proxy_config_id,omitempty"`
 }
 
 func addPlanProvider(c *gin.Context) {
@@ -74,7 +81,7 @@ func addPlanProvider(c *gin.Context) {
 		return
 	}
 
-	provider, err := planprovider.AddProvider(c.Request.Context(), req.Category, req.APIKey, req.ForwardAPIKey, req.Name)
+	provider, err := planprovider.AddProvider(c.Request.Context(), req.Category, req.APIKey, req.ForwardAPIKey, req.Name, req.ProxyMode, req.ProxyConfigID)
 	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return

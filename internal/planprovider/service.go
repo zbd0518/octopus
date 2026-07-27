@@ -49,10 +49,31 @@ func ListProviders(ctx context.Context, providerType model.PlanProviderType) ([]
 // forwardAPIKey 仅 stepfun_plan 使用：可选的 sk- API Key，用于转发。
 //   - 填了：创建或复用接入点 api.stepfun.com/step_plan/v1 的渠道，key 追加到模型相同的已有渠道。
 //   - 不填：仅监控套餐额度，不创建渠道。
-func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKey, forwardAPIKey, customName string) (*model.PlanProvider, error) {
+//
+// proxyMode / proxyConfigID 仅 Codex 类生效（chatgpt.com 国内不可直连）：
+// 同时作用于用量查询链路与自动创建的转发渠道；其他厂商强制 direct。
+func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKey, forwardAPIKey, customName string, proxyMode model.ProxyUsageMode, proxyConfigID *int) (*model.PlanProvider, error) {
 	info := getCategoryInfo(category)
 	if info == nil {
 		return nil, fmt.Errorf("unknown plan provider category: %s", category)
+	}
+
+	// 代理配置仅 Codex 类采纳；其他厂商防御性强制 direct。
+	if category != model.PlanProviderCodex {
+		proxyMode = model.ProxyUsageModeDirect
+		proxyConfigID = nil
+	}
+	if proxyMode == "" {
+		proxyMode = model.ProxyUsageModeDirect
+	}
+	if err := proxyMode.Validate(false); err != nil {
+		return nil, err
+	}
+	if proxyMode != model.ProxyUsageModePool {
+		proxyConfigID = nil
+	}
+	if proxyMode == model.ProxyUsageModePool && (proxyConfigID == nil || *proxyConfigID <= 0) {
+		return nil, fmt.Errorf("proxy config id is required when proxy mode is pool")
 	}
 
 	apiKey = strings.TrimSpace(apiKey)
@@ -81,7 +102,7 @@ func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKe
 		balance = result.Balance
 		balanceUsed = result.BalanceUsed
 	} else {
-		result, err := QueryTokenPlan(ctx, category, apiKey, info.BaseURL)
+		result, err := QueryTokenPlan(ctx, category, apiKey, info.BaseURL, proxyMode, proxyConfigID)
 		if err != nil {
 			return nil, fmt.Errorf("query tokenplan: %w", err)
 		}
@@ -169,6 +190,11 @@ func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKe
 				AutoSync:  false,
 				AutoGroup: model.AutoGroupTypeNone,
 			}
+			if category == model.PlanProviderCodex {
+				// Codex 渠道继承套餐的代理配置（chatgpt.com 国内不可直连）。
+				channel.ProxyMode = proxyMode
+				channel.ProxyConfigID = proxyConfigID
+			}
 			if err := op.ChannelCreate(channel, ctx); err != nil {
 				return nil, fmt.Errorf("create channel: %w", err)
 			}
@@ -186,6 +212,8 @@ func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKe
 		ForwardAPIKey: forwardAPIKey,
 		BaseURL:       info.BaseURL,
 		ChannelID:     channelID,
+		ProxyMode:     proxyMode,
+		ProxyConfigID: proxyConfigID,
 		Balance:       balance,
 		BalanceUsed:   balanceUsed,
 		QuotaTotal:    quotaTotal,
@@ -247,7 +275,7 @@ func RefreshProvider(ctx context.Context, id int) (*model.PlanProvider, error) {
 		provider.Balance = result.Balance
 		provider.BalanceUsed = result.BalanceUsed
 	} else {
-		result, err := QueryTokenPlan(ctx, provider.Category, provider.APIKey, provider.BaseURL)
+		result, err := QueryTokenPlan(ctx, provider.Category, provider.APIKey, provider.BaseURL, provider.ProxyMode, provider.ProxyConfigID)
 		if err != nil {
 			return nil, fmt.Errorf("refresh tokenplan: %w", err)
 		}

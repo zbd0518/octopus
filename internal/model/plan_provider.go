@@ -204,8 +204,12 @@ type PlanProvider struct {
 	ForwardAPIKey string               `json:"forward_api_key" gorm:"default:''"`
 	BaseURL       string               `json:"base_url" gorm:"not null"`
 	ChannelID     int                  `json:"channel_id" gorm:"not null;default:0;index"`
-	Balance       float64              `json:"balance" gorm:"default:0"`
-	BalanceUsed   float64              `json:"balance_used" gorm:"default:0"`
+	// 代理配置：目前仅 Codex 类厂商（chatgpt.com 国内不可直连）使用，
+	// 与 Channel/Site 的代理模型一致；其他厂商默认 direct。
+	ProxyMode     ProxyUsageMode `json:"proxy_mode" gorm:"type:varchar(16);not null;default:'direct'"`
+	ProxyConfigID *int           `json:"proxy_config_id"`
+	Balance       float64        `json:"balance" gorm:"default:0"`
+	BalanceUsed   float64        `json:"balance_used" gorm:"default:0"`
 	// TokenPlan 专用
 	QuotaTotal    float64    `json:"quota_total" gorm:"default:0"`
 	QuotaUsed     float64    `json:"quota_used" gorm:"default:0"`

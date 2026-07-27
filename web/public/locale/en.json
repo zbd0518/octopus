@@ -98,7 +98,8 @@
     "setting": "Setting",
     "ariaLabel": "Main navigation",
     "apikey": "API Keys",
-    "notification": "Notification Center"
+    "notification": "Notification Center",
+    "pool": "Account Pool"
   },
   "endpoints": {
     "title": "Available Endpoints",
@@ -2913,6 +2914,10 @@
       "baseUrlDelay": "Delay(ms)",
       "advanced": "Advanced Settings",
       "apiKeyConfig": "API Key Configuration",
+      "poolBinding": "Account Pool",
+      "poolPlaceholder": "Select a pool...",
+      "poolNone": "None (use inline keys)",
+      "poolHint": "When a pool is selected, API keys are managed by the pool scheduler.",
       "apiKey": "API Key",
       "bulkImport": {
         "button": "Bulk Import",
@@ -3419,5 +3424,34 @@
         "content": "Channel \"{name}\" (ID: {id}) key verification recovered."
       }
     }
+  },
+  "pool": {
+    "title": "Account Pool",
+    "create": "Create Pool",
+    "created": "Pool created",
+    "deleted": "Pool deleted",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "strategy": "Strategy",
+    "concurrency": "Concurrency",
+    "cooldown": "Cooldown (s)",
+    "name": "Name",
+    "description": "Description",
+    "addAccount": "Add Account",
+    "accountCreated": "Account added",
+    "accountDeleted": "Account deleted",
+    "accountName": "Account",
+    "status": "Status",
+    "requests": "Requests",
+    "errors": "Errors",
+    "cooldownStatus": "Cooldown",
+    "cooling": "Cooling",
+    "noAccounts": "No accounts in this pool",
+    "credentials": "Credentials (JSON)",
+    "baseUrl": "Base URL",
+    "priority": "Priority",
+    "inheritPool": "inherit pool",
+    "proxyConfig": "Proxy Config ID",
+    "proxyConfigPlaceholder": "Optional: proxy pool config ID"
   }
 }

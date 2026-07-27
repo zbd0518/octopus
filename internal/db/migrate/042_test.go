@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// TestMigrateDropLeftoverSiteModelNameUniqueIndex 模拟 39 半成功：
+// TestMigrateDropLeftoverSiteModelNameUniqueIndex 模拟 41 半成功：
 // 新唯一索引已在、旧 CI 唯一索引仍在；40 应删掉旧索引且保留新索引。
 func TestMigrateDropLeftoverSiteModelNameUniqueIndex(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "site-model-key-leftover.db")
@@ -53,7 +53,7 @@ VALUES (1, 'default', 'GLM-5.2', ?, 'sync')`, key).Error; err != nil {
 	}
 
 	if err := migrateDropLeftoverSiteModelNameUniqueIndex(db); err != nil {
-		t.Fatalf("migrate 37: %v", err)
+		t.Fatalf("migrate 42: %v", err)
 	}
 	if db.Migrator().HasIndex(&model.SiteModel{}, "idx_site_account_group_model") {
 		t.Fatal("leftover old unique index should be dropped by migration 37")
@@ -64,7 +64,7 @@ VALUES (1, 'default', 'GLM-5.2', ?, 'sync')`, key).Error; err != nil {
 
 	// 幂等
 	if err := migrateDropLeftoverSiteModelNameUniqueIndex(db); err != nil {
-		t.Fatalf("second migrate 37: %v", err)
+		t.Fatalf("second migrate 42: %v", err)
 	}
 
 	// 大小写变体可插入（raw SQL，避免依赖 master 新增的 price/perf 列）

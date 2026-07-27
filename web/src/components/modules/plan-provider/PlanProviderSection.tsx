@@ -39,6 +39,8 @@ import {
     type PlanProvider,
     type PlanProviderCategoryInfo,
 } from '@/api/endpoints/plan-provider';
+import { ProxySelector } from '@/components/modules/proxy-pool/ProxySelector';
+import type { ProxyMode } from '@/api/endpoints/proxy-pool';
 
 // --- Balance Section ---
 
@@ -91,6 +93,7 @@ interface PlanProviderSectionProps {
 
 function PlanProviderSection({ type, title, providers, categories, isLoading, error }: PlanProviderSectionProps) {
     const t = useTranslations('hub');
+    const tProxy = useTranslations('proxyPool');
     const addMutation = useAddPlanProvider();
     const refreshMutation = useRefreshPlanProvider();
     const deleteMutation = useDeletePlanProvider();
@@ -100,6 +103,9 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
     const [forwardApiKey, setForwardApiKey] = useState('');
     const [customName, setCustomName] = useState('');
     const [mimoAuthMode, setMimoAuthMode] = useState<'passToken' | 'serviceToken'>('serviceToken');
+    // 代理配置（仅 Codex 类展示/提交，chatgpt.com 国内不可直连）
+    const [proxyMode, setProxyMode] = useState<ProxyMode>('direct');
+    const [proxyConfigId, setProxyConfigId] = useState<number | null>(null);
     
     // Compact view state with localStorage persistence
     const [compactView, setCompactView] = useState(() => {
@@ -120,12 +126,19 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
 
     const handleAdd = useCallback(async () => {
         if (!selectedCategory || !apiKey.trim()) return;
+        if (isCodexPlan && proxyMode === 'pool' && !proxyConfigId) {
+            toast.error(tProxy('selectRequired'));
+            return;
+        }
         try {
             await addMutation.mutateAsync({
                 category: selectedCategory,
                 api_key: apiKey.trim(),
                 forward_api_key: supportsForwardApiKey && forwardApiKey.trim() ? forwardApiKey.trim() : undefined,
                 name: customName.trim() || undefined,
+                ...(isCodexPlan
+                    ? { proxy_mode: proxyMode, proxy_config_id: proxyMode === 'pool' ? proxyConfigId : null }
+                    : {}),
             });
             toast.success('已添加');
             setAddOpen(false);
@@ -134,11 +147,13 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
             setForwardApiKey('');
             setCustomName('');
             setMimoAuthMode('serviceToken');
+            setProxyMode('direct');
+            setProxyConfigId(null);
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : '添加失败';
             toast.error(msg);
         }
-    }, [selectedCategory, apiKey, forwardApiKey, supportsForwardApiKey, customName, addMutation]);
+    }, [selectedCategory, apiKey, forwardApiKey, supportsForwardApiKey, customName, addMutation, isCodexPlan, proxyMode, proxyConfigId, tProxy]);
 
     const handleRefresh = useCallback(async (id: number) => {
         try {
@@ -313,6 +328,16 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
                                 </div>
                             )}
 
+                            {isCodexPlan && (
+                                <ProxySelector
+                                    value={{ proxy_mode: proxyMode, proxy_config_id: proxyConfigId }}
+                                    onChange={(next) => {
+                                        setProxyMode(next.proxy_mode);
+                                        setProxyConfigId(next.proxy_mode === 'pool' ? next.proxy_config_id ?? null : null);
+                                    }}
+                                />
+                            )}
+
                             <div className="space-y-2">
                                 <label className="text-sm font-medium">{t('plan.customName') || '自定义名称（可选）'}</label>
                                 <Input
@@ -397,7 +422,7 @@ const formatTime = (val: string | null) => {
     }
 };
 
-// 单档配额卡片（官网三档样式：标题 + 倒计时 + 剩余/总量 + 进度条百分比）
+// 单档配额卡片（官网三档样式：标题 + 倒计时 + 已用/总量 + 进度条百分比）
 function QuotaTier({
     label,
     total,
@@ -453,7 +478,7 @@ function QuotaTier({
         return (
             <div className="inline-flex items-center gap-2 text-xs">
                 <span className="text-muted-foreground">{label}</span>
-                <span className="font-semibold tabular-nums">{formatBalance(total - used)}</span>
+                <span className="font-semibold tabular-nums">{formatBalance(used)}</span>
                 <span className="text-muted-foreground">/</span>
                 <span className="tabular-nums text-muted-foreground">{formatBalance(total)}</span>
                 <span className="text-muted-foreground">({pct.toFixed(0)}%)</span>
@@ -474,7 +499,7 @@ function QuotaTier({
             </div>
             <div className="flex items-baseline gap-1.5">
                 <span className="font-semibold text-base tabular-nums">
-                    {formatBalance(total - used)}
+                    {formatBalance(used)}
                 </span>
                 <span className="text-xs text-muted-foreground tabular-nums">
                     / {formatBalance(total)}

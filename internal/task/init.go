@@ -15,6 +15,7 @@ import (
 	"github.com/lingyuins/octopus/internal/price"
 	"github.com/lingyuins/octopus/internal/relay"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
+	"github.com/lingyuins/octopus/internal/relay/poolscheduler"
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
@@ -120,6 +121,8 @@ func Init() {
 		// clientModelName)，model 名由客户端请求携带、基数不受控；此前仅测试代码
 		// Clear()，无空闲回收，刷量/随机 model 名会让 map 终生驻留（见 issue #124）。
 		stats.PurgeIdleModelStats(balancerIdleThreshold)
+		// 清理长时间未活动的号池调度统计（EWMA、并发槽位）。
+		poolscheduler.PurgeStale(balancerIdleThreshold)
 
 		if db.IsSQLite() {
 			db.EnqueueWrite(db.WriteJob{Name: "relay_log_save", Fn: func(_ context.Context) error {

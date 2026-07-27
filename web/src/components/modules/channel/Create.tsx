@@ -49,6 +49,7 @@ export function CreateDialogContent() {
         enabled: true,
         proxy: false,
         match_regex: '',
+        pool_id: 0,
     });
     const t = useTranslations('channel.create');
     const tForm = useTranslations('channel.form');
@@ -76,6 +77,7 @@ export function CreateDialogContent() {
             enabled: true,
             proxy: false,
             match_regex: '',
+            pool_id: 0,
         });
         setShowPresetPicker(true);
     };
@@ -132,6 +134,7 @@ export function CreateDialogContent() {
                 param_override: paramOverride,
                 request_rewrite: requestRewrite.enabled ? requestRewrite : undefined,
                 match_regex: formData.match_regex.trim(),
+                pool_id: formData.pool_id || undefined,
             },
             {
                 onSuccess: () => {
