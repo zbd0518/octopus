@@ -174,7 +174,15 @@
       "mimoServiceTokenHint": "Required fields: api-platform_serviceToken=, userId=, api-platform_slh=, api-platform_ph=. Valid ~1 day (server-controlled), manual update required. Login platform.xiaomimimo.com -> F12 -> Application -> Cookies, copy all cookies under api-platform domain.",
       "codexOAuthLabel": "OAuth JSON",
       "codexOAuthPlaceholder": "Paste OAuth JSON credential (with access_token and account_id)",
-      "codexOAuthHint": "Obtain OAuth JSON credential (with access_token and account_id) from a ChatGPT subscription account. A Codex forwarding channel is automatically created (endpoint: chatgpt.com/backend-api/codex/responses). access_token has a short validity; re-obtain after expiry."
+      "codexOAuthHint": "Obtain OAuth JSON credential (with access_token and account_id) from a ChatGPT subscription account. A Codex forwarding channel is automatically created (endpoint: chatgpt.com/backend-api/codex/responses). access_token has a short validity; re-obtain after expiry.",
+      "editCredentials": "Update Credentials",
+      "editCredentialsTitle": "Update Credentials",
+      "editCredentialsDesc": "Paste new credentials when they expire or become invalid. The system will immediately re-query usage.",
+      "credentialsUpdated": "Credentials updated",
+      "updateFailed": "Update failed",
+      "update": "Update & Query",
+      "forwardApiKeyPlaceholderOptional": "Leave blank to keep unchanged, or enter a new forwarding key",
+      "forwardApiKeyEditHint": "Leave blank to keep the forwarding credential unchanged; entering a new value will sync-update the associated channel key."
     },
     "title": "Remote Sites",
     "addSite": "Add Site",

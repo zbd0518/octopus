@@ -174,7 +174,15 @@
       "mimoServiceTokenHint": "需包含欄位：api-platform_serviceToken=、userId=、api-platform_slh=、api-platform_ph=。有效期約 1 天（服務端控制），過期需手動更新。登入 platform.xiaomimimo.com -> F12 -> Application -> Cookies，複製 api-platform 域下所有 Cookie。",
       "codexOAuthLabel": "OAuth JSON",
       "codexOAuthPlaceholder": "貼上 OAuth JSON 憑證（含 access_token 和 account_id）",
-      "codexOAuthHint": "從 ChatGPT 訂閱帳號取得 OAuth JSON 憑證（含 access_token 和 account_id）。系統將自動建立 Codex 類型轉發渠道（接入點 chatgpt.com/backend-api/codex/responses）。access_token 有效期較短，過期後需重新取得。"
+      "codexOAuthHint": "從 ChatGPT 訂閱帳號取得 OAuth JSON 憑證（含 access_token 和 account_id）。系統將自動建立 Codex 類型轉發渠道（接入點 chatgpt.com/backend-api/codex/responses）。access_token 有效期較短，過期後需重新取得。",
+      "editCredentials": "更換憑證",
+      "editCredentialsTitle": "更換憑證",
+      "editCredentialsDesc": "憑證過期或失效時貼上新憑證，系統將立即重新查詢用量。",
+      "credentialsUpdated": "憑證已更新",
+      "updateFailed": "更新失敗",
+      "update": "更新並查詢",
+      "forwardApiKeyPlaceholderOptional": "留空保持不變，填寫則更新轉發渠道 key",
+      "forwardApiKeyEditHint": "留空表示不更換轉發憑證；填寫新值將同步更新關聯渠道的 key。"
     },
     "title": "遠端站點",
     "addSite": "新增站點",

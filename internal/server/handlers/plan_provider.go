@@ -33,6 +33,7 @@ func init() {
 		Use(middleware.RequirePermission(auth.PermSitesWrite)).
 		AddRoute(router.NewRoute("/add", http.MethodPost).Handle(addPlanProvider)).
 		AddRoute(router.NewRoute("/refresh/:id", http.MethodPost).Handle(refreshPlanProvider)).
+		AddRoute(router.NewRoute("/credentials/:id", http.MethodPut).Handle(updatePlanProviderCredentials)).
 		AddRoute(router.NewRoute("/:id", http.MethodDelete).Handle(deletePlanProvider))
 }
 
@@ -104,6 +105,31 @@ func refreshPlanProvider(c *gin.Context) {
 	resp.Success(c, provider)
 }
 
+type updatePlanProviderCredentialsRequest struct {
+	APIKey        string `json:"api_key" binding:"required"`
+	ForwardAPIKey string `json:"forward_api_key,omitempty"`
+}
+
+func updatePlanProviderCredentials(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	var req updatePlanProviderCredentialsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Error(c, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+
+	provider, err := planprovider.UpdateProviderCredentials(c.Request.Context(), id, req.APIKey, req.ForwardAPIKey)
+	if err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	resp.Success(c, provider)
+}
 func deletePlanProvider(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {

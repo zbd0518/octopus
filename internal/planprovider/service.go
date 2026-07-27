@@ -305,6 +305,184 @@ func RefreshProvider(ctx context.Context, id int) (*model.PlanProvider, error) {
 	return &provider, nil
 }
 
+// UpdateProviderCredentials 更新 Plan Provider 的主凭据（api_key），可选更新转发凭据（forward_api_key）。
+//
+// 典型场景：控制台会话凭据（stepfun/sensenova/bailian/volcengine 的 Cookie/Token、
+// mimo 的 serviceToken/passToken、codex 的 OAuth JSON）过期或即将过期，刷新时报 401/未登录，
+// 需要用户重新从控制台获取凭据并替换，而非删除重建（删除会连带删掉关联的转发渠道与 channel keys 状态）。
+//
+// 行为：
+//   - newAPIKey 必填，trim 后非空；
+//   - newForwardAPIKey 仅控制台 token plan 类生效（normalizePlanForwardAPIKey 会清空其他类），传空串表示"清空转发凭据"。
+//   - 用新凭据立即查询一次用量并更新 quota/balance 字段（等价于一次 RefreshProvider）。
+//   - forward_api_key 变更且关联渠道存在时，同步更新渠道里匹配旧 forward 值的那把 key；
+//     若原本没有渠道（旧 forward 为空）而本次填了新 forward，则新建/复用渠道（逻辑同 AddProvider）。
+func UpdateProviderCredentials(ctx context.Context, id int, newAPIKey, newForwardAPIKey string) (*model.PlanProvider, error) {
+	var provider model.PlanProvider
+	if err := db.GetDB().WithContext(ctx).First(&provider, id).Error; err != nil {
+		return nil, fmt.Errorf("find plan provider: %w", err)
+	}
+
+	info := getCategoryInfo(provider.Category)
+	if info == nil {
+		return nil, fmt.Errorf("unknown plan provider category: %s", provider.Category)
+	}
+
+	newAPIKey = strings.TrimSpace(newAPIKey)
+	if newAPIKey == "" {
+		return nil, fmt.Errorf("API key is required")
+	}
+	newForwardAPIKey = normalizePlanForwardAPIKey(provider.Category, strings.TrimSpace(newForwardAPIKey))
+
+	oldAPIKey := provider.APIKey
+	oldForwardAPIKey := provider.ForwardAPIKey
+
+	// 1. 同步转发凭据到关联渠道（仅控制台 token plan 类，且 forward 值发生变化）。
+	if isConsoleTokenPlanCategory(provider.Category) && newForwardAPIKey != oldForwardAPIKey {
+		if err := updatePlanForwardChannelKey(ctx, &provider, oldForwardAPIKey, newForwardAPIKey, info); err != nil {
+			return nil, fmt.Errorf("update forward channel key: %w", err)
+		}
+	}
+
+	// 2. 用新主凭据查询用量。
+	provider.APIKey = newAPIKey
+	provider.ForwardAPIKey = newForwardAPIKey
+
+	if provider.ProviderType == model.PlanProviderTypeBalance {
+		result, err := QueryBalance(ctx, provider.Category, provider.APIKey, provider.BaseURL)
+		if err != nil {
+			return nil, fmt.Errorf("query balance: %w", err)
+		}
+		provider.Balance = result.Balance
+		provider.BalanceUsed = result.BalanceUsed
+	} else {
+		result, err := QueryTokenPlan(ctx, provider.Category, provider.APIKey, provider.BaseURL, provider.ProxyMode, provider.ProxyConfigID)
+		if err != nil {
+			return nil, fmt.Errorf("query tokenplan: %w", err)
+		}
+		provider.QuotaTotal = result.QuotaTotal
+		provider.QuotaUsed = result.QuotaUsed
+		if result.QuotaResetAt != nil {
+			provider.QuotaResetAt = result.QuotaResetAt
+		}
+		provider.WeeklyTotal = result.WeeklyTotal
+		provider.WeeklyUsed = result.WeeklyUsed
+		if result.WeeklyResetAt != nil {
+			provider.WeeklyResetAt = result.WeeklyResetAt
+		}
+		provider.FiveHourTotal = result.FiveHourTotal
+		provider.FiveHourUsed = result.FiveHourUsed
+		provider.FiveHourResetAt = result.FiveHourResetAt
+	}
+
+	now := time.Now()
+	provider.LastRefresh = &now
+	provider.UpdatedAt = now
+
+	if err := db.GetDB().WithContext(ctx).Save(&provider).Error; err != nil {
+		return nil, fmt.Errorf("save plan provider: %w", err)
+	}
+
+	// 记录旧凭据被替换（便于排查；不输出敏感值）。
+	log.Infof("planprovider: updated credentials for provider %d (category=%s, api_key changed=%v, forward_api_key changed=%v)",
+		id, provider.Category, newAPIKey != oldAPIKey, newForwardAPIKey != oldForwardAPIKey)
+
+	return &provider, nil
+}
+
+// updatePlanForwardChannelKey 同步转发凭据变更到 provider 关联的渠道 key。
+//
+// 三种情形：
+//   - 旧 forward 非空 → 新 forward 非空：在渠道 keys 中按旧值匹配那把 key 并更新（ChannelKeyUpdateRequest）。
+//   - 旧 forward 非空 → 新 forward 空：匹配到的 key 删除（KeysToDelete）。仅当该 key 仅属于本 provider 的渠道时删除，
+//     复用渠道（多 provider 共享）时不删以免误伤。
+//   - 旧 forward 空 → 新 forward 非空：原本仅监控无渠道，本次新建渠道并归入 Plan 渠道分组（同 AddProvider）。
+func updatePlanForwardChannelKey(ctx context.Context, provider *model.PlanProvider, oldForwardAPIKey, newForwardAPIKey string, info *model.PlanProviderCategoryInfo) error {
+	// 原本无关联渠道且本次清空：无操作。
+	if provider.ChannelID == 0 && newForwardAPIKey == "" {
+		return nil
+	}
+
+	// 情形 3：旧 forward 空 → 新 forward 非空，新建渠道。
+	if provider.ChannelID == 0 && newForwardAPIKey != "" {
+		channelGroupID, err := ensurePlanChannelGroup(ctx)
+		if err != nil {
+			return fmt.Errorf("ensure plan channel group: %w", err)
+		}
+		channelBaseURL := planForwardAPIBaseURL(provider.Category)
+		channelName := fmt.Sprintf("[%s] %s", planForwardLabel(provider.Category), provider.Name)
+		channel := &model.Channel{
+			Name:      channelName,
+			GroupID:   channelGroupID,
+			Type:      outbound.OutboundTypeOpenAIChat,
+			Enabled:   true,
+			BaseUrls:  []model.BaseUrl{{URL: channelBaseURL, Delay: 0}},
+			Keys:      []model.ChannelKey{{Enabled: true, ChannelKey: newForwardAPIKey}},
+			Model:     info.Models,
+			AutoSync:  false,
+			AutoGroup: model.AutoGroupTypeNone,
+		}
+		if err := op.ChannelCreate(channel, ctx); err != nil {
+			return fmt.Errorf("create channel: %w", err)
+		}
+		provider.ChannelID = channel.ID
+		return nil
+	}
+
+	// 情形 1/2：有关联渠道，匹配旧 forward 值定位 key。
+	ch, err := op.ChannelGet(provider.ChannelID, ctx)
+	if err != nil || ch == nil {
+		return fmt.Errorf("get channel %d: %w", provider.ChannelID, err)
+	}
+
+	// 找到匹配旧 forward 值的 key 行。
+	var matchedKeyID int
+	for _, k := range ch.Keys {
+		if k.ChannelKey == oldForwardAPIKey {
+			matchedKeyID = k.ID
+			break
+		}
+	}
+
+	if newForwardAPIKey != "" {
+		// 情形 1：更新匹配到的 key；未匹配到（可能 key 已被手动删）则追加新 key。
+		if matchedKeyID > 0 {
+			updateReq := &model.ChannelUpdateRequest{
+				ID: provider.ChannelID,
+				KeysToUpdate: []model.ChannelKeyUpdateRequest{
+					{ID: matchedKeyID, ChannelKey: &newForwardAPIKey},
+				},
+			}
+			if _, err := op.ChannelUpdate(updateReq, ctx); err != nil {
+				return fmt.Errorf("update channel key: %w", err)
+			}
+		} else {
+			addReq := &model.ChannelUpdateRequest{
+				ID: provider.ChannelID,
+				KeysToAdd: []model.ChannelKeyAddRequest{
+					{Enabled: true, ChannelKey: newForwardAPIKey},
+				},
+			}
+			if _, err := op.ChannelUpdate(addReq, ctx); err != nil {
+				return fmt.Errorf("add channel key: %w", err)
+			}
+		}
+		return nil
+	}
+
+	// 情形 2：新 forward 空，删除匹配到的 key（复用渠道不删以免误伤）。
+	if matchedKeyID > 0 && !isReusedChannel(ctx, provider.ChannelID) {
+		delReq := &model.ChannelUpdateRequest{
+			ID:           provider.ChannelID,
+			KeysToDelete: []int{matchedKeyID},
+		}
+		if _, err := op.ChannelUpdate(delReq, ctx); err != nil {
+			return fmt.Errorf("delete channel key: %w", err)
+		}
+	}
+	return nil
+}
+
 // DeleteProvider 删除 Plan Provider，同时删除关联的 Channel。
 //
 // 顺序：先删 provider 记录，再用 op.ChannelDel 清理 channel 及其依赖

@@ -35,6 +35,7 @@ import {
     useTokenPlanCategories,
     useAddPlanProvider,
     useRefreshPlanProvider,
+    useUpdatePlanProviderCredentials,
     useDeletePlanProvider,
     type PlanProvider,
     type PlanProviderCategoryInfo,
@@ -97,6 +98,8 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
     const addMutation = useAddPlanProvider();
     const refreshMutation = useRefreshPlanProvider();
     const deleteMutation = useDeletePlanProvider();
+    const updateCredsMutation = useUpdatePlanProviderCredentials();
+    const [editingProvider, setEditingProvider] = useState<PlanProvider | null>(null);
     const [addOpen, setAddOpen] = useState(false);
     const [selectedCategory, setSelectedCategory] = useState('');
     const [apiKey, setApiKey] = useState('');
@@ -174,6 +177,10 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
             toast.error(msg);
         }
     }, [deleteMutation]);
+
+    const handleEdit = useCallback((p: PlanProvider) => {
+        setEditingProvider(p);
+    }, []);
 
     const selectedInfo = categories.find(c => c.category === selectedCategory);
 
@@ -388,13 +395,20 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
                             provider={provider}
                             onRefresh={handleRefresh}
                             onDelete={handleDelete}
+                            onEdit={handleEdit}
                             isRefreshing={refreshMutation.isPending}
                             isDeleting={deleteMutation.isPending}
+                            isEditing={updateCredsMutation.isPending}
                             compact={type === 'tokenplan' && compactView}
                         />
                     ))}
                 </div>
             )}
+            <EditCredentialsDialog
+                provider={editingProvider}
+                categories={categories}
+                onOpenChange={(open) => { if (!open) setEditingProvider(null); }}
+            />
         </div>
     );
 }
@@ -523,15 +537,19 @@ function ProviderCard({
     provider,
     onRefresh,
     onDelete,
+    onEdit,
     isRefreshing,
     isDeleting,
+    isEditing,
     compact = false,
 }: {
     provider: PlanProvider;
     onRefresh: (id: number) => void;
     onDelete: (id: number) => void;
+    onEdit: (provider: PlanProvider) => void;
     isRefreshing: boolean;
     isDeleting: boolean;
+    isEditing: boolean;
     compact?: boolean;
 }) {
     const t = useTranslations('hub');
@@ -581,8 +599,23 @@ function ProviderCard({
                                 size="icon"
                                 variant="ghost"
                                 className="size-8 rounded-lg"
+                                onClick={() => onEdit(provider)}
+                                disabled={isRefreshing || isDeleting || isEditing}
+                            >
+                                <Key className={cn('size-3.5', isEditing && 'animate-pulse')} />
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t('plan.editCredentials') || '更换凭据'}</TooltipContent>
+                    </Tooltip>
+
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button
+                                size="icon"
+                                variant="ghost"
+                                className="size-8 rounded-lg"
                                 onClick={() => onRefresh(provider.id)}
-                                disabled={isRefreshing || isDeleting}
+                                disabled={isRefreshing || isDeleting || isEditing}
                             >
                                 <RefreshCw className={cn('size-3.5', isRefreshing && 'animate-spin')} />
                             </Button>
@@ -682,5 +715,168 @@ function ProviderCard({
                 </div>
             )}
         </div>
+    );
+}
+
+// --- Edit Credentials Dialog ---
+
+// EditCredentialsDialog 更换 Plan Provider 凭据。
+// 控制台会话凭据（stepfun/sensenova/bailian/volcengine/mimo/codex）会过期，
+// 刷新时报 401/未登录；此对话框让用户粘贴新凭据并立即重查用量，
+// 无需删除重建（避免连带删除关联的转发渠道与 channel keys 状态）。
+// 凭据不回填（列表已脱敏），用户粘贴新值即可。
+function EditCredentialsDialog({
+    provider,
+    categories,
+    onOpenChange,
+}: {
+    provider: PlanProvider | null;
+    categories: PlanProviderCategoryInfo[];
+    onOpenChange: (open: boolean) => void;
+}) {
+    const t = useTranslations('hub');
+    const updateMutation = useUpdatePlanProviderCredentials();
+    const [apiKey, setApiKey] = useState('');
+    const [forwardApiKey, setForwardApiKey] = useState('');
+
+    const open = provider !== null;
+
+    // 切换 provider 时重置输入（按 id 变化触发）
+    const editingId = provider?.id;
+    useEffect(() => {
+        if (editingId !== undefined) {
+            setApiKey('');
+            setForwardApiKey('');
+        }
+    }, [editingId]);
+
+    if (!provider) {
+        return (
+            <Dialog open={false} onOpenChange={onOpenChange}>
+                <DialogContent className="sm:max-w-md" />
+            </Dialog>
+        );
+    }
+
+    const category = provider.category;
+    const isConsoleTokenPlan = category === 'stepfun_plan' || category === 'sensenova_plan' || category === 'bailian_plan' || category === 'volcengine_plan';
+    const isVolcenginePlan = category === 'volcengine_plan';
+    const isMiMoPlan = category === 'mimo_plan';
+    const isCodexPlan = category === 'codex';
+    const supportsForwardApiKey = isConsoleTokenPlan && !isMiMoPlan;
+
+    const catInfo = categories.find(c => c.category === category);
+
+    const handleSubmit = async () => {
+        if (!apiKey.trim()) return;
+        try {
+            await updateMutation.mutateAsync({
+                id: provider.id,
+                api_key: apiKey.trim(),
+                forward_api_key: supportsForwardApiKey && forwardApiKey.trim() ? forwardApiKey.trim() : undefined,
+            });
+            toast.success(t('plan.credentialsUpdated') || '凭据已更新');
+            onOpenChange(false);
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : (t('plan.updateFailed') || '更新失败');
+            toast.error(msg);
+        }
+    };
+
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                    <DialogTitle>{t('plan.editCredentialsTitle') || '更换凭据'}</DialogTitle>
+                    <DialogDescription>
+                        {t('plan.editCredentialsDesc') || '凭据过期或失效时粘贴新凭据，系统将立即重新查询用量。'}
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-2">
+                    <div className="rounded-lg bg-muted/50 p-2.5">
+                        <p className="text-xs text-muted-foreground">{catInfo?.name || provider.name}</p>
+                        <p className="text-sm font-medium truncate">{provider.name}</p>
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium">
+                            {isMiMoPlan
+                                ? (t('plan.cookieLabel') || 'Cookie')
+                                : isCodexPlan
+                                    ? (t('plan.codexOAuthLabel') || 'OAuth JSON')
+                                    : isConsoleTokenPlan
+                                        ? (t('plan.consoleTokenLabel') || '控制台 Token')
+                                        : (t('plan.apiKeyLabel') || 'API Key')}
+                        </label>
+                        <Input
+                            type="password"
+                            placeholder={isMiMoPlan
+                                ? (t('plan.mimoServiceTokenPlaceholder') || '粘贴 platform.xiaomimimo.com 的完整 Cookie')
+                                : isCodexPlan
+                                    ? (t('plan.codexOAuthPlaceholder') || '粘贴 OAuth JSON 凭据')
+                                    : isConsoleTokenPlan
+                                        ? (isVolcenginePlan
+                                            ? (t('plan.volcengineCredentialPlaceholder') || 'Cookie值|||x-csrf-token值')
+                                            : category === 'sensenova_plan'
+                                                ? (t('plan.sensenovaTokenPlaceholder') || '粘贴控制台 Bearer Token 值')
+                                                : category === 'bailian_plan'
+                                                    ? (t('plan.bailianTokenPlaceholder') || '粘贴控制台完整 Cookie 值')
+                                                    : (t('plan.oasisTokenPlaceholder') || '粘贴控制台 Cookie 中的 Oasis-Token 值'))
+                                        : (t('plan.apiKeyPlaceholder') || '请输入 API Key')}
+                            value={apiKey}
+                            onChange={(e) => setApiKey(e.target.value)}
+                        />
+                        {isConsoleTokenPlan && (
+                            <p className="text-[11px] leading-tight text-amber-500">
+                                {isVolcenginePlan
+                                    ? (t('plan.volcengineCredentialHint') || '会话过期后需重新获取 Cookie 和 x-csrf-token。')
+                                    : category === 'bailian_plan'
+                                        ? (t('plan.bailianTokenHint') || '会话过期后需重新获取控制台 Cookie。')
+                                        : category === 'sensenova_plan'
+                                            ? (t('plan.sensenovaTokenHint') || 'Token 有效期约 3 小时，过期后需重新获取。')
+                                            : (t('plan.oasisTokenHint') || 'Oasis-Token 有效期约 30 分钟，过期后需重新获取。')}
+                            </p>
+                        )}
+                        {isCodexPlan && (
+                            <p className="text-[11px] leading-tight text-amber-500">
+                                {t('plan.codexOAuthHint') || 'access_token 有效期较短，过期后需重新获取。'}
+                            </p>
+                        )}
+                    </div>
+
+                    {supportsForwardApiKey && (
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">
+                                {t('plan.forwardApiKeyLabel') || 'API Key（可选）'}
+                            </label>
+                            <Input
+                                type="password"
+                                placeholder={t('plan.forwardApiKeyPlaceholderOptional') || '留空保持不变，填写则更新转发渠道 key'}
+                                value={forwardApiKey}
+                                onChange={(e) => setForwardApiKey(e.target.value)}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                {t('plan.forwardApiKeyEditHint') || '留空表示不更换转发凭据；填写新值将同步更新关联渠道的 key。'}
+                            </p>
+                        </div>
+                    )}
+
+                    <Button
+                        className="w-full rounded-xl"
+                        onClick={handleSubmit}
+                        disabled={!apiKey.trim() || updateMutation.isPending}
+                    >
+                        {updateMutation.isPending ? (
+                            <>
+                                <Loader2 className="size-4 animate-spin mr-2" />
+                                {t('plan.querying') || '查询中...'}
+                            </>
+                        ) : (
+                            t('plan.update') || '更新并查询'
+                        )}
+                    </Button>
+                </div>
+            </DialogContent>
+        </Dialog>
     );
 }

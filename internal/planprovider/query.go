@@ -145,8 +145,11 @@ func QueryTokenPlan(ctx context.Context, category model.PlanProviderCategory, ap
 
 // --- DeepSeek ---
 
+// deepSeekBalanceURL 提取为包级变量以便测试覆盖（httptest mock server）。
+var deepSeekBalanceURL = "https://api.deepseek.com/user/balance"
+
 func queryDeepSeekBalance(ctx context.Context, apiKey string) (*BalanceResult, error) {
-	body, err := doGet(ctx, "https://api.deepseek.com/user/balance", apiKey)
+	body, err := doGet(ctx, deepSeekBalanceURL, apiKey)
 	if err != nil {
 		return nil, err
 	}

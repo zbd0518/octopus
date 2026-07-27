@@ -102,6 +102,23 @@ export function useRefreshPlanProvider() {
     });
 }
 
+export function useUpdatePlanProviderCredentials() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (data: {
+            id: number;
+            api_key: string;
+            forward_api_key?: string;
+        }) => apiClient.put(`/api/v1/plan-provider/credentials/${data.id}`, {
+            api_key: data.api_key,
+            forward_api_key: data.forward_api_key,
+        }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['plan-provider'] });
+        },
+    });
+}
+
 export function useDeletePlanProvider() {
     const queryClient = useQueryClient();
     return useMutation({
