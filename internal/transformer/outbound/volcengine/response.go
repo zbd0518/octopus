@@ -40,9 +40,9 @@ func (o *ResponseOutbound) TransformRequest(ctx context.Context, request *model.
 	}
 	switch request.ReasoningEffort {
 	case "minimal":
-		responsesReq.Thinking.Type = ThinkingTypeDisabled
+		responsesReq.Thinking = &Thinking{Type: ThinkingTypeDisabled}
 	case "low", "medium", "high":
-		responsesReq.Thinking.Type = ThinkingTypeEnabled
+		responsesReq.Thinking = &Thinking{Type: ThinkingTypeEnabled}
 	default:
 	}
 
@@ -86,7 +86,7 @@ func (o *ResponseOutbound) TransformStream(ctx context.Context, eventData []byte
 type ResponsesRequest struct {
 	*openai.ResponsesRequest
 	Input    ResponsesInput `json:"input"`
-	Thinking Thinking       `json:"thinking,omitzero"`
+	Thinking *Thinking      `json:"thinking,omitempty"`
 }
 
 type ThinkingType string

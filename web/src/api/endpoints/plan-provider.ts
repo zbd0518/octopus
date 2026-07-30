@@ -19,6 +19,8 @@ export interface PlanProvider {
     provider_type: 'balance' | 'tokenplan';
     api_key: string;
     forward_api_key: string;
+    team_organization_id: string;
+    team_project_id: string;
     base_url: string;
     channel_id: number;
     balance: number;
@@ -82,6 +84,9 @@ export function useAddPlanProvider() {
             forward_api_key?: string;
             name?: string;
             // 代理配置：目前仅 Codex 类生效（chatgpt.com 国内不可直连）
+            // 智谱团队版专用：组织 ID / 项目 ID
+            team_organization_id?: string;
+            team_project_id?: string;
             proxy_mode?: ProxyMode;
             proxy_config_id?: number | null;
         }) => apiClient.post('/api/v1/plan-provider/add', data),
@@ -109,9 +114,13 @@ export function useUpdatePlanProviderCredentials() {
             id: number;
             api_key: string;
             forward_api_key?: string;
+            team_organization_id?: string;
+            team_project_id?: string;
         }) => apiClient.put(`/api/v1/plan-provider/credentials/${data.id}`, {
             api_key: data.api_key,
             forward_api_key: data.forward_api_key,
+            team_organization_id: data.team_organization_id,
+            team_project_id: data.team_project_id,
         }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['plan-provider'] });

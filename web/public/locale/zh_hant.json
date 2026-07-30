@@ -167,6 +167,8 @@
       "bailianTokenHint": "需登入 bailian.console.aliyun.com 控制台，按 F12 打開開發者工具 → Network（網路）→ 重新整理頁面，點擊任意請求，從請求頭（Request Headers）複製完整 Cookie 值。工作階段過期後需重新取得。",
       "volcengineCredentialPlaceholder": "Cookie值|||x-csrf-token值（從控制台請求頭複製，用竪線分隔）",
       "volcengineCredentialHint": "登入 console.volcengine.com/ark → F12 → Network → 任意 plan 介面，複製完整 Cookie 請求頭和 x-csrf-token 請求頭，用 ||| 連接。工作階段過期後需重新取得。",
+      "volcengineAKSKPlaceholder": "AccessKey ID|||Secret Access Key（火山控制面 OpenAPI 簽署憑證，與推理 Key 不同）",
+      "volcengineAKSKHint": "在 console.volcengine.com/iam → 金鑰管理 建立 AccessKey ID 與 Secret（與推理 API Key 是兩套憑證），用 ||| 連接。系統透過控制面 OpenAPI 簽署查詢，先查 Agent Plan，無訂閱再查 Coding Plan。",
       "cookieLabel": "Cookie",
       "mimoPassTokenPlaceholder": "貼上 account.xiaomi.com 的完整 Cookie",
       "mimoServiceTokenPlaceholder": "貼上 platform.xiaomimimo.com 的完整 Cookie",
@@ -175,6 +177,13 @@
       "codexOAuthLabel": "OAuth JSON",
       "codexOAuthPlaceholder": "貼上 OAuth JSON 憑證（含 access_token 和 account_id）",
       "codexOAuthHint": "從 ChatGPT 訂閱帳號取得 OAuth JSON 憑證（含 access_token 和 account_id）。系統將自動建立 Codex 類型轉發渠道（接入點 chatgpt.com/backend-api/codex/responses）。access_token 有效期較短，過期後需重新取得。",
+      "zhipuTeamOrgIdLabel": "組織 ID",
+      "zhipuTeamOrgIdPlaceholder": "bigmodel-organization 請求頭值",
+      "zhipuTeamProjectIdLabel": "專案 ID",
+      "zhipuTeamProjectIdPlaceholder": "bigmodel-project 請求頭值",
+      "zhipuTeamHint": "智譜團隊版需 API Key + 組織 ID + 專案 ID 三者齊全（從 open.bigmodel.cn 控制台團隊設定頁取得）。",
+      "zhipuTeamEditHint": "留空則清空組織/專案 ID；填寫新值將一併更新。",
+      "zhipuTeamMissingIds": "智譜團隊版需填寫組織 ID 和專案 ID",
       "editCredentials": "更換憑證",
       "editCredentialsTitle": "更換憑證",
       "editCredentialsDesc": "憑證過期或失效時貼上新憑證，系統將立即重新查詢用量。",
@@ -1401,6 +1410,21 @@
         "hint": "限制一次請求在所有候選渠道上的總轉發次數（不含冷卻/熔斷跳過），0 表示不限制。",
         "placeholder": "請輸入總嘗試次數"
       },
+      "rateLimitHold": {
+        "label": "429 限流渠道內延時重試",
+        "hint": "開啟後，上游回傳 429 時不會立刻換渠道，而是依設定間隔在目前渠道內重試，直到超過總等待上限才切換下一渠道。預設關閉，行為與歷史一致。",
+        "enabledDetail": "下方「重試間隔」與「總等待上限」僅在開啟後生效。",
+        "interval": {
+          "label": "429 重試間隔（秒）",
+          "hint": "每次 429 後等待多久再試目前渠道。",
+          "placeholder": "10"
+        },
+        "maxWait": {
+          "label": "429 總等待上限（秒）",
+          "hint": "在同一渠道內累計等待超過該時長後，才切換到下一渠道。",
+          "placeholder": "60"
+        }
+      },
       "emptyOutput": {
         "label": "空輸出自動重試",
         "hint": "當上游回傳成功但輸出為空（非串流：CompletionTokens=0 且無內容；串流：無任何有效資料塊）時自動重試。"
@@ -2116,7 +2140,13 @@
         "clearing": "清空中..."
       },
       "clearContentsSuccess": "日誌內容已清空",
-      "clearContentsFailed": "清空日誌內容失敗"
+      "clearContentsFailed": "清空日誌內容失敗",
+      "autoRefresh": {
+        "label": "自動重新整理",
+        "description": "按設定間隔自動重新整理日誌列表，此偏好儲存於本機瀏覽器。",
+        "off": "關閉",
+        "seconds": "{count} 秒"
+      }
     },
     "navOrder": {
       "title": "頁面順序與顯示",

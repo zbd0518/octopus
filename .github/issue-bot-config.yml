@@ -1,0 +1,192 @@
+# AI Issue Bot 配置文件 — Octopus
+# 参考 xuexb/github-bot 的配置驱动设计，所有规则在此定义
+#
+# 功能：
+#   1. Issue AI 分类（LLM 自动判断 bug/enhancement/question + 打标签 + 回复）
+#   2. Issue 格式校验（不规范自动关闭，参考 xuexb replyInvalid）
+#   3. Issue label→assignee 自动分配（参考 xuexb autoAssign）
+#   4. PR 标题格式校验（参考 xuexb replyInvalidTitle）
+#   5. PR 标题前缀→label 映射（参考 xuexb titlePrefixToLabel）
+#   6. PR label→reviewer 自动请求（参考 xuexb autoReviewRequest）
+#
+# Release notes 由 changelog.yml（changelogithub）负责，本 bot 不参与。
+
+# ============================================================
+# Issue 配置
+# ============================================================
+issue:
+  # 是否启用 AI 分类（需要 OCTOPUS_API_KEY / OCTOPUS_BASE_URL secrets）
+  ai_triage: true
+  # AI 判定为 invalid（胡言乱语/模型问题/与本项目无关）时自动关闭 issue（state_reason: not_planned）
+  auto_close_invalid: true
+
+  # Issue 必须包含的隐藏标记（不在正文里出现就关闭，参考 xuexb replyInvalid）
+  # 留空则不校验
+  required_marker: ""
+  # 标题前缀校验：必须以方括号前缀开头（如 [Bug] [Feature]），否则按未计划关闭
+  title_prefix_validation:
+    enabled: true
+    # 合法前缀（方括号内不区分大小写，字母打乱/错拼不算）
+    valid_prefixes: ["Bug", "Feature"]
+    # 无前缀或不合格前缀的关闭回复模板
+    invalid_prefix_comment: |
+      hi @{author}，感谢提交 Issue！
+
+      但是该 Issue 的标题不符合规范。标题必须以方括号前缀开头，例如 `[Bug]` 或 `[Feature]`。
+
+      请检查标题拼写是否正确（打乱字母或错拼不算合格前缀），修改后重新提交 Issue，当前 Issue 将被关闭。
+    # 侮辱性标题检测由 AI 分类处理（SYSTEM_PROMPT 中 profane 分类），无需算法配置
+
+  # 不规范 issue 的关闭回复模板
+  invalid_comment: |
+    hi @{author}，感谢提交 Issue！
+
+    但是该 Issue 不符合规范，将直接被关闭。请使用 Issue 模板重新提交，谢谢！
+
+  # label → assignee 自动分配映射（参考 xuexb autoAssign）
+  label_to_assignee:
+    bug: "lingyuins"
+    enhancement: "lingyuins"
+    question: "lingyuins"
+
+  # label → 自动回复模板（参考 xuexb replyNeedDemo）
+  label_to_reply:
+    # need-demo: "hi @{author}，请提供一个最小可复现示例。"
+    # need-update: "hi @{author}，请更新并补充更多信息。"
+
+# ============================================================
+# Pull Request 配置
+# ============================================================
+pull_request:
+  # PR 标题前缀白名单（与 .commitlintrc.json 的 conventional commits 对齐）
+  # PR 标题必须以 `前缀:` 或 `前缀(scope):` 开头，否则标记 invalid
+  commit_prefixes:
+    - feat
+    - fix
+    - docs
+    - style
+    - refactor
+    - perf
+    - test
+    - build
+    - ci
+    - chore
+    - revert
+
+  # 前缀 → label 映射（参考 xuexb titlePrefixToLabel）
+  prefix_to_label:
+    feat: enhancement
+    fix: bug
+    docs: documentation
+    perf: performance
+    refactor: refactor
+    test: test
+    chore: chore
+    revert: revert
+
+  # 不规范标题的回复模板（参考 xuexb replyInvalidTitle）
+  invalid_title_comment: |
+    hi @{author}，感谢提交 PR！
+
+    但是 PR 标题不符合 [Conventional Commits](https://www.conventionalcommits.org/) 规范，请修改为以下格式：
+
+    ```
+    feat: 新功能描述
+    fix: 修复问题描述
+    docs: 文档更新描述
+    ```
+
+    请及时修改标题，谢谢！
+
+  # 修正后的回复（参考 xuexb replyInvalidTitle 的 edit 事件）
+  title_fixed_comment: "hi @{author}，感谢及时修正标题格式！🎉"
+
+  # label → reviewer 自动请求（参考 xuexb autoReviewRequest）
+  label_to_reviewer:
+    bug: "lingyuins"
+    enhancement: "lingyuins"
+
+# ============================================================
+# Release 配置
+# ============================================================
+release:
+  # 禁用：Octopus 的 release notes 由 changelog.yml（changelogithub）生成，
+  # 若此处也创建 release 会与 changelogithub 冲突（422 already exists）。
+  enabled: false
+
+# ============================================================
+# LLM 配置
+# ============================================================
+llm:
+  # 模型名（需与 Octopus 网关中的 model ID 一致）
+  model: "gpt-oss-120b-free"
+
+  # 网关地址 — 不写死在这里！从环境变量 OCTOPUS_BASE_URL 读取（GitHub Secret）
+
+  # 温度（分类任务偏低）
+  temperature: 0.3
+
+  # 最大输出 token
+  max_tokens: 1000
+
+  # Issue 正文最大长度（截断省 token）
+  max_body_length: 4000
+
+  # 视觉识别配置
+  vision:
+    # 是否启用图片识别（模型不支持视觉时设为 false，自动跳过图片）
+    enabled: false
+
+    # 视觉模型名（如果主模型不支持视觉，可指定单独的视觉模型）
+    model: ""
+
+# ============================================================
+# 安全防护
+# ============================================================
+safety:
+  # Prompt 注入防护
+  prompt_injection:
+    # 是否启用（强烈建议 true）
+    enabled: true
+
+    # 需要过滤的注入关键词（出现在 issue 正文中时会被零宽字符隔开）
+    injection_patterns:
+      - "忽略之前的指令"
+      - "ignore previous instructions"
+      - "ignore all previous"
+      - "你现在是"
+      - "you are now"
+      - "system:"
+      - "忽略以上"
+      - "忘记所有规则"
+      - "forget all rules"
+      - "<\\/?[a-z]+>"  # HTML/XML 标签注入
+
+    # 用零宽空格隔开关键词字符，破坏注入
+    injection_zero_width: true
+
+    # 同形异义字符防护（防西里尔/希腊字母绕过关键词匹配）
+    homoglyph_protection: true
+
+    # 系统伪装检测（防假装 GitHub/系统通知注入）
+    system_impersonation_detection: true
+
+  # Token 消耗防护
+  token_protection:
+    # 是否启用
+    enabled: true
+
+    # 单字符最大重复次数（防止 aaaaa... 这种 token 膨胀攻击）
+    max_char_repeat: 50
+
+    # 单行最大长度（超长行截断）
+    max_line_length: 500
+
+    # 最大行数（防止超长正文）
+    max_lines: 200
+
+    # LLM 调用超时（秒）
+    llm_timeout: 60
+
+    # LLM 响应最大 token 数（硬上限，防止输出失控）
+    llm_max_output_tokens: 2000

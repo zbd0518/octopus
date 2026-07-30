@@ -30,7 +30,7 @@ func fetchAccountQuotaImpl(ctx context.Context, acct *model.PoolAccount) (*Quota
 			oauthJSON = cred.EffectiveKey(acct.Platform)
 		}
 		tp, err := planprovider.QueryTokenPlan(ctx, model.PlanProviderCodex, oauthJSON, "",
-			model.ProxyUsageModeDirect, acct.ProxyConfigID)
+			model.ProxyUsageModeDirect, acct.ProxyConfigID, "", "")
 		if err != nil {
 			return nil, err
 		}
@@ -43,7 +43,7 @@ func fetchAccountQuotaImpl(ctx context.Context, acct *model.PoolAccount) (*Quota
 			credential = cred.Token
 		}
 		tp, err := planprovider.QueryTokenPlan(ctx, model.PlanProviderVolcenginePlan, credential, "",
-			model.ProxyUsageModeDirect, nil)
+			model.ProxyUsageModeDirect, nil, "", "")
 		if err != nil {
 			return nil, err
 		}

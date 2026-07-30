@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
-import { ScrollText, Calendar, Hash, Trash2, Terminal, FolderX, FileText } from 'lucide-react';
+import { ScrollText, Calendar, Hash, Trash2, Terminal, FolderX, FileText, RefreshCw } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,7 @@ import { useSettingList, useSetSetting, SettingKey } from '@/api/endpoints/setti
 import { useGroupList } from '@/api/endpoints/group';
 import { useClearLogs, useClearLogContents } from '@/api/endpoints/log';
 import { toast } from '@/components/common/Toast';
+import { useLogAutoRefreshStore, LOG_AUTO_REFRESH_OPTIONS, type LogAutoRefreshInterval } from '@/components/modules/log/ui-store';
 
 type KeepMode = 'count' | 'days';
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -24,6 +25,8 @@ export function SettingLog() {
     const setSetting = useSetSetting();
     const clearLogs = useClearLogs();
     const clearLogContents = useClearLogContents();
+    const autoRefresh = useLogAutoRefreshStore((s) => s.interval);
+    const setAutoRefresh = useLogAutoRefreshStore((s) => s.setInterval);
 
     const [enabled, setEnabled] = useState(true);
     const [contentEnabled, setContentEnabled] = useState(true);
@@ -282,6 +285,30 @@ export function SettingLog() {
                     onCheckedChange={handleContentEnabledChange}
                     disabled={!enabled}
                 />
+            </div>
+
+            {/* 日志列表自动刷新间隔（浏览器本地偏好） */}
+            <div className="flex flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm">
+                <div className="flex items-center gap-3">
+                    <RefreshCw className="h-5 w-5 text-muted-foreground" />
+                    <div className="flex flex-col">
+                        <span className="text-sm font-medium">{t('log.autoRefresh.label')}</span>
+                        <span className="text-xs text-muted-foreground">{t('log.autoRefresh.description')}</span>
+                    </div>
+                </div>
+                <div className="flex gap-2 mt-1">
+                    {LOG_AUTO_REFRESH_OPTIONS.map((opt) => (
+                        <Button
+                            key={opt}
+                            variant={autoRefresh === opt ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={() => setAutoRefresh(opt as LogAutoRefreshInterval)}
+                            className="rounded-xl flex-1 md:flex-none"
+                        >
+                            {opt === 0 ? t('log.autoRefresh.off') : t('log.autoRefresh.seconds', { count: opt })}
+                        </Button>
+                    ))}
+                </div>
             </div>
 
             {/* 应用日志级别 */}

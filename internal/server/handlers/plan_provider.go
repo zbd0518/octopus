@@ -73,6 +73,9 @@ type addPlanProviderRequest struct {
 	// 代理配置：目前仅 Codex 类生效（chatgpt.com 国内不可直连）。
 	ProxyMode     model.ProxyUsageMode `json:"proxy_mode,omitempty"`
 	ProxyConfigID *int                 `json:"proxy_config_id,omitempty"`
+	// 智谱团队版（zhipu_team）专用：组织 ID / 项目 ID，其他厂商忽略。
+	TeamOrganizationID string `json:"team_organization_id,omitempty"`
+	TeamProjectID      string `json:"team_project_id,omitempty"`
 }
 
 func addPlanProvider(c *gin.Context) {
@@ -82,7 +85,7 @@ func addPlanProvider(c *gin.Context) {
 		return
 	}
 
-	provider, err := planprovider.AddProvider(c.Request.Context(), req.Category, req.APIKey, req.ForwardAPIKey, req.Name, req.ProxyMode, req.ProxyConfigID)
+	provider, err := planprovider.AddProvider(c.Request.Context(), req.Category, req.APIKey, req.ForwardAPIKey, req.Name, req.ProxyMode, req.ProxyConfigID, req.TeamOrganizationID, req.TeamProjectID)
 	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -108,6 +111,9 @@ func refreshPlanProvider(c *gin.Context) {
 type updatePlanProviderCredentialsRequest struct {
 	APIKey        string `json:"api_key" binding:"required"`
 	ForwardAPIKey string `json:"forward_api_key,omitempty"`
+	// 智谱团队版（zhipu_team）专用：组织 ID / 项目 ID，留空则清空。
+	TeamOrganizationID string `json:"team_organization_id,omitempty"`
+	TeamProjectID      string `json:"team_project_id,omitempty"`
 }
 
 func updatePlanProviderCredentials(c *gin.Context) {
@@ -123,7 +129,7 @@ func updatePlanProviderCredentials(c *gin.Context) {
 		return
 	}
 
-	provider, err := planprovider.UpdateProviderCredentials(c.Request.Context(), id, req.APIKey, req.ForwardAPIKey)
+	provider, err := planprovider.UpdateProviderCredentials(c.Request.Context(), id, req.APIKey, req.ForwardAPIKey, req.TeamOrganizationID, req.TeamProjectID)
 	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return

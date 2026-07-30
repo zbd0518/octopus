@@ -52,7 +52,7 @@ func ListProviders(ctx context.Context, providerType model.PlanProviderType) ([]
 //
 // proxyMode / proxyConfigID 仅 Codex 类生效（chatgpt.com 国内不可直连）：
 // 同时作用于用量查询链路与自动创建的转发渠道；其他厂商强制 direct。
-func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKey, forwardAPIKey, customName string, proxyMode model.ProxyUsageMode, proxyConfigID *int) (*model.PlanProvider, error) {
+func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKey, forwardAPIKey, customName string, proxyMode model.ProxyUsageMode, proxyConfigID *int, teamOrgID, teamProjectID string) (*model.PlanProvider, error) {
 	info := getCategoryInfo(category)
 	if info == nil {
 		return nil, fmt.Errorf("unknown plan provider category: %s", category)
@@ -81,6 +81,15 @@ func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKe
 		return nil, fmt.Errorf("API key is required")
 	}
 
+	teamOrgID = strings.TrimSpace(teamOrgID)
+	teamProjectID = strings.TrimSpace(teamProjectID)
+	// 智谱团队版需 API Key + 组织 ID + 项目 ID 三者齐全，缺一不可。
+	if category == model.PlanProviderZhipuTeam {
+		if teamOrgID == "" || teamProjectID == "" {
+			return nil, fmt.Errorf("zhipu team plan needs the API key + organization ID + project ID")
+		}
+	}
+
 	forwardAPIKey = normalizePlanForwardAPIKey(category, strings.TrimSpace(forwardAPIKey))
 
 	name := customName
@@ -102,7 +111,7 @@ func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKe
 		balance = result.Balance
 		balanceUsed = result.BalanceUsed
 	} else {
-		result, err := QueryTokenPlan(ctx, category, apiKey, info.BaseURL, proxyMode, proxyConfigID)
+		result, err := QueryTokenPlan(ctx, category, apiKey, info.BaseURL, proxyMode, proxyConfigID, teamOrgID, teamProjectID)
 		if err != nil {
 			return nil, fmt.Errorf("query tokenplan: %w", err)
 		}
@@ -205,23 +214,25 @@ func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKe
 	// 3. 持久化 PlanProvider
 	now := time.Now()
 	provider := &model.PlanProvider{
-		Name:          name,
-		Category:      category,
-		ProviderType:  info.Type,
-		APIKey:        apiKey,
-		ForwardAPIKey: forwardAPIKey,
-		BaseURL:       info.BaseURL,
-		ChannelID:     channelID,
-		ProxyMode:     proxyMode,
-		ProxyConfigID: proxyConfigID,
-		Balance:       balance,
-		BalanceUsed:   balanceUsed,
-		QuotaTotal:    quotaTotal,
-		QuotaUsed:     quotaUsed,
-		WeeklyTotal:   weeklyTotal,
-		WeeklyUsed:    weeklyUsed,
-		FiveHourTotal: fiveHourTotal,
-		FiveHourUsed:  fiveHourUsed,
+		Name:               name,
+		Category:           category,
+		ProviderType:       info.Type,
+		APIKey:             apiKey,
+		ForwardAPIKey:      forwardAPIKey,
+		TeamOrganizationID: teamOrgID,
+		TeamProjectID:      teamProjectID,
+		BaseURL:            info.BaseURL,
+		ChannelID:          channelID,
+		ProxyMode:          proxyMode,
+		ProxyConfigID:      proxyConfigID,
+		Balance:            balance,
+		BalanceUsed:        balanceUsed,
+		QuotaTotal:         quotaTotal,
+		QuotaUsed:          quotaUsed,
+		WeeklyTotal:        weeklyTotal,
+		WeeklyUsed:         weeklyUsed,
+		FiveHourTotal:      fiveHourTotal,
+		FiveHourUsed:       fiveHourUsed,
 	}
 
 	if quotaResetAt != nil {
@@ -275,7 +286,7 @@ func RefreshProvider(ctx context.Context, id int) (*model.PlanProvider, error) {
 		provider.Balance = result.Balance
 		provider.BalanceUsed = result.BalanceUsed
 	} else {
-		result, err := QueryTokenPlan(ctx, provider.Category, provider.APIKey, provider.BaseURL, provider.ProxyMode, provider.ProxyConfigID)
+		result, err := QueryTokenPlan(ctx, provider.Category, provider.APIKey, provider.BaseURL, provider.ProxyMode, provider.ProxyConfigID, provider.TeamOrganizationID, provider.TeamProjectID)
 		if err != nil {
 			return nil, fmt.Errorf("refresh tokenplan: %w", err)
 		}
@@ -317,7 +328,7 @@ func RefreshProvider(ctx context.Context, id int) (*model.PlanProvider, error) {
 //   - 用新凭据立即查询一次用量并更新 quota/balance 字段（等价于一次 RefreshProvider）。
 //   - forward_api_key 变更且关联渠道存在时，同步更新渠道里匹配旧 forward 值的那把 key；
 //     若原本没有渠道（旧 forward 为空）而本次填了新 forward，则新建/复用渠道（逻辑同 AddProvider）。
-func UpdateProviderCredentials(ctx context.Context, id int, newAPIKey, newForwardAPIKey string) (*model.PlanProvider, error) {
+func UpdateProviderCredentials(ctx context.Context, id int, newAPIKey, newForwardAPIKey string, newTeamOrgID, newTeamProjectID string) (*model.PlanProvider, error) {
 	var provider model.PlanProvider
 	if err := db.GetDB().WithContext(ctx).First(&provider, id).Error; err != nil {
 		return nil, fmt.Errorf("find plan provider: %w", err)
@@ -333,6 +344,8 @@ func UpdateProviderCredentials(ctx context.Context, id int, newAPIKey, newForwar
 		return nil, fmt.Errorf("API key is required")
 	}
 	newForwardAPIKey = normalizePlanForwardAPIKey(provider.Category, strings.TrimSpace(newForwardAPIKey))
+	newTeamOrgID = strings.TrimSpace(newTeamOrgID)
+	newTeamProjectID = strings.TrimSpace(newTeamProjectID)
 
 	oldAPIKey := provider.APIKey
 	oldForwardAPIKey := provider.ForwardAPIKey
@@ -347,6 +360,8 @@ func UpdateProviderCredentials(ctx context.Context, id int, newAPIKey, newForwar
 	// 2. 用新主凭据查询用量。
 	provider.APIKey = newAPIKey
 	provider.ForwardAPIKey = newForwardAPIKey
+	provider.TeamOrganizationID = newTeamOrgID
+	provider.TeamProjectID = newTeamProjectID
 
 	if provider.ProviderType == model.PlanProviderTypeBalance {
 		result, err := QueryBalance(ctx, provider.Category, provider.APIKey, provider.BaseURL)
@@ -356,7 +371,7 @@ func UpdateProviderCredentials(ctx context.Context, id int, newAPIKey, newForwar
 		provider.Balance = result.Balance
 		provider.BalanceUsed = result.BalanceUsed
 	} else {
-		result, err := QueryTokenPlan(ctx, provider.Category, provider.APIKey, provider.BaseURL, provider.ProxyMode, provider.ProxyConfigID)
+		result, err := QueryTokenPlan(ctx, provider.Category, provider.APIKey, provider.BaseURL, provider.ProxyMode, provider.ProxyConfigID, provider.TeamOrganizationID, provider.TeamProjectID)
 		if err != nil {
 			return nil, fmt.Errorf("query tokenplan: %w", err)
 		}
@@ -581,7 +596,7 @@ func normalizePlanForwardAPIKey(category model.PlanProviderCategory, forwardAPIK
 // isConsoleTokenPlanCategory 判断是否为"控制台 token plan"类厂商
 // （使用控制台会话 token 查套餐、可选 sk- key 创建转发渠道的厂商）。
 func isConsoleTokenPlanCategory(category model.PlanProviderCategory) bool {
-	return category == model.PlanProviderStepFunPlan || category == model.PlanProviderSenseNovaPlan || category == model.PlanProviderBailianPlan || category == model.PlanProviderVolcenginePlan
+	return category == model.PlanProviderStepFunPlan || category == model.PlanProviderSenseNovaPlan || category == model.PlanProviderBailianPlan || category == model.PlanProviderVolcenginePlan || category == model.PlanProviderVolcenginePlanAK
 }
 
 // planForwardAPIBaseURL 返回控制台 token plan 类厂商的转发 API 接入点。
@@ -593,7 +608,7 @@ func planForwardAPIBaseURL(category model.PlanProviderCategory) string {
 		return senseNovaPlanAPIBaseURL
 	case model.PlanProviderBailianPlan:
 		return bailianPlanAPIBaseURL
-	case model.PlanProviderVolcenginePlan:
+	case model.PlanProviderVolcenginePlan, model.PlanProviderVolcenginePlanAK:
 		return volcenginePlanAPIBaseURL
 	default:
 		return ""
@@ -609,7 +624,7 @@ func planForwardLabel(category model.PlanProviderCategory) string {
 		return "SenseNova Plan"
 	case model.PlanProviderBailianPlan:
 		return "Bailian Plan"
-	case model.PlanProviderVolcenginePlan:
+	case model.PlanProviderVolcenginePlan, model.PlanProviderVolcenginePlanAK:
 		return "Volcengine Plan"
 	default:
 		return "Plan"

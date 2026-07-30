@@ -270,6 +270,7 @@ export function APIKeyForm({ apiKey, isPending, submitLabel, tagSuggestions = []
         rate_limit_tpm: apiKey?.rate_limit_tpm ?? 0,
         per_model_quota_json: apiKey?.per_model_quota_json ?? '',
         allowed_ips: apiKey?.allowed_ips ?? '',
+        excluded_channels: apiKey?.excluded_channels,
         tags: apiKey?.tags ?? '',
     }));
     const [maxCostInput, setMaxCostInput] = useState(() =>

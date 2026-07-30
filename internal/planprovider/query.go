@@ -1,13 +1,18 @@
 package planprovider
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -120,7 +125,8 @@ func QueryBalance(ctx context.Context, category model.PlanProviderCategory, apiK
 
 // QueryTokenPlan 查询套餐用量（TokenPlan 类厂商）
 // proxyMode / proxyConfigID 目前仅 Codex 类使用（chatgpt.com 国内不可直连），其他厂商忽略。
-func QueryTokenPlan(ctx context.Context, category model.PlanProviderCategory, apiKey string, baseURL string, proxyMode model.ProxyUsageMode, proxyConfigID *int) (*TokenPlanResult, error) {
+// teamOrgID / teamProjectID 仅智谱团队版（zhipu_team）使用，其他厂商忽略。
+func QueryTokenPlan(ctx context.Context, category model.PlanProviderCategory, apiKey string, baseURL string, proxyMode model.ProxyUsageMode, proxyConfigID *int, teamOrgID, teamProjectID string) (*TokenPlanResult, error) {
 	switch category {
 	case model.PlanProviderMiniMax:
 		return queryMiniMaxTokenPlan(ctx, apiKey)
@@ -131,13 +137,19 @@ func QueryTokenPlan(ctx context.Context, category model.PlanProviderCategory, ap
 	case model.PlanProviderMiMoPlan:
 		return queryMiMoPlanTokenPlan(ctx, apiKey)
 	case model.PlanProviderZhipu:
-		return queryZhipuTokenPlan(ctx, apiKey)
+		return queryZhipuTokenPlan(ctx, apiKey, baseURL)
+	case model.PlanProviderZhipuTeam:
+		return queryZhipuTeamTokenPlan(ctx, apiKey, teamOrgID, teamProjectID)
+	case model.PlanProviderKimiPlan:
+		return queryKimiTokenPlan(ctx, apiKey)
 	case model.PlanProviderCodex:
 		return queryCodexTokenPlan(ctx, apiKey, proxyMode, proxyConfigID)
 	case model.PlanProviderBailianPlan:
 		return queryBailianPlanTokenPlan(ctx, apiKey)
 	case model.PlanProviderVolcenginePlan:
 		return queryVolcenginePlanTokenPlan(ctx, apiKey)
+	case model.PlanProviderVolcenginePlanAK:
+		return queryVolcengineAKSKTokenPlan(ctx, apiKey)
 	default:
 		return nil, fmt.Errorf("unsupported tokenplan provider: %s", category)
 	}
@@ -342,25 +354,56 @@ func queryMiniMaxTokenPlan(ctx context.Context, apiKey string) (*TokenPlanResult
 }
 
 // --- 智谱 GLM Coding Plan ---
+//
+// 智谱个人版与团队版共用同一 quota 端点 `/api/monitor/usage/quota/limit` 与响应 shape。
+// 响应经历了一次字段升级：
+//   - 旧字段：limits[].resource_type(TOKENS_LIMIT) / limit_period(MONTH) / limit_value / used_value / reset_time(RFC3339)
+//   - 新字段：limits[].type(TOKENS_LIMIT) / unit(3=5h,6=周) / percentage(已用%) / nextResetTime(毫秒)
+// 两种 shape 可能因套餐版本而异，这里同时兼容：优先按新字段（unit/percentage）分类，
+// 旧字段（limit_period/limit_value/used_value）作 fallback。与 cc-switch 的 parse_zhipu_token_tiers 对齐。
 
-func queryZhipuTokenPlan(ctx context.Context, apiKey string) (*TokenPlanResult, error) {
-	body, err := doGet(ctx, "https://open.bigmodel.cn/api/monitor/usage/quota/limit", apiKey)
+// zhipuLimitEntry 宽松解析智谱 limits 数组单项，兼容新旧两套字段名。
+type zhipuLimitEntry struct {
+	Type          string   `json:"type"`
+	ResourceType  string   `json:"resource_type"`
+	LimitPeriod   string   `json:"limit_period"`
+	Unit          *int     `json:"unit"`
+	LimitValue    float64  `json:"limit_value"`
+	UsedValue     float64  `json:"used_value"`
+	Percentage    *float64 `json:"percentage"`
+	NextResetTime *int64   `json:"nextResetTime"`
+	ResetTime     string   `json:"reset_time"`
+}
+
+// zhipuQuotaBase 从用户的 baseURL 解析智谱额度端点。智谱国内站 (open.bigmodel.cn)
+// 与国际站 (api.z.ai) 共用同一 quota 路径；额度端点 host 与 coding 端点 host 相同，
+// 故按 base_url 路由，由调用方的既有连通性决定成功——不做跨站 fallback。
+func zhipuQuotaBase(baseURL string) string {
+	host := "open.bigmodel.cn"
+	if u, err := url.Parse(baseURL); err == nil && u.Host != "" {
+		host = u.Host
+	}
+	return "https://" + host + "/api/monitor/usage/quota/limit"
+}
+
+func queryZhipuTokenPlan(ctx context.Context, apiKey string, baseURL string) (*TokenPlanResult, error) {
+	body, err := doGet(ctx, zhipuQuotaBase(baseURL), apiKey)
 	if err != nil {
 		return nil, err
 	}
+	return parseZhipuTokenPlan(body)
+}
 
+// parseZhipuTokenPlan 解析智谱额度响应体（个人版与团队版共用）。
+// 优先用新字段（unit/percentage/nextResetTime）分类 5h 与周窗口；旧字段
+// (limit_period/limit_value/used_value/reset_time) 作为 fallback。两者共存时
+// 新字段优先（与 cc-switch parse_zhipu_token_tiers 一致）。
+func parseZhipuTokenPlan(body []byte) (*TokenPlanResult, error) {
 	var resp struct {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
 		Data struct {
-			Limits []struct {
-				ResourceType string  `json:"resource_type"`
-				LimitPeriod  string  `json:"limit_period"`
-				LimitValue   float64 `json:"limit_value"`
-				UsedValue    float64 `json:"used_value"`
-				RemainValue  float64 `json:"remain_value"`
-				ResetTime    string  `json:"reset_time"`
-			} `json:"limits"`
+			Limits []zhipuLimitEntry `json:"limits"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -371,32 +414,103 @@ func queryZhipuTokenPlan(ctx context.Context, apiKey string) (*TokenPlanResult, 
 	}
 
 	result := &TokenPlanResult{}
-	for _, limit := range resp.Data.Limits {
+	var fiveHour, weekly *zhipuLimitEntry
+	var unclassified []zhipuLimitEntry
+	for i := range resp.Data.Limits {
+		lim := &resp.Data.Limits[i]
+		// 新字段（type）过滤 TOKENS_LIMIT；旧字段（resource_type）不过滤，
+		// 让 TIME_LIMIT/REQUESTS_LIMIT 等旧类型在下方分支各自归位。
+		if lim.Type != "" && !strings.EqualFold(lim.Type, "TOKENS_LIMIT") {
+			continue
+		}
+		// 新字段优先：unit 标识窗口类型（3=5h, 6=周）。新字段映射到 FiveHour/Quota。
+		if lim.Unit != nil {
+			switch *lim.Unit {
+			case 3:
+				if fiveHour == nil {
+					fiveHour = lim
+				}
+			case 6:
+				if weekly == nil {
+					weekly = lim
+				}
+			default:
+				unclassified = append(unclassified, *lim)
+			}
+			continue
+		}
+		// 旧字段 fallback：保持旧实现映射不变——
+		// TOKENS_LIMIT + (MONTH/QUARTER/YEAR) → 月度总额(Quota)；
+		// TIME_LIMIT + DAY → Weekly（旧实现如此命名，实为日度窗口，保持兼容）。
 		switch {
-		case limit.ResourceType == "TOKENS_LIMIT" && (limit.LimitPeriod == "MONTH" || limit.LimitPeriod == "QUARTER" || limit.LimitPeriod == "YEAR"):
-			result.QuotaTotal = limit.LimitValue
-			result.QuotaUsed = limit.UsedValue
-			if limit.ResetTime != "" {
-				if t, err := time.Parse(time.RFC3339, limit.ResetTime); err == nil {
-					result.QuotaResetAt = &t
-				}
+		case strings.EqualFold(lim.ResourceType, "TOKENS_LIMIT") && isZhipuMonthlyPeriod(lim.LimitPeriod):
+			if weekly == nil {
+				weekly = lim
 			}
-		case limit.ResourceType == "REQUESTS_LIMIT" && limit.LimitPeriod == "MONTH":
-			if result.QuotaTotal == 0 {
-				result.QuotaTotal = limit.LimitValue
-				result.QuotaUsed = limit.UsedValue
+		case strings.EqualFold(lim.ResourceType, "TIME_LIMIT") && strings.EqualFold(lim.LimitPeriod, "DAY"):
+			if fiveHour == nil {
+				fiveHour = lim
 			}
-		case limit.ResourceType == "TIME_LIMIT" && limit.LimitPeriod == "DAY":
-			result.WeeklyTotal = limit.LimitValue
-			result.WeeklyUsed = limit.UsedValue
-			if limit.ResetTime != "" {
-				if t, err := time.Parse(time.RFC3339, limit.ResetTime); err == nil {
-					result.WeeklyResetAt = &t
-				}
+		case strings.EqualFold(lim.ResourceType, "REQUESTS_LIMIT") && strings.EqualFold(lim.LimitPeriod, "MONTH"):
+			if weekly == nil {
+				weekly = lim
 			}
+		default:
+			unclassified = append(unclassified, *lim)
 		}
 	}
+	// 兜底：无 unit/limit_period 的条目按重置时间升序填入空缺槽位
+	for _, lim := range unclassified {
+		if fiveHour == nil {
+			fiveHour = &lim
+		} else if weekly == nil {
+			weekly = &lim
+		}
+	}
+
+	if fiveHour != nil {
+		result.FiveHourTotal, result.FiveHourUsed = zhipuEntryTotalUsed(fiveHour)
+		result.FiveHourResetAt = zhipuEntryResetTime(fiveHour)
+	}
+	if weekly != nil {
+		result.QuotaTotal, result.QuotaUsed = zhipuEntryTotalUsed(weekly)
+		result.QuotaResetAt = zhipuEntryResetTime(weekly)
+	}
+	// 兼容旧实现：旧字段 TIME_LIMIT/DAY 归入 weekly（已在上方 limit_period 分支处理）
 	return result, nil
+}
+
+// zhipuEntryTotalUsed 从条目提取 (total, used)。新字段优先（percentage 已用%），
+// 无则用旧字段（limit_value/used_value 绝对值）。
+func zhipuEntryTotalUsed(lim *zhipuLimitEntry) (total, used float64) {
+	if lim.Percentage != nil {
+		return 100, *lim.Percentage
+	}
+	return lim.LimitValue, lim.UsedValue
+}
+
+// zhipuEntryResetTime 从条目提取重置时间。新字段 nextResetTime(毫秒) 优先，
+// 无则用旧字段 reset_time(RFC3339)。
+func zhipuEntryResetTime(lim *zhipuLimitEntry) *time.Time {
+	if lim.NextResetTime != nil && *lim.NextResetTime > 0 {
+		t := time.UnixMilli(*lim.NextResetTime)
+		return &t
+	}
+	if lim.ResetTime != "" {
+		if t, err := time.Parse(time.RFC3339, lim.ResetTime); err == nil {
+			return &t
+		}
+	}
+	return nil
+}
+
+// isZhipuMonthlyPeriod 判断旧字段 limit_period 是否为月/季/年度总额周期。
+func isZhipuMonthlyPeriod(period string) bool {
+	switch strings.ToUpper(period) {
+	case "MONTH", "QUARTER", "YEAR":
+		return true
+	}
+	return false
 }
 
 // --- StepFun 阶跃星辰 ---
@@ -1554,4 +1668,583 @@ func parseFloat(s string) float64 {
 		return v
 	}
 	return 0
+}
+
+// --- 智谱 GLM 团队套餐 (Team Plan) ---
+//
+// 团队版与个人版差异仅在请求构造（参考 cc-switch query_zhipu_team_at）：
+//   - 固定走国内站 open.bigmodel.cn（团队版仅存在于国内站）
+//   - 同一 quota 路径加 ?type=2
+//   - 额外请求头 bigmodel-organization / bigmodel-project（三者缺一不可）
+// 响应 shape 与个人版完全一致 → 复用 parseZhipuTokenPlan。
+
+func queryZhipuTeamTokenPlan(ctx context.Context, apiKey, organizationID, projectID string) (*TokenPlanResult, error) {
+	apiKey = strings.TrimSpace(apiKey)
+	organizationID = strings.TrimSpace(organizationID)
+	projectID = strings.TrimSpace(projectID)
+	if apiKey == "" || organizationID == "" || projectID == "" {
+		return nil, fmt.Errorf("zhipu team plan needs API key + organization ID + project ID")
+	}
+
+	reqURL := zhipuQuotaBase("https://open.bigmodel.cn") + "?type=2"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("bigmodel-organization", organizationID)
+	req.Header.Set("bigmodel-project", projectID)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: requestTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http get %s: %w", reqURL, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("http status %d: %s", resp.StatusCode, string(body))
+	}
+	return parseZhipuTokenPlan(body)
+}
+
+// --- Kimi For Coding Token Plan ---
+//
+// Kimi For Coding 的套餐用量查询（区别于 Moonshot API 余额查询）：
+//   - 端点：GET https://api.kimi.com/coding/v1/usages
+//   - 鉴权：Bearer API Key（sk- 开头，与 Moonshot API 共用同一把 Key）
+//   - 响应：limits[] 数组（5 小时窗口）+ usage 对象（周窗口），limit/remaining 绝对值
+//
+// 已用 = limit - remaining；百分比 = used/limit*100。与 cc-switch query_kimi 对齐。
+var kimiPlanUsageURL = "https://api.kimi.com/coding/v1/usages"
+
+func queryKimiTokenPlan(ctx context.Context, apiKey string) (*TokenPlanResult, error) {
+	body, err := doGet(ctx, kimiPlanUsageURL, apiKey)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Limits []struct {
+			Detail struct {
+				Limit     json.Number `json:"limit"`
+				Remaining json.Number `json:"remaining"`
+				ResetTime json.Number `json:"resetTime"`
+			} `json:"detail"`
+		} `json:"limits"`
+		Usage *struct {
+			Limit     json.Number `json:"limit"`
+			Remaining json.Number `json:"remaining"`
+			ResetTime json.Number `json:"resetTime"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("kimi plan: parse response: %w", err)
+	}
+
+	result := &TokenPlanResult{}
+	// 5 小时窗口（limits 数组，取第一条有 detail 的）
+	for _, l := range resp.Limits {
+		limit := parseFloat(l.Detail.Limit.String())
+		remaining := parseFloat(l.Detail.Remaining.String())
+		if limit <= 0 {
+			continue
+		}
+		used := limit - remaining
+		if used < 0 {
+			used = 0
+		}
+		result.FiveHourTotal = limit
+		result.FiveHourUsed = used
+		if rt := l.Detail.ResetTime.String(); rt != "" {
+			if t, ok := parseKimiResetTime(rt); ok {
+				result.FiveHourResetAt = &t
+			}
+		}
+		break
+	}
+	// 周窗口（usage 对象）
+	if resp.Usage != nil {
+		limit := parseFloat(resp.Usage.Limit.String())
+		remaining := parseFloat(resp.Usage.Remaining.String())
+		used := limit - remaining
+		if used < 0 {
+			used = 0
+		}
+		result.QuotaTotal = limit
+		result.QuotaUsed = used
+		if rt := resp.Usage.ResetTime.String(); rt != "" {
+			if t, ok := parseKimiResetTime(rt); ok {
+				result.QuotaResetAt = &t
+			}
+		}
+	}
+	return result, nil
+}
+
+// parseKimiResetTime 解析 Kimi resetTime 字段，兼容秒/毫秒数字与 ISO 8601 字符串。
+func parseKimiResetTime(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	// 纯数字：秒或毫秒
+	if v, err := strconv.ParseInt(s, 10, 64); err == nil {
+		var sec int64
+		if v > 1e12 { // 毫秒判定阈值
+			sec = v / 1000
+		} else {
+			sec = v
+		}
+		return time.Unix(sec, 0), true
+	}
+	// RFC3339 / ISO 8601 字符串
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, true
+	}
+	return time.Time{}, false
+}
+
+// --- 火山方舟 Agent Plan (AK/SK 签名方式) ---
+//
+// 与 volcengine_plan（Cookie+CSRF）不同，本路径走火山控制面 OpenAPI 统一网关
+// open.volcengineapi.com，强制火山引擎签名 V4（AK/SK）。算法是 AWS SigV4 的火山变体
+// （对照官方 volc-openapi-demos/signature/java/Sign.java），两处致命差异：
+//   1. canonical headers 与 SignedHeaders 用固定顺序 host;x-date;x-content-sha256;content-type
+//      （不按字母序）；
+//   2. algorithm 串 HMAC-SHA256（无 AWS4 前缀）、credential scope 结尾 request
+//      （非 aws4_request）、签名密钥 kDate=HMAC(SK, date)（SK 不加 AWS4 前缀）。
+// canonical query 仍按 key 字母序；service=ark；POST 空 body。
+//
+// 自动探测：先调 GetAFPUsage（Agent Plan，回绝对额度 Quota/Used），无订阅再调
+// GetCodingPlanUsage（Coding Plan，回百分比）。两者共用同一份 AK/SK，鉴权类错误直接停。
+// （移植自 cc-switch services/coding_plan.rs，Go 标准库实现。）
+
+const (
+	volcengineOpenAPIHost   = "open.volcengineapi.com"
+	volcengineAPIVersion    = "2024-01-01"
+	volcengineDefaultRegion = "cn-beijing"
+	volcengineService       = "ark"
+	volcengineContentType   = "application/json; charset=utf-8"
+	volcengineSignedHeaders = "host;x-date;x-content-sha256;content-type"
+)
+
+var volcengineAKSKSep = "|||"
+
+func queryVolcengineAKSKTokenPlan(ctx context.Context, credential string) (*TokenPlanResult, error) {
+	ak, sk, err := parseVolcengineAKSKCredential(credential)
+	if err != nil {
+		return nil, err
+	}
+
+	// 1) Agent Plan：GetAFPUsage
+	tiers, _, err := volcengineOpenAPICall(ctx, ak, sk, "GetAFPUsage")
+	if err != nil {
+		return nil, err
+	}
+	if tiers != nil {
+		return volcengineAKSKResult(tiers), nil
+	}
+
+	// 2) Coding Plan：GetCodingPlanUsage
+	tiers2, _, err := volcengineOpenAPICall(ctx, ak, sk, "GetCodingPlanUsage")
+	if err != nil {
+		return nil, err
+	}
+	if tiers2 != nil {
+		return volcengineAKSKResult(tiers2), nil
+	}
+
+	return nil, fmt.Errorf("volcengine: no active Agent Plan or Coding Plan subscription found for this credential")
+}
+
+// volcengineAKSKResult 把多档 tier 合并进 TokenPlanResult。
+// tier 名 five_hour / weekly_limit / monthly 分别映射 FiveHour / Weekly / Quota。
+func volcengineAKSKResult(tiers []volcengineTier) *TokenPlanResult {
+	result := &TokenPlanResult{}
+	for _, t := range tiers {
+		switch t.name {
+		case "five_hour":
+			result.FiveHourTotal = t.total
+			result.FiveHourUsed = t.used
+			result.FiveHourResetAt = t.resetsAt
+		case "weekly_limit":
+			result.WeeklyTotal = t.total
+			result.WeeklyUsed = t.used
+			result.WeeklyResetAt = t.resetsAt
+		case "monthly":
+			result.QuotaTotal = t.total
+			result.QuotaUsed = t.used
+			result.QuotaResetAt = t.resetsAt
+		}
+	}
+	return result
+}
+
+// volcengineTier 解析后的单档配额。GetAFPUsage 回绝对值 Quota/Used；
+// GetCodingPlanUsage 回百分比（已用），此时 total=100, used=Percent。
+type volcengineTier struct {
+	name     string
+	total    float64
+	used     float64
+	resetsAt *time.Time
+}
+
+// parseVolcengineAKSKCredential 解析用户填入的火山方舟 AK/SK 凭据。
+// 格式：AccessKey ID 与 Secret Access Key 用竖线分隔。容忍前后空白。
+func parseVolcengineAKSKCredential(credential string) (ak, sk string, err error) {
+	credential = strings.TrimSpace(credential)
+	parts := strings.SplitN(credential, volcengineAKSKSep, 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("凭据格式错误：需为 AccessKey ID 与 Secret Access Key 用 %s 分隔", volcengineAKSKSep)
+	}
+	ak = strings.TrimSpace(parts[0])
+	sk = strings.TrimSpace(parts[1])
+	if ak == "" {
+		return "", "", fmt.Errorf("AccessKey ID 不能为空")
+	}
+	if sk == "" {
+		return "", "", fmt.Errorf("Secret Access Key 不能为空")
+	}
+	return ak, sk, nil
+}
+
+// volcengineOpenAPICall 执行一次火山控制面 OpenAPI 调用。
+// 返回解析出的 tier 列表（可能为空=未订阅该 plan）、planType 标识、错误。
+// tiers 为空且 err 为 nil 表示该 plan 无订阅，调用方应继续探测下一个。
+func volcengineOpenAPICall(ctx context.Context, ak, sk, action string) ([]volcengineTier, string, error) {
+	region := volcengineDefaultRegion
+	canonicalQuery := volcengineCanonicalQuery(action, region)
+	reqURL := "https://" + volcengineOpenAPIHost + "/?" + canonicalQuery
+	body := []byte{}
+	authorization, xDate, xContentSha256 := volcengineSign(ak, sk, region, canonicalQuery, body)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("X-Date", xDate)
+	req.Header.Set("X-Content-Sha256", xContentSha256)
+	req.Header.Set("Content-Type", volcengineContentType)
+	req.Header.Set("Authorization", authorization)
+
+	client := &http.Client{Timeout: requestTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("http post: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("read body: %w", err)
+	}
+
+	// HTTP 401/403 或 4xx+鉴权类错误码直接停（两 plan 共用 AK/SK）
+	if resp.StatusCode == 401 || resp.StatusCode == 403 {
+		return nil, "", fmt.Errorf("volcengine: authentication failed (HTTP %d). Check the AccessKey ID / Secret are correct and the account has Ark usage-query (OpenAPI) permission", resp.StatusCode)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// 解析 ResponseMetadata.Error 信封，鉴权类错误码也标记凭据失效
+		if code, msg, ok := volcengineResponseError(raw); ok && volcengineIsAuthErrorCode(code) {
+			return nil, "", fmt.Errorf("volcengine: authentication failed (%s): %s. Check the AccessKey ID / Secret are correct and the account has Ark usage-query (OpenAPI) permission", code, msg)
+		}
+		return nil, "", fmt.Errorf("volcengine: API error (HTTP %d): %s", resp.StatusCode, string(raw))
+	}
+
+	// 200 + ResponseMetadata.Error 业务错误
+	if code, msg, ok := volcengineResponseError(raw); ok {
+		if volcengineIsAuthErrorCode(code) {
+			return nil, "", fmt.Errorf("volcengine: authentication failed (%s): %s. Check the AccessKey ID / Secret are correct and the account has Ark usage-query (OpenAPI) permission", code, msg)
+		}
+		return nil, "", fmt.Errorf("volcengine: API error (%s): %s", code, msg)
+	}
+
+	// 解析 Result 内的 tier
+	var bodyJSON map[string]any
+	if err := json.Unmarshal(raw, &bodyJSON); err != nil {
+		return nil, "", fmt.Errorf("volcengine: parse response: %w", err)
+	}
+	result, _ := bodyJSON["Result"].(map[string]any)
+	if result == nil {
+		result = bodyJSON
+	}
+	planType, _ := result["PlanType"].(string)
+
+	if action == "GetAFPUsage" {
+		return parseVolcengineAFPTiers(result), planType, nil
+	}
+	return parseVolcengineCodingPlanTiers(result), planType, nil
+}
+
+// parseVolcengineAFPTiers 解析 GetAFPUsage 的 Result。
+// 展示 5h/周/月三个窗口；AFPDaily 被官方控制台隐藏（其 Quota 常高于周上限）故跳过。
+// Quota/Used 是绝对 AFP 值；Quota<=0 视为该窗口未订阅/未启用，跳过。
+func parseVolcengineAFPTiers(result map[string]any) []volcengineTier {
+	var tiers []volcengineTier
+	for _, kv := range []struct {
+		key  string
+		name string
+	}{
+		{"AFPFiveHour", "five_hour"},
+		{"AFPWeekly", "weekly_limit"},
+		{"AFPMonthly", "monthly"},
+	} {
+		win, ok := result[kv.key].(map[string]any)
+		if !ok {
+			continue
+		}
+		quota := toFloat64(win["Quota"])
+		if quota <= 0 {
+			continue
+		}
+		used := toFloat64(win["Used"])
+		tiers = append(tiers, volcengineTier{
+			name:     kv.name,
+			total:    quota,
+			used:     used,
+			resetsAt: parseVolcengineResetTime(win["ResetTime"]),
+		})
+	}
+	return tiers
+}
+
+// parseVolcengineCodingPlanTiers 解析 GetCodingPlanUsage 的 Result（防御式）。
+// 该接口官方文档未给出逐字段规格，依据官方 ark-cli 描述：回 session/weekly/monthly
+// 窗口、只给百分比（已用）、重置时间是秒级。这里宽松匹配 QuotaUsage/Usages/Details
+// 数组及多种字段名，命中即用、未命中跳过。
+func parseVolcengineCodingPlanTiers(result map[string]any) []volcengineTier {
+	var tiers []volcengineTier
+	var arr []any
+	for _, key := range []string{"QuotaUsage", "Usages", "Details"} {
+		if a, ok := result[key].([]any); ok && len(a) > 0 {
+			arr = a
+			break
+		}
+	}
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		// 真实字段是 Level（实测 session/weekly/monthly）；其余作防御式 fallback
+		label := firstString(m, "Level", "Type", "Period", "Label", "Window")
+		name := volcengineCodingWindow(label)
+		if name == "" {
+			continue
+		}
+		utilization := toFloat64(firstValue(m, "Percent", "UsedPercent", "UsagePercent"))
+		tiers = append(tiers, volcengineTier{
+			name:     name,
+			total:    100,
+			used:     utilization,
+			resetsAt: parseVolcengineResetTime(firstValue(m, "ResetTime", "ResetTimestamp")),
+		})
+	}
+	return tiers
+}
+
+// volcengineCodingWindow 把 GetCodingPlanUsage 的 window 标签归一到 tier 名。
+func volcengineCodingWindow(label string) string {
+	switch strings.ToLower(label) {
+	case "session", "5h", "fivehour", "five_hour", "rolling_5h":
+		return "five_hour"
+	case "weekly", "week", "7d":
+		return "weekly_limit"
+	case "monthly", "month":
+		return "monthly"
+	}
+	return ""
+}
+
+// volcengineResponseError 从响应体提取 ResponseMetadata.Error（或顶层 Error）的 Code/Message。
+func volcengineResponseError(body []byte) (code, msg string, ok bool) {
+	var envelope struct {
+		ResponseMetadata struct {
+			Error *struct {
+				Code    string `json:"Code"`
+				Message string `json:"Message"`
+			} `json:"Error"`
+		} `json:"ResponseMetadata"`
+		Error *struct {
+			Code    string `json:"Code"`
+			Message string `json:"Message"`
+		} `json:"Error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return "", "", false
+	}
+	e := envelope.ResponseMetadata.Error
+	if e == nil {
+		e = envelope.Error
+	}
+	if e == nil || (e.Code == "" && e.Message == "") {
+		return "", "", false
+	}
+	return e.Code, e.Message, true
+}
+
+// volcengineIsAuthErrorCode 判断 OpenAPI 错误码是否属于鉴权类（需硬停并提示换 AK/SK）。
+func volcengineIsAuthErrorCode(code string) bool {
+	c := strings.ToLower(code)
+	return strings.Contains(c, "auth") || strings.Contains(c, "signature") ||
+		strings.Contains(c, "accessdenied") || strings.Contains(c, "denied") ||
+		strings.Contains(c, "unauthorized") || strings.Contains(c, "forbidden") ||
+		strings.Contains(c, "credential") || strings.Contains(c, "token")
+}
+
+// parseVolcengineResetTime 从 JSON 值提取重置时间，兼容字符串(ISO 8601)和数字(秒/毫秒)。
+func parseVolcengineResetTime(v any) *time.Time {
+	switch val := v.(type) {
+	case string:
+		s := strings.TrimSpace(val)
+		if s == "" {
+			return nil
+		}
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			return &t
+		}
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return resetTimeFromNumber(n)
+		}
+	case float64:
+		return resetTimeFromNumber(int64(val))
+	case int:
+		return resetTimeFromNumber(int64(val))
+	case int64:
+		return resetTimeFromNumber(val)
+	case json.Number:
+		if n, err := val.Int64(); err == nil {
+			return resetTimeFromNumber(n)
+		}
+	}
+	return nil
+}
+
+func resetTimeFromNumber(n int64) *time.Time {
+	var sec int64
+	if n > 1e12 { // 毫秒判定阈值
+		sec = n / 1000
+	} else {
+		sec = n
+	}
+	if sec <= 0 {
+		return nil
+	}
+	t := time.Unix(sec, 0)
+	return &t
+}
+
+// --- 火山引擎签名 V4 (AK/SK) ---
+
+func volcHMACSHA256(key, data []byte) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(data)
+	return mac.Sum(nil)
+}
+
+func volcSHA256Hex(data []byte) string {
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
+}
+
+// volcURIEncode RFC3986 unreserved 之外全部按 %XX 编码（用于 canonical query string）。
+func volcURIEncode(input string) string {
+	var out strings.Builder
+	for _, b := range []byte(input) {
+		switch {
+		case (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') ||
+			(b >= '0' && b <= '9') || b == '-' || b == '_' || b == '.' || b == '~':
+			out.WriteByte(b)
+		default:
+			fmt.Fprintf(&out, "%%%02X", b)
+		}
+	}
+	return out.String()
+}
+
+// volcengineCanonicalQuery 构造按 key 字母序排序、逐段 URL 编码的 canonical query string。
+// 同一份字符串既用于签名也用于实际请求 URL，保证两者完全一致。
+func volcengineCanonicalQuery(action, region string) string {
+	pairs := [][2]string{
+		{"Action", action},
+		{"Region", region},
+		{"Version", volcengineAPIVersion},
+	}
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i][0] < pairs[j][0] })
+	var parts []string
+	for _, p := range pairs {
+		parts = append(parts, volcURIEncode(p[0])+"="+volcURIEncode(p[1]))
+	}
+	return strings.Join(parts, "&")
+}
+
+// volcengineSign 生成火山引擎签名 V4 的鉴权头，返回 (Authorization, X-Date, X-Content-Sha256)。
+// canonicalQuery 必须与实际请求 URL 的 query 完全一致；body 为请求体（POST 空 body）。
+func volcengineSign(ak, sk, region, canonicalQuery string, body []byte) (authorization, xDate, xContentSha256 string) {
+	now := time.Now().UTC()
+	xDate = now.Format("20060102T150405Z")
+	shortDate := now.Format("20060102")
+	xContentSha256 = volcSHA256Hex(body)
+
+	// 固定顺序 canonical headers（火山特有，不排序）
+	canonicalHeaders := fmt.Sprintf("host:%s\nx-date:%s\nx-content-sha256:%s\ncontent-type:%s\n",
+		volcengineOpenAPIHost, xDate, xContentSha256, volcengineContentType)
+	canonicalRequest := fmt.Sprintf("POST\n/\n%s\n%s\n%s\n%s",
+		canonicalQuery, canonicalHeaders, volcengineSignedHeaders, xContentSha256)
+
+	credentialScope := fmt.Sprintf("%s/%s/%s/request", shortDate, region, volcengineService)
+	stringToSign := fmt.Sprintf("HMAC-SHA256\n%s\n%s\n%s",
+		xDate, credentialScope, volcSHA256Hex([]byte(canonicalRequest)))
+
+	// 签名密钥派生：kDate=HMAC(SK, date)（SK 不加 AWS4 前缀），终止串 request
+	kDate := volcHMACSHA256([]byte(sk), []byte(shortDate))
+	kRegion := volcHMACSHA256(kDate, []byte(region))
+	kService := volcHMACSHA256(kRegion, []byte(volcengineService))
+	kSigning := volcHMACSHA256(kService, []byte("request"))
+	signature := hex.EncodeToString(volcHMACSHA256(kSigning, []byte(stringToSign)))
+
+	authorization = fmt.Sprintf("HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
+		ak, credentialScope, volcengineSignedHeaders, signature)
+	return
+}
+
+// toFloat64 宽松把 any 转 float64（JSON 数字默认 float64；字符串走 parseFloat）。
+func toFloat64(v any) float64 {
+	switch val := v.(type) {
+	case float64:
+		return val
+	case int:
+		return float64(val)
+	case int64:
+		return float64(val)
+	case json.Number:
+		return parseFloat(val.String())
+	case string:
+		return parseFloat(val)
+	}
+	return 0
+}
+
+// firstString 从 map 里按多个候选 key 取首个非空字符串值。
+func firstString(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if s, ok := m[k].(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// firstValue 从 map 里按多个候选 key 取首个非 nil 值。
+func firstValue(m map[string]any, keys ...string) any {
+	for _, k := range keys {
+		if v, ok := m[k]; ok && v != nil {
+			return v
+		}
+	}
+	return nil
 }

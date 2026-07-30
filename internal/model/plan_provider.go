@@ -33,6 +33,12 @@ const (
 	PlanProviderCodex          PlanProviderCategory = "codex"
 	PlanProviderBailianPlan    PlanProviderCategory = "bailian_plan"
 	PlanProviderVolcenginePlan PlanProviderCategory = "volcengine_plan"
+	// Kimi For Coding 套餐（区别于 Kimi 余额查询）
+	PlanProviderKimiPlan PlanProviderCategory = "kimi_plan"
+	// 智谱 GLM 团队套餐（Team Plan，需组织/项目 ID）
+	PlanProviderZhipuTeam PlanProviderCategory = "zhipu_team"
+	// 火山方舟 Agent Plan（AK/SK 签名方式，区别于 Cookie+CSRF 的 volcengine_plan）
+	PlanProviderVolcenginePlanAK PlanProviderCategory = "volcengine_plan_ak"
 )
 
 // PlanProviderCategoryInfo 厂商元信息（非 DB 字段）
@@ -192,6 +198,33 @@ var PlanProviderCategories = []PlanProviderCategoryInfo{
 		Description: "火山方舟 Agent Plan 套餐用量查询（控制台 Cookie + CSRF Token 鉴权）。在浏览器登录 console.volcengine.com/ark 后，按 F12 → Network 找任意 plan 接口，复制完整 Cookie 和 x-csrf-token 请求头，用 `Cookie值|||x-csrf-token值` 格式填入。可选填 API Key（ark-...）自动创建转发渠道（接入点 ark.cn-beijing.volces.com/api/plan/v3）",
 		HelpURL:     "https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan",
 	},
+	{
+		Category:    PlanProviderKimiPlan,
+		Name:        "Kimi For Coding 套餐",
+		Type:        PlanProviderTypeTokenPlan,
+		BaseURL:     "https://api.kimi.com/coding/v1",
+		Models:      "kimi-latest",
+		Description: "Kimi For Coding 套餐用量查询（5 小时/周窗口）。使用 Kimi API Key（sk- 开头），与余额查询的 Moonshot API 共用同一把 Key。",
+		HelpURL:     "https://platform.moonshot.cn/console/api-keys",
+	},
+	{
+		Category:    PlanProviderZhipuTeam,
+		Name:        "智谱 GLM 团队套餐 (Team Plan)",
+		Type:        PlanProviderTypeTokenPlan,
+		BaseURL:     "https://open.bigmodel.cn/api/paas/v4",
+		Models:      "GLM-5.2,GLM-5.1,GLM-5,GLM-5-Turbo",
+		Description: "智谱 GLM Team Plan 套餐用量查询（5 小时/周窗口）。需填入团队 API Key、组织 ID、项目 ID（三者缺一不可）。响应格式与个人版一致。",
+		HelpURL:     "https://open.bigmodel.cn/console/organization",
+	},
+	{
+		Category:    PlanProviderVolcenginePlanAK,
+		Name:        "火山方舟 Agent Plan (AK/SK)",
+		Type:        PlanProviderTypeTokenPlan,
+		BaseURL:     "https://ark.cn-beijing.volces.com/api/coding/v3",
+		Models:      "auto,doubao-seed-evolving,doubao-seed-2-1-turbo,kimi-k3",
+		Description: "火山方舟 Agent Plan 用量查询（AK/SK 签名方式）。需填入火山引擎账号的 AccessKey ID 和 Secret（与推理 API Key 是两套凭据），格式 `AK值|||SK值`。签名通过后先查 Agent Plan（GetAFPUsage），无订阅再查 Coding Plan（GetCodingPlanUsage）。可选填 API Key（ark-...）自动创建转发渠道（接入点 ark.cn-beijing.volces.com/api/plan/v3）。",
+		HelpURL:     "https://console.volcengine.com/iam/identitymanage/key",
+	},
 }
 
 // PlanProvider 持久化的 Plan Provider 记录
@@ -202,8 +235,12 @@ type PlanProvider struct {
 	ProviderType  PlanProviderType     `json:"provider_type" gorm:"type:varchar(16);not null;default:'balance'"`
 	APIKey        string               `json:"api_key" gorm:"not null"`
 	ForwardAPIKey string               `json:"forward_api_key" gorm:"default:''"`
-	BaseURL       string               `json:"base_url" gorm:"not null"`
-	ChannelID     int                  `json:"channel_id" gorm:"not null;default:0;index"`
+	// TeamOrganizationID / TeamProjectID 仅智谱团队版（zhipu_team）使用：
+	// 请求头 bigmodel-organization / bigmodel-project，与 API Key 三者配对。
+	TeamOrganizationID string `json:"team_organization_id" gorm:"default:''"`
+	TeamProjectID      string `json:"team_project_id" gorm:"default:''"`
+	BaseURL            string `json:"base_url" gorm:"not null"`
+	ChannelID          int    `json:"channel_id" gorm:"not null;default:0;index"`
 	// 代理配置：目前仅 Codex 类厂商（chatgpt.com 国内不可直连）使用，
 	// 与 Channel/Site 的代理模型一致；其他厂商默认 direct。
 	ProxyMode     ProxyUsageMode `json:"proxy_mode" gorm:"type:varchar(16);not null;default:'direct'"`

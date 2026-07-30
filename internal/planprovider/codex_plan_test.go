@@ -349,7 +349,7 @@ func TestAddProviderCodexWithPoolProxy(t *testing.T) {
 
 	configID := 3
 	keyJSON := makeTestCodexOAuthKey("tok-test", "acct-999")
-	provider, err := AddProvider(context.Background(), model.PlanProviderCodex, keyJSON, "", "", model.ProxyUsageModePool, &configID)
+	provider, err := AddProvider(context.Background(), model.PlanProviderCodex, keyJSON, "", "", model.ProxyUsageModePool, &configID, "", "")
 	if err != nil {
 		t.Fatalf("AddProvider() error = %v", err)
 	}
@@ -391,7 +391,7 @@ func TestAddProviderCodexWithPoolProxy(t *testing.T) {
 func TestAddProviderCodexPoolRequiresConfigID(t *testing.T) {
 	setupPlanProviderDB(t)
 	keyJSON := makeTestCodexOAuthKey("tok-test", "acct-999")
-	if _, err := AddProvider(context.Background(), model.PlanProviderCodex, keyJSON, "", "", model.ProxyUsageModePool, nil); err == nil {
+	if _, err := AddProvider(context.Background(), model.PlanProviderCodex, keyJSON, "", "", model.ProxyUsageModePool, nil, "", ""); err == nil {
 		t.Fatal("expected error for pool mode without config id")
 	}
 }
@@ -402,7 +402,7 @@ func TestAddProviderNonCodexIgnoresProxy(t *testing.T) {
 
 	// MiMo 携带 pool 代理参数应被忽略（强制 direct）
 	configID := 9
-	provider, err := AddProvider(context.Background(), model.PlanProviderMiMoPlan, testMiMoCookie, "", "MiMo monitor", model.ProxyUsageModePool, &configID)
+	provider, err := AddProvider(context.Background(), model.PlanProviderMiMoPlan, testMiMoCookie, "", "MiMo monitor", model.ProxyUsageModePool, &configID, "", "")
 	if err != nil {
 		t.Fatalf("AddProvider() error = %v", err)
 	}

@@ -106,6 +106,9 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
     const [forwardApiKey, setForwardApiKey] = useState('');
     const [customName, setCustomName] = useState('');
     const [mimoAuthMode, setMimoAuthMode] = useState<'passToken' | 'serviceToken'>('serviceToken');
+    // 智谱团队版组织/项目 ID
+    const [teamOrgId, setTeamOrgId] = useState('');
+    const [teamProjectId, setTeamProjectId] = useState('');
     // 代理配置（仅 Codex 类展示/提交，chatgpt.com 国内不可直连）
     const [proxyMode, setProxyMode] = useState<ProxyMode>('direct');
     const [proxyConfigId, setProxyConfigId] = useState<number | null>(null);
@@ -120,9 +123,10 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
     useEffect(() => {
         localStorage.setItem('tokenplan-compact-view', String(compactView));
     }, [compactView]);
-
-    const isConsoleTokenPlan = selectedCategory === 'stepfun_plan' || selectedCategory === 'sensenova_plan' || selectedCategory === 'mimo_plan' || selectedCategory === 'bailian_plan' || selectedCategory === 'volcengine_plan';
+    const isConsoleTokenPlan = selectedCategory === 'stepfun_plan' || selectedCategory === 'sensenova_plan' || selectedCategory === 'mimo_plan' || selectedCategory === 'bailian_plan' || selectedCategory === 'volcengine_plan' || selectedCategory === 'volcengine_plan_ak';
     const isVolcenginePlan = selectedCategory === 'volcengine_plan';
+    const isVolcengineAKSK = selectedCategory === 'volcengine_plan_ak';
+    const isZhipuTeam = selectedCategory === 'zhipu_team';
     const isMiMoPlan = selectedCategory === 'mimo_plan';
     const isCodexPlan = selectedCategory === 'codex';
     const supportsForwardApiKey = isConsoleTokenPlan && !isMiMoPlan;
@@ -133,12 +137,19 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
             toast.error(tProxy('selectRequired'));
             return;
         }
+        if (isZhipuTeam && (!teamOrgId.trim() || !teamProjectId.trim())) {
+            toast.error(t('plan.zhipuTeamMissingIds') || '智谱团队版需填写组织 ID 和项目 ID');
+            return;
+        }
         try {
             await addMutation.mutateAsync({
                 category: selectedCategory,
                 api_key: apiKey.trim(),
                 forward_api_key: supportsForwardApiKey && forwardApiKey.trim() ? forwardApiKey.trim() : undefined,
                 name: customName.trim() || undefined,
+                ...(isZhipuTeam
+                    ? { team_organization_id: teamOrgId.trim(), team_project_id: teamProjectId.trim() }
+                    : {}),
                 ...(isCodexPlan
                     ? { proxy_mode: proxyMode, proxy_config_id: proxyMode === 'pool' ? proxyConfigId : null }
                     : {}),
@@ -150,13 +161,15 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
             setForwardApiKey('');
             setCustomName('');
             setMimoAuthMode('serviceToken');
+            setTeamOrgId('');
+            setTeamProjectId('');
             setProxyMode('direct');
             setProxyConfigId(null);
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : '添加失败';
             toast.error(msg);
         }
-    }, [selectedCategory, apiKey, forwardApiKey, supportsForwardApiKey, customName, addMutation, isCodexPlan, proxyMode, proxyConfigId, tProxy]);
+    }, [selectedCategory, apiKey, forwardApiKey, supportsForwardApiKey, customName, addMutation, isCodexPlan, proxyMode, proxyConfigId, tProxy, isZhipuTeam, teamOrgId, teamProjectId, t]);
 
     const handleRefresh = useCallback(async (id: number) => {
         try {
@@ -282,11 +295,13 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
                                             : isConsoleTokenPlan
                                                 ? (isVolcenginePlan
                                                     ? (t('plan.volcengineCredentialPlaceholder') || 'Cookie值|||x-csrf-token值（从控制台请求头复制，用竖线分隔）')
-                                                    : selectedInfo?.category === 'sensenova_plan'
-                                                        ? (t('plan.sensenovaTokenPlaceholder') || '粘贴控制台 Bearer Token 值')
-                                                        : selectedInfo?.category === 'bailian_plan'
-                                                            ? (t('plan.bailianTokenPlaceholder') || '粘贴控制台完整 Cookie 值')
-                                                            : (t('plan.oasisTokenPlaceholder') || '粘贴控制台 Cookie 中的 Oasis-Token 值'))
+                                                    : isVolcengineAKSK
+                                                        ? (t('plan.volcengineAKSKPlaceholder') || 'AccessKey ID|||Secret Access Key（火山控制面 OpenAPI 签名用，与推理 Key 不同）')
+                                                        : selectedInfo?.category === 'sensenova_plan'
+                                                            ? (t('plan.sensenovaTokenPlaceholder') || '粘贴控制台 Bearer Token 值')
+                                                            : selectedInfo?.category === 'bailian_plan'
+                                                                ? (t('plan.bailianTokenPlaceholder') || '粘贴控制台完整 Cookie 值')
+                                                                : (t('plan.oasisTokenPlaceholder') || '粘贴控制台 Cookie 中的 Oasis-Token 值'))
                                                 : (t('plan.apiKeyPlaceholder') || '请输入 API Key')}
                                     value={apiKey}
                                     onChange={(e) => setApiKey(e.target.value)}
@@ -305,11 +320,13 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
                                     <p className="text-[11px] leading-tight text-amber-500">
                                         {isVolcenginePlan
                                             ? (t('plan.volcengineCredentialHint') || '登录 console.volcengine.com/ark → F12 → Network → 任意 plan 接口，复制完整 Cookie 请求头和 x-csrf-token 请求头，用 ||| 连接。会话过期后需重新获取。')
-                                            : selectedInfo?.category === 'bailian_plan'
-                                                ? (t('plan.bailianTokenHint') || '需登录 bailian.console.aliyun.com 控制台，按 F12 打开开发者工具 → Network（网络）→ 刷新页面，点击任意请求，从请求头（Request Headers）复制完整 Cookie 值。会话过期后需重新获取。')
-                                                : selectedInfo?.category === 'sensenova_plan'
-                                                    ? (t('plan.sensenovaTokenHint') || '需登录 platform.sensenova.cn 控制台，从请求头复制 Bearer Token 值。有效期约 3 小时，过期后需重新获取。')
-                                                    : (t('plan.oasisTokenHint') || '需登录 platform.stepfun.com 控制台，从浏览器 Cookie 复制 Oasis-Token 值（格式：access...refresh）。该 Token 有效期约 30 分钟，过期后需重新获取。')}
+                                            : isVolcengineAKSK
+                                                ? (t('plan.volcengineAKSKHint') || '在 console.volcengine.com/iam → 密钥管理 创建 AccessKey ID 与 Secret（与推理 API Key 是两套凭据），用 ||| 连接。系统通过控制面 OpenAPI 签名查询，先查 Agent Plan，无订阅再查 Coding Plan。')
+                                                : selectedInfo?.category === 'bailian_plan'
+                                                    ? (t('plan.bailianTokenHint') || '需登录 bailian.console.aliyun.com 控制台，按 F12 打开开发者工具 → Network（网络）→ 刷新页面，点击任意请求，从请求头（Request Headers）复制完整 Cookie 值。会话过期后需重新获取。')
+                                                    : selectedInfo?.category === 'sensenova_plan'
+                                                        ? (t('plan.sensenovaTokenHint') || '需登录 platform.sensenova.cn 控制台，从请求头复制 Bearer Token 值。有效期约 3 小时，过期后需重新获取。')
+                                                        : (t('plan.oasisTokenHint') || '需登录 platform.stepfun.com 控制台，从浏览器 Cookie 复制 Oasis-Token 值（格式：access...refresh）。该 Token 有效期约 30 分钟，过期后需重新获取。')}
                                     </p>
                                 )}
                                 {isCodexPlan && (
@@ -318,6 +335,29 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
                                     </p>
                                 )}
                             </div>
+                            {isZhipuTeam && (
+                                <div className="space-y-2">
+                                    <label className="text-sm font-medium">
+                                        {t('plan.zhipuTeamOrgIdLabel') || '组织 ID'}
+                                    </label>
+                                    <Input
+                                        placeholder={t('plan.zhipuTeamOrgIdPlaceholder') || 'bigmodel-organization 请求头值'}
+                                        value={teamOrgId}
+                                        onChange={(e) => setTeamOrgId(e.target.value)}
+                                    />
+                                    <label className="text-sm font-medium mt-2 block">
+                                        {t('plan.zhipuTeamProjectIdLabel') || '项目 ID'}
+                                    </label>
+                                    <Input
+                                        placeholder={t('plan.zhipuTeamProjectIdPlaceholder') || 'bigmodel-project 请求头值'}
+                                        value={teamProjectId}
+                                        onChange={(e) => setTeamProjectId(e.target.value)}
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        {t('plan.zhipuTeamHint') || '智谱团队版需 API Key + 组织 ID + 项目 ID 三者齐全（从 open.bigmodel.cn 控制台团队设置页获取）。'}
+                                    </p>
+                                </div>
+                            )}
                             {supportsForwardApiKey && (
                                 <div className="space-y-2">
                                     <label className="text-sm font-medium">
@@ -738,15 +778,19 @@ function EditCredentialsDialog({
     const updateMutation = useUpdatePlanProviderCredentials();
     const [apiKey, setApiKey] = useState('');
     const [forwardApiKey, setForwardApiKey] = useState('');
+    const [teamOrgId, setTeamOrgId] = useState('');
+    const [teamProjectId, setTeamProjectId] = useState('');
 
     const open = provider !== null;
+    const editingId = provider?.id;
 
     // 切换 provider 时重置输入（按 id 变化触发）
-    const editingId = provider?.id;
     useEffect(() => {
         if (editingId !== undefined) {
             setApiKey('');
             setForwardApiKey('');
+            setTeamOrgId('');
+            setTeamProjectId('');
         }
     }, [editingId]);
 
@@ -757,10 +801,11 @@ function EditCredentialsDialog({
             </Dialog>
         );
     }
-
     const category = provider.category;
-    const isConsoleTokenPlan = category === 'stepfun_plan' || category === 'sensenova_plan' || category === 'bailian_plan' || category === 'volcengine_plan';
+    const isConsoleTokenPlan = category === 'stepfun_plan' || category === 'sensenova_plan' || category === 'bailian_plan' || category === 'volcengine_plan' || category === 'volcengine_plan_ak';
     const isVolcenginePlan = category === 'volcengine_plan';
+    const isVolcengineAKSK = category === 'volcengine_plan_ak';
+    const isZhipuTeam = category === 'zhipu_team';
     const isMiMoPlan = category === 'mimo_plan';
     const isCodexPlan = category === 'codex';
     const supportsForwardApiKey = isConsoleTokenPlan && !isMiMoPlan;
@@ -774,6 +819,8 @@ function EditCredentialsDialog({
                 id: provider.id,
                 api_key: apiKey.trim(),
                 forward_api_key: supportsForwardApiKey && forwardApiKey.trim() ? forwardApiKey.trim() : undefined,
+                team_organization_id: isZhipuTeam ? teamOrgId.trim() : undefined,
+                team_project_id: isZhipuTeam ? teamProjectId.trim() : undefined,
             });
             toast.success(t('plan.credentialsUpdated') || '凭据已更新');
             onOpenChange(false);
@@ -817,24 +864,28 @@ function EditCredentialsDialog({
                                     : isConsoleTokenPlan
                                         ? (isVolcenginePlan
                                             ? (t('plan.volcengineCredentialPlaceholder') || 'Cookie值|||x-csrf-token值')
-                                            : category === 'sensenova_plan'
-                                                ? (t('plan.sensenovaTokenPlaceholder') || '粘贴控制台 Bearer Token 值')
-                                                : category === 'bailian_plan'
-                                                    ? (t('plan.bailianTokenPlaceholder') || '粘贴控制台完整 Cookie 值')
-                                                    : (t('plan.oasisTokenPlaceholder') || '粘贴控制台 Cookie 中的 Oasis-Token 值'))
-                                        : (t('plan.apiKeyPlaceholder') || '请输入 API Key')}
+                                            : isVolcengineAKSK
+                                                ? (t('plan.volcengineAKSKPlaceholder') || 'AccessKey ID|||Secret Access Key')
+                                                : category === 'sensenova_plan'
+                                                    ? (t('plan.sensenovaTokenPlaceholder') || '粘贴控制台 Bearer Token 值')
+                                                    : category === 'bailian_plan'
+                                                        ? (t('plan.bailianTokenPlaceholder') || '粘贴控制台完整 Cookie 值')
+                                                        : (t('plan.oasisTokenPlaceholder') || '粘贴控制台 Cookie 中的 Oasis-Token 值'))
+                                    : (t('plan.apiKeyPlaceholder') || '请输入 API Key')}
                             value={apiKey}
                             onChange={(e) => setApiKey(e.target.value)}
                         />
                         {isConsoleTokenPlan && (
                             <p className="text-[11px] leading-tight text-amber-500">
-                                {isVolcenginePlan
-                                    ? (t('plan.volcengineCredentialHint') || '会话过期后需重新获取 Cookie 和 x-csrf-token。')
-                                    : category === 'bailian_plan'
-                                        ? (t('plan.bailianTokenHint') || '会话过期后需重新获取控制台 Cookie。')
-                                        : category === 'sensenova_plan'
-                                            ? (t('plan.sensenovaTokenHint') || 'Token 有效期约 3 小时，过期后需重新获取。')
-                                            : (t('plan.oasisTokenHint') || 'Oasis-Token 有效期约 30 分钟，过期后需重新获取。')}
+                                    {isVolcenginePlan
+                                        ? (t('plan.volcengineCredentialHint') || '会话过期后需重新获取 Cookie 和 x-csrf-token。')
+                                        : isVolcengineAKSK
+                                            ? (t('plan.volcengineAKSKHint') || 'AK/SK 长期有效，无需频繁更新。确认账号有 Ark 用量查询(OpenAPI)权限。')
+                                            : category === 'bailian_plan'
+                                                ? (t('plan.bailianTokenHint') || '会话过期后需重新获取控制台 Cookie。')
+                                                : category === 'sensenova_plan'
+                                                    ? (t('plan.sensenovaTokenHint') || 'Token 有效期约 3 小时，过期后需重新获取。')
+                                                    : (t('plan.oasisTokenHint') || 'Oasis-Token 有效期约 30 分钟，过期后需重新获取。')}
                             </p>
                         )}
                         {isCodexPlan && (
@@ -843,6 +894,29 @@ function EditCredentialsDialog({
                             </p>
                         )}
                     </div>
+                    {isZhipuTeam && (
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">
+                                {t('plan.zhipuTeamOrgIdLabel') || '组织 ID'}
+                            </label>
+                            <Input
+                                placeholder={t('plan.zhipuTeamOrgIdPlaceholder') || 'bigmodel-organization 请求头值'}
+                                value={teamOrgId}
+                                onChange={(e) => setTeamOrgId(e.target.value)}
+                            />
+                            <label className="text-sm font-medium mt-2 block">
+                                {t('plan.zhipuTeamProjectIdLabel') || '项目 ID'}
+                            </label>
+                            <Input
+                                placeholder={t('plan.zhipuTeamProjectIdPlaceholder') || 'bigmodel-project 请求头值'}
+                                value={teamProjectId}
+                                onChange={(e) => setTeamProjectId(e.target.value)}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                {t('plan.zhipuTeamEditHint') || '留空则清空组织/项目 ID；填写新值将一并更新。'}
+                            </p>
+                        </div>
+                    )}
 
                     {supportsForwardApiKey && (
                         <div className="space-y-2">

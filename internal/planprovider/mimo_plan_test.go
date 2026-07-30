@@ -130,7 +130,7 @@ func TestAddProviderMiMoIgnoresForwardAPIKey(t *testing.T) {
 	setupPlanProviderDB(t)
 	withMiMoPlanServers(t)
 
-	provider, err := AddProvider(context.Background(), model.PlanProviderMiMoPlan, testMiMoCookie, "sk-should-not-be-saved", "MiMo monitor", model.ProxyUsageModeDirect, nil)
+	provider, err := AddProvider(context.Background(), model.PlanProviderMiMoPlan, testMiMoCookie, "sk-should-not-be-saved", "MiMo monitor", model.ProxyUsageModeDirect, nil, "", "")
 	if err != nil {
 		t.Fatalf("AddProvider() error = %v", err)
 	}
@@ -155,7 +155,7 @@ func TestListProvidersMasksPlanProviderSecrets(t *testing.T) {
 	setupPlanProviderDB(t)
 	withMiMoPlanServers(t)
 
-	provider, err := AddProvider(context.Background(), model.PlanProviderMiMoPlan, testMiMoCookie, "", "MiMo monitor", model.ProxyUsageModeDirect, nil)
+	provider, err := AddProvider(context.Background(), model.PlanProviderMiMoPlan, testMiMoCookie, "", "MiMo monitor", model.ProxyUsageModeDirect, nil, "", "")
 	if err != nil {
 		t.Fatalf("AddProvider() error = %v", err)
 	}

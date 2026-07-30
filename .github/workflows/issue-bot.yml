@@ -1,0 +1,56 @@
+# GitHub Issue/PR Bot — Octopus
+# 融合 xuexb/github-bot 设计 + AI 分类能力，通过 Octopus 网关调用 LLM
+#
+# 功能：
+#   - Issue: AI 分类+标签+回复 / 格式校验关闭 / label→assignee / label→回复
+#   - PR: 标题前缀→label / 标题格式校验 / label→reviewer
+#
+# Release notes 由 changelog.yml（changelogithub）负责，本 bot 不处理 tag。
+#
+# 需要在 repo Settings → Secrets 中添加：
+#   OCTOPUS_API_KEY  — Octopus 网关 chat 权限 API Key
+#   OCTOPUS_BASE_URL — Octopus 网关地址（如 https://api.lyux.space）
+#
+# 配置文件：.github/issue-bot-config.yml
+
+name: 🤖 Issue Bot
+
+on:
+  issues:
+    types: [opened, labeled]
+  # pull_request_target：在 base 仓库上下文运行，GITHUB_TOKEN 有写权限，
+  # fork PR 也能被打标签/评论。本 bot 不 checkout PR 代码、不执行 PR 内容，
+  # checkout 默认取 base ref，因此是安全的。
+  pull_request_target:
+    types: [opened, edited, labeled]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 📦 Install dependencies
+        run: pip install requests pyyaml
+
+      - name: 🤖 Run Bot
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
+          OCTOPUS_BASE_URL: ${{ secrets.OCTOPUS_BASE_URL }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: python scripts/issue-bot.py
