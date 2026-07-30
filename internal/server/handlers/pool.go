@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -174,19 +175,39 @@ func listPoolAccounts(c *gin.Context) {
 // poolAccountRequest 账号创建/更新请求体。扩展自旧 model.PoolAccount 直绑，
 // 增加平台/类型/模型/备注/token_expires_at 字段，凭据在写入前加密。
 type poolAccountRequest struct {
-	Name           string `json:"name"`
-	Platform       string `json:"platform"`
-	Type           string `json:"type"`
-	Models         string `json:"models"`
-	Credentials    string `json:"credentials"`
-	BaseURL        string `json:"base_url"`
-	Status         string `json:"status"`
-	Schedulable    *bool  `json:"schedulable"`
-	Priority       *int   `json:"priority"`
-	Concurrency    *int   `json:"concurrency"`
-	ProxyConfigID  *int   `json:"proxy_config_id"`
-	Notes          string `json:"notes"`
-	TokenExpiresAt *int64 `json:"token_expires_at"`
+	Name             string `json:"name"`
+	Platform         string `json:"platform"`
+	Type             string `json:"type"`
+	Models           string `json:"models"`
+	Credentials      string `json:"credentials"`
+	BaseURL          string `json:"base_url"`
+	Status           string `json:"status"`
+	Schedulable      *bool  `json:"schedulable"`
+	Priority         *int   `json:"priority"`
+	Concurrency      *int   `json:"concurrency"`
+	ProxyConfigID    *int   `json:"proxy_config_id"`
+	ProxyConfigIDSet bool   `json:"-"`
+	Notes            string `json:"notes"`
+	TokenExpiresAt   *int64 `json:"token_expires_at"`
+}
+
+// UnmarshalJSON 自定义反序列化，检测 proxy_config_id 是否在 JSON 中存在
+func (r *poolAccountRequest) UnmarshalJSON(data []byte) error {
+	type Alias poolAccountRequest
+	aux := &struct {
+		*Alias
+	}{
+		Alias: (*Alias)(r),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	_, r.ProxyConfigIDSet = raw["proxy_config_id"]
+	return nil
 }
 
 func createPoolAccount(c *gin.Context) {
@@ -276,8 +297,8 @@ func updatePoolAccount(c *gin.Context) {
 	if req.Concurrency != nil {
 		updates["concurrency"] = *req.Concurrency
 	}
-	if req.ProxyConfigID != nil {
-		updates["proxy_config_id"] = *req.ProxyConfigID
+	if req.ProxyConfigIDSet {
+		updates["proxy_config_id"] = req.ProxyConfigID
 	}
 	if req.Notes != "" {
 		updates["notes"] = req.Notes
