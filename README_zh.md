@@ -150,6 +150,24 @@ printf 'placeholder for go:embed\n' > static/out/_not-found/.keep
 go run main.go start
 ```
 
+**网络受限环境**
+
+构建脚本会从 `https://models.dev/api.json` 更新模型价格表。若访问受限，可通过代理执行：
+
+```bash
+# Linux / macOS / Git Bash
+export HTTP_PROXY=http://127.0.0.1:7890
+export HTTPS_PROXY=http://127.0.0.1:7890
+python scripts/updatePrice.py
+
+# PowerShell
+$env:HTTP_PROXY = "http://127.0.0.1:7890"
+$env:HTTPS_PROXY = "http://127.0.0.1:7890"
+python scripts/updatePrice.py
+```
+
+价格表生成在 `internal/price/presets.go`，编译时嵌入二进制。若无法更新，使用仓库内现有版本不影响功能，仅价格显示可能滞后。
+
 **开发模式**
 
 ```bash
