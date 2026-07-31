@@ -52,7 +52,7 @@ VALUES (1, 'default', 'GLM-5.2', ?, 'sync')`, key).Error; err != nil {
 		t.Fatalf("create new unique: %v", err)
 	}
 
-	if err := migrateDropLeftoverSiteModelNameUniqueIndex(db); err != nil {
+	if err := migrateBoth042(db); err != nil {
 		t.Fatalf("migrate 42: %v", err)
 	}
 	if db.Migrator().HasIndex(&model.SiteModel{}, "idx_site_account_group_model") {
@@ -63,7 +63,7 @@ VALUES (1, 'default', 'GLM-5.2', ?, 'sync')`, key).Error; err != nil {
 	}
 
 	// 幂等
-	if err := migrateDropLeftoverSiteModelNameUniqueIndex(db); err != nil {
+	if err := migrateBoth042(db); err != nil {
 		t.Fatalf("second migrate 42: %v", err)
 	}
 
