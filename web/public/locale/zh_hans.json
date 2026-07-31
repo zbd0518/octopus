@@ -1341,6 +1341,18 @@
       "hint": "CIDR/IP 列表，用于从 X-Forwarded-For 解析真实客户端 IP。留空=不信任任何代理，*=信任所有（有风险）。",
       "restartNotice": "修改后需重启服务生效。"
     },
+    "pool": {
+      "title": "号池配置",
+      "description": "号池账号健康巡检与分层调度过滤。",
+      "healthCheckEnabled": "启用健康巡检",
+      "healthCheckEnabledHint": "定期调用 TestAccount 探测账号连通性，连续失败后自动 SetError。",
+      "healthCheckInterval": "巡检间隔（分钟）",
+      "healthCheckFailThreshold": "失败阈值（连续 N 次失败后 SetError）",
+      "layeredFilterEnabled": "启用分层过滤",
+      "layeredFilterEnabledHint": "仅选择 priority ≥ min_priority 的账号。",
+      "minPriority": "最小优先级（默认 -9999 关闭）",
+      "minPriorityHint": "优先级低于该值的账号被调度跳过。"
+    },
     "circuitBreaker": {
       "title": "熔断器配置",
       "threshold": {
@@ -3543,6 +3555,57 @@
     "import": "导入",
     "importHint": "粘贴账号 JSON 数组，每项含 platform/type/credentials 等字段。",
     "importPlaceholder": "[{\"name\":\"acct1\",\"platform\":\"anthropic\",\"type\":\"apikey\",\"credentials\":{\"api_key\":\"sk-...\"}}]",
-    "importSuccess": "已导入 {{count}} 个账号"
+    "importSuccess": "已导入 {{count}} 个账号",
+    "weight": "权重",
+    "weightHint": "调度评分倾斜（同 priority 生效顺序：weight 优先）",
+    "weightCol": "W",
+    "loadFactor": "荷载因子",
+    "loadFactorHint": "账号在 least_loaded/槽位控制下的等价权重，0 表示继承 concurrency",
+    "loadFactorCol": "LF",
+    "autoPauseOnExpired": "到期自动停用",
+    "expiresAt": "到期时间",
+    "expiredBadge": "已到期",
+    "tempUnschedAction": "临时禁用",
+    "tempUnschedBadge": "临时 {{minutes}}m",
+    "tempUnschedDialog": {
+      "title": "临时禁用账号",
+      "minutes": "分钟（≤0 表示解除）",
+      "minutesHint": "该期间内调度跳过此账号",
+      "reason": "原因（可选）",
+      "confirm": "应用"
+    },
+    "tempUnschedApplied": "临时禁用已应用",
+    "recoverAccount": "恢复",
+    "recoverSuccess": "账号状态已恢复",
+    "extras": {
+      "section": "平台附加",
+      "projectId": "Project ID",
+      "tierId": "Tier ID",
+      "oauthType": "OAuth Type",
+      "oauthTypeNone": "无",
+      "authMode": "Auth Mode",
+      "authModeDefault": "默认",
+      "tlsFingerprint": "TLS 指纹",
+      "reserved": "预留"
+    },
+    "headerOverride": {
+      "section": "自定义请求头",
+      "row": {
+        "key": "Header",
+        "value": "Value"
+      },
+      "add": "新增一行",
+      "remove": "删除",
+      "blockedWarning": "黑名单头 (authorization / cookie / x-api-key 等) 将被后端跳过"
+    },
+    "exportAccounts": "导出",
+    "exportSuccess": "已导出 {{count}} 个账号",
+    "selectedCount": "已选 {{count}} 项",
+    "batchRefresh": "批量刷新 Token",
+    "batchClearError": "批量清除错误",
+    "batchTest": "批量测试",
+    "batchRefreshResult": "Token 刷新：{{ok}} 成功 / {{failed}} 失败",
+    "batchClearResult": "错误清除：{{ok}} 成功 / {{failed}} 失败",
+    "batchTestResult": "连通性：{{ok}}/{{total}} 通过"
   }
 }

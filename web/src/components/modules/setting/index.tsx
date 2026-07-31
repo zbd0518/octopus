@@ -5,7 +5,7 @@ import { useTranslations } from 'next-intl';
 import {
     Sun, User, Database,
     ScrollText, Monitor, RefreshCw, ChevronsUpDown,
-    Info, Bot, Sparkles, Cloud, Fingerprint, Wand2,
+    Info, Bot, Sparkles, Cloud, Fingerprint, Wand2, Layers,
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { SettingAppearance } from './Appearance';
@@ -22,6 +22,7 @@ import { SettingSemanticCache } from './SemanticCache';
 import { SettingWebDAV } from './WebDAV';
 import { SettingWebAuthn } from './WebAuthn';
 import { SettingNormalize } from './Normalize';
+import { SettingPool } from './Pool';
 import { DEFAULT_SETTING_ORDER } from './SettingOrder';
 
 type SettingItemDef = {
@@ -46,6 +47,7 @@ const SETTING_ITEM_DEFS: SettingItemDef[] = [
     { id: 'webdav',            icon: <Cloud className="h-5 w-5" />,             titleKey: 'webdav.title',         component: <SettingWebDAV /> },
     { id: 'webauthn',          icon: <Fingerprint className="h-5 w-5" />,      titleKey: 'webauthn.title',       component: <SettingWebAuthn /> },
     { id: 'normalize',         icon: <Wand2 className="h-5 w-5" />,           titleKey: 'normalize.title',      component: <SettingNormalize /> },
+    { id: 'pool',              icon: <Layers className="h-5 w-5" />,           titleKey: 'pool.title',           component: <SettingPool /> },
 ];
 
 const SETTING_ITEM_MAP = new Map<string, SettingItemDef>(

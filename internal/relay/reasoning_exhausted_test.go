@@ -1,59 +1,58 @@
 package relay
 
 import (
-    "testing"
+	"testing"
 
-    dbmodel "github.com/lingyuins/octopus/internal/model"
-    tmodel "github.com/lingyuins/octopus/internal/transformer/model"
-    "github.com/samber/lo"
+	dbmodel "github.com/lingyuins/octopus/internal/model"
+	tmodel "github.com/lingyuins/octopus/internal/transformer/model"
+	"github.com/samber/lo"
 )
 
 func TestIsReasoningExhaustedResponse_EmptyContentWithReasoningTokens(t *testing.T) {
-    empty := ""
-    resp := &tmodel.InternalLLMResponse{
-        Choices: []tmodel.Choice{{
-            Index: 0,
-            Message: &tmodel.Message{
-                Role: "assistant",
-                Content: tmodel.MessageContent{Content: &empty},
-            },
-        }},
-        Usage: &tmodel.Usage{
-            CompletionTokens: 50,
-            CompletionTokensDetails: &tmodel.CompletionTokensDetails{
-                ReasoningTokens: 49,
-            },
-        },
-    }
+	empty := ""
+	resp := &tmodel.InternalLLMResponse{
+		Choices: []tmodel.Choice{{
+			Index: 0,
+			Message: &tmodel.Message{
+				Role:    "assistant",
+				Content: tmodel.MessageContent{Content: &empty},
+			},
+		}},
+		Usage: &tmodel.Usage{
+			CompletionTokens: 50,
+			CompletionTokensDetails: &tmodel.CompletionTokensDetails{
+				ReasoningTokens: 49,
+			},
+		},
+	}
 
-    if !isReasoningExhaustedResponse(resp) {
-        t.Fatal("expected reasoning exhaustion to be detected")
-    }
+	if !isReasoningExhaustedResponse(resp) {
+		t.Fatal("expected reasoning exhaustion to be detected")
+	}
 }
 
 func TestIsReasoningExhaustedResponse_WithVisibleContent(t *testing.T) {
-    content := "Hello!"
-    resp := &tmodel.InternalLLMResponse{
-        Choices: []tmodel.Choice{{
-            Index: 0,
-            Message: &tmodel.Message{
-                Role: "assistant",
-                Content: tmodel.MessageContent{Content: &content},
-            },
-        }},
-        Usage: &tmodel.Usage{
-            CompletionTokens: 50,
-            CompletionTokensDetails: &tmodel.CompletionTokensDetails{
-                ReasoningTokens: 49,
-            },
-        },
-    }
+	content := "Hello!"
+	resp := &tmodel.InternalLLMResponse{
+		Choices: []tmodel.Choice{{
+			Index: 0,
+			Message: &tmodel.Message{
+				Role:    "assistant",
+				Content: tmodel.MessageContent{Content: &content},
+			},
+		}},
+		Usage: &tmodel.Usage{
+			CompletionTokens: 50,
+			CompletionTokensDetails: &tmodel.CompletionTokensDetails{
+				ReasoningTokens: 49,
+			},
+		},
+	}
 
-    if isReasoningExhaustedResponse(resp) {
-        t.Fatal("expected visible content to skip reasoning exhaustion marker")
-    }
+	if isReasoningExhaustedResponse(resp) {
+		t.Fatal("expected visible content to skip reasoning exhaustion marker")
+	}
 }
-
 
 func TestRewriteConversationRequestByProvider_SkipsAllEndpoint(t *testing.T) {
 	req := &tmodel.InternalLLMRequest{Messages: []tmodel.Message{{Role: "assistant", Reasoning: lo.ToPtr("r")}}}

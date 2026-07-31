@@ -43,6 +43,11 @@ const (
 
 	SettingKeyPoolTokenRefreshInterval             SettingKey = "pool_token_refresh_interval"              // 号池 OAuth token 刷新检查间隔（分钟）
 	SettingKeyPoolQuotaSyncInterval                SettingKey = "pool_quota_sync_interval"                 // 号池额度同步间隔（分钟）
+	SettingKeyPoolMinPriority                      SettingKey = "pool_min_priority"                        // 号池分层过滤 minPriority 阈值（默认 -9999 表示关闭）
+	SettingKeyPoolLayeredFilterEnabled             SettingKey = "pool_layered_filter_enabled"              // 号池分层过滤开关：开启后 SelectAccount 过滤掉 priority < min_priority 的候选
+	SettingKeyPoolHealthCheckEnabled               SettingKey = "pool_health_check_enabled"                // 号池账号健康巡检开关
+	SettingKeyPoolHealthCheckInterval              SettingKey = "pool_health_check_interval_minutes"       // 号池账号健康巡检间隔（分钟）
+	SettingKeyPoolHealthCheckFailThreshold         SettingKey = "pool_health_check_fail_threshold"         // 号池账号健康巡检失败阈值（连续 N 次后 SetError）
 	SettingKeyAutoStrategyMinSamples               SettingKey = "auto_strategy_min_samples"                // Auto策略最小样本数阈值
 	SettingKeyAutoStrategyTimeWindow               SettingKey = "auto_strategy_time_window"                // Auto策略时间窗口（秒）
 	SettingKeyAutoStrategySampleThreshold          SettingKey = "auto_strategy_sample_threshold"           // Auto策略滑动窗口大小
@@ -215,6 +220,11 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyGroupUpstreamMetaDisplayEnabled, Value: "true"}, // 默认开启分组上游元信息展示
 		{Key: SettingKeyPoolTokenRefreshInterval, Value: "10"},          // 默认 10 分钟检查号池 OAuth token 刷新
 		{Key: SettingKeyPoolQuotaSyncInterval, Value: "360"},            // 默认 6 小时同步号池额度
+		{Key: SettingKeyPoolMinPriority, Value: "-9999"},                // 默认关闭分层过滤
+		{Key: SettingKeyPoolLayeredFilterEnabled, Value: "false"},       // 默认关闭号池分层过滤
+		{Key: SettingKeyPoolHealthCheckEnabled, Value: "false"},         // 默认关闭号池巡检
+		{Key: SettingKeyPoolHealthCheckInterval, Value: "30"},           // 默认 30 分钟巡检
+		{Key: SettingKeyPoolHealthCheckFailThreshold, Value: "3"},       // 默认 3 次失败后 SetError
 	}
 }
 
@@ -244,7 +254,8 @@ func (s *Setting) Validate() error {
 		SettingKeyStreamSessionTTLMinutes, SettingKeyStreamSessionMaxEvents, SettingKeyStreamSessionMaxBytesMB,
 		SettingKeyNotifyHTTPTimeoutSeconds,
 		SettingKeyFailureHintTTLUnauthorized, SettingKeyFailureHintTTLRateLimit, SettingKeyFailureHintTTLNetwork,
-		SettingKeyPoolTokenRefreshInterval, SettingKeyPoolQuotaSyncInterval:
+		SettingKeyPoolTokenRefreshInterval, SettingKeyPoolQuotaSyncInterval,
+		SettingKeyPoolMinPriority, SettingKeyPoolHealthCheckInterval, SettingKeyPoolHealthCheckFailThreshold:
 		v, err := strconv.Atoi(s.Value)
 		if err != nil {
 			return fmt.Errorf("setting value must be an integer")
@@ -298,12 +309,14 @@ func (s *Setting) Validate() error {
 			SettingKeyStreamSessionTTLMinutes, SettingKeyStreamSessionMaxEvents, SettingKeyStreamSessionMaxBytesMB,
 			SettingKeyFailureHintTTLUnauthorized, SettingKeyFailureHintTTLRateLimit, SettingKeyFailureHintTTLNetwork,
 			SettingKeyKeyHealthCheckInterval, SettingKeyKeyHealthCheckFailThreshold, SettingKeyKeyHealthCheckNotifyCooldown,
-			SettingKeyPoolTokenRefreshInterval, SettingKeyPoolQuotaSyncInterval:
+			SettingKeyPoolTokenRefreshInterval, SettingKeyPoolQuotaSyncInterval,
+			SettingKeyPoolHealthCheckInterval, SettingKeyPoolHealthCheckFailThreshold:
 			if v < 1 {
 				return fmt.Errorf("setting value must be greater than 0")
 			}
 		}
-	case SettingKeyRelayLogKeepEnabled, SettingKeyRelayLogContentEnabled, SettingKeyStreamSessionReplayEnabled, SettingKeySemanticCacheEnabled, SettingKeyModelNormalizeMarketDedupeDefault, SettingKeyRetryEmptyOutput, SettingKeyRateLimitHoldEnabled, SettingKeyKeyHealthCheckEnabled, SettingKeyKeyHealthCheckNotifyEnabled, SettingKeyKeyHealthCheckRecoveryNotify:
+	case SettingKeyRelayLogKeepEnabled, SettingKeyRelayLogContentEnabled, SettingKeyStreamSessionReplayEnabled, SettingKeySemanticCacheEnabled, SettingKeyModelNormalizeMarketDedupeDefault, SettingKeyRetryEmptyOutput, SettingKeyRateLimitHoldEnabled, SettingKeyKeyHealthCheckEnabled, SettingKeyKeyHealthCheckNotifyEnabled, SettingKeyKeyHealthCheckRecoveryNotify,
+		SettingKeyPoolLayeredFilterEnabled, SettingKeyPoolHealthCheckEnabled:
 		if s.Value != "true" && s.Value != "false" {
 			return fmt.Errorf("setting value must be true or false")
 		}

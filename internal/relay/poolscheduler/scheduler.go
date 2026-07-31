@@ -11,6 +11,7 @@ import (
 
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/pool"
+	"github.com/lingyuins/octopus/internal/op/setting"
 	"gorm.io/gorm"
 )
 
@@ -68,6 +69,8 @@ func SelectAccount(poolID int, sessionHash string, excludeIDs []int, poolDefault
 	}
 	candidates = filterExcluded(candidates, excludeIDs)
 	candidates = filterByModel(candidates, modelName)
+	// L2.5: 可选分层过滤（priority 阈值），管理员显式配置即遵守（不 fallback）。
+	candidates = filterLayeredByPriority(candidates)
 	if len(candidates) == 0 {
 		// 候选为空时，尝试触发池内 token 过期的 OAuth 账号刷新（异步，不阻塞）。
 		triggerRefreshForExpired(poolID, modelName)
@@ -112,6 +115,11 @@ func ReportResult(poolID, accountID int, success bool, ttftMs float64, outputTok
 	stats.lastActivity = time.Now()
 	stats.mu.Unlock()
 
+	// 成功请求后清零鉴权错误计数（等价 sub2api clear-error 于测试成功）。
+	if success {
+		ResetAuthError(poolID, accountID)
+	}
+
 	// 异步更新 DB 累计（best-effort，不阻塞请求路径）。
 	go func() {
 		updates := map[string]interface{}{
@@ -124,6 +132,13 @@ func ReportResult(poolID, accountID int, success bool, ttftMs float64, outputTok
 			updates["total_tokens"] = gormExpr("total_tokens + ?", outputTokens)
 		}
 		_ = pool.UpdateAccount(poolID, accountID, updates)
+		if success {
+			// 同步清零 auth_error_count 窗口数据库列，供恢复面板与统计查看。
+			_ = pool.UpdateAccount(poolID, accountID, map[string]interface{}{
+				"auth_error_count":        0,
+				"auth_error_window_start": int64(0),
+			})
+		}
 	}()
 }
 
@@ -145,6 +160,47 @@ func SetOverload(poolID, accountID int, until time.Time) {
 func SetError(poolID, accountID int) {
 	_ = pool.UpdateAccount(poolID, accountID, map[string]interface{}{
 		"status": "error",
+	})
+}
+
+// SetTempUnsched 设置临时不可调度（直到 until；reason 为 TempUnschedState JSON 或空字符串）。
+// until 为零值表示清除。
+func SetTempUnsched(poolID, accountID int, until time.Time, reason string) {
+	updates := map[string]interface{}{
+		"temp_unsched_until":  until.Unix(),
+		"temp_unsched_reason": reason,
+	}
+	if until.IsZero() {
+		updates["temp_unsched_until"] = int64(0)
+		updates["temp_unsched_reason"] = ""
+	}
+	_ = pool.UpdateAccount(poolID, accountID, updates)
+}
+
+// ClearTempUnsched 手动清除临时不可调度（测试成功/管理员恢复时）。
+func ClearTempUnsched(poolID, accountID int) {
+	SetTempUnsched(poolID, accountID, time.Time{}, "")
+}
+
+// ReportAuthErrorCount 上报当前鉴权错误计数到 DB（供管理员查看当前窗口计数）。
+// 同时刷新窗口起点 best-effort（本身不明示窗口起点，仅写入计数）。
+func ReportAuthErrorCount(poolID, accountID int, count int) error {
+	return pool.UpdateAccount(poolID, accountID, map[string]interface{}{
+		"auth_error_count": count,
+	})
+}
+
+// RecoverAccount 管理员手动恢复账号：清除错误状态与所有冷却/禁用标记。
+func RecoverAccount(poolID, accountID int) error {
+	return pool.UpdateAccount(poolID, accountID, map[string]interface{}{
+		"status":                  "active",
+		"error_message":           "",
+		"temp_unsched_until":      int64(0),
+		"temp_unsched_reason":     "",
+		"rate_limit_reset_at":     int64(0),
+		"overload_until":          int64(0),
+		"auth_error_count":        0,
+		"auth_error_window_start": int64(0),
 	})
 }
 
@@ -179,6 +235,7 @@ func RemoveAccount(poolID, accountID int) {
 	key := statsKey(poolID, accountID)
 	globalPoolStats.Delete(key)
 	globalPoolSlots.Delete(key)
+	RemoveAuthError(poolID, accountID)
 	// 清理指向该账号的粘性条目。
 	globalPoolSticky.Range(func(k, v interface{}) bool {
 		if s := k.(string); len(s) > 0 && parsePoolID(s) == poolID {
@@ -225,7 +282,10 @@ func trySticky(poolID int, sessionHash string, excludeIDs []int, poolDefaultConc
 	if !model.ModelMatches(acct.Models, modelName) {
 		return nil, false
 	}
-	limit := acct.EffectiveConcurrency(poolDefaultConcurrency)
+	limit := acct.EffectiveLoadFactor()
+	if limit <= 0 {
+		limit = acct.EffectiveConcurrency(poolDefaultConcurrency)
+	}
 	if !tryAcquireSlot(poolID, accountID, limit) {
 		return nil, false
 	}
@@ -257,12 +317,17 @@ func triggerRefreshForExpired(poolID int, modelName string) {
 	if err != nil {
 		return
 	}
+	now := time.Now()
 	for i := range accounts {
 		acct := &accounts[i]
 		if acct.Type != model.PoolTypeOAuth {
 			continue
 		}
 		if !acct.IsTokenExpired() {
+			continue
+		}
+		// 仍在退避窗口内的账号跳过（避兔选号路径绕过剈新退避机制）。
+		if !acct.IsRefreshAllowed(now) {
 			continue
 		}
 		// 仅刷新与请求模型匹配的账号（避免刷新无关账号）。
@@ -290,10 +355,33 @@ func filterExcluded(candidates []model.PoolAccount, excludeIDs []int) []model.Po
 	return result
 }
 
+// filterLayeredByPriority 可选分层过滤（设置启用时按 min_priority 过滤低优先级候选）。
+// 结果为空不 fallback（管理员显式配置）。
+func filterLayeredByPriority(candidates []model.PoolAccount) []model.PoolAccount {
+	enabled, err := setting.GetBool(model.SettingKeyPoolLayeredFilterEnabled)
+	if err != nil || !enabled {
+		return candidates
+	}
+	minPriority, err := setting.GetInt(model.SettingKeyPoolMinPriority)
+	if err != nil {
+		return candidates
+	}
+	result := make([]model.PoolAccount, 0, len(candidates))
+	for i := range candidates {
+		if candidates[i].Priority >= minPriority {
+			result = append(result, candidates[i])
+		}
+	}
+	return result
+}
+
 func filterBySlot(candidates []model.PoolAccount, poolID, poolDefaultConcurrency int) []model.PoolAccount {
 	result := make([]model.PoolAccount, 0, len(candidates))
 	for i := range candidates {
-		limit := candidates[i].EffectiveConcurrency(poolDefaultConcurrency)
+		limit := candidates[i].EffectiveLoadFactor()
+		if limit <= 0 {
+			limit = candidates[i].EffectiveConcurrency(poolDefaultConcurrency)
+		}
 		key := statsKey(poolID, candidates[i].ID)
 		val, _ := globalPoolSlots.LoadOrStore(key, new(int64))
 		current := atomic.LoadInt64(val.(*int64))
@@ -318,9 +406,35 @@ func selectByStrategy(candidates []model.PoolAccount, poolID int) model.PoolAcco
 		return candidates[idx%uint64(len(candidates))]
 	case "random":
 		return candidates[rand.IntN(len(candidates))]
+	case "least_loaded":
+		return selectByLeastLoaded(candidates, poolID)
 	default: // "ewma"
 		return selectByEWMA(candidates, poolID)
 	}
+}
+
+// selectByLeastLoaded 按当前占用槽位 / EffectiveLoadFactor 最小者选择。
+// 无槽位记录视为 0，并列取首个。
+func selectByLeastLoaded(candidates []model.PoolAccount, poolID int) model.PoolAccount {
+	bestIdx := 0
+	bestLoad := math.MaxFloat64
+	for i := range candidates {
+		key := statsKey(poolID, candidates[i].ID)
+		load := 0.0
+		if val, ok := globalPoolSlots.Load(key); ok {
+			load = float64(atomic.LoadInt64(val.(*int64)))
+		}
+		factor := candidates[i].EffectiveLoadFactor()
+		if factor <= 0 {
+			factor = 1
+		}
+		ratio := load / float64(factor)
+		if ratio < bestLoad {
+			bestLoad = ratio
+			bestIdx = i
+		}
+	}
+	return candidates[bestIdx]
 }
 
 func selectByEWMA(candidates []model.PoolAccount, poolID int) model.PoolAccount {
@@ -337,7 +451,9 @@ func selectByEWMA(candidates []model.PoolAccount, poolID int) model.PoolAccount 
 			score = stats.errorRate*0.7 + (stats.ttftMs/10000.0)*0.3
 			stats.mu.Unlock()
 		}
-		// priority 作为 tiebreaker：高优先级减分。
+		// weight 先于 priority 作为 tiebreaker：权重越高得分越低（越容易选中）。
+		score -= float64(candidates[i].Weight) * 0.001
+		// priority 作为第二 tiebreaker：高优先级减分。
 		score -= float64(candidates[i].Priority) * 0.001
 		if score < bestScore {
 			bestScore = score

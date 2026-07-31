@@ -159,6 +159,11 @@ var auditedManagementWriteRoutes = map[string]struct{}{
 	"POST /api/v1/pool/:id/account/test":                                             {},
 	"POST /api/v1/pool/:id/account/quota/:aid":                                       {},
 	"POST /api/v1/pool/:id/account/refresh-token/:aid":                               {},
+	"POST /api/v1/pool/:id/account/recover/:aid":                                     {},
+	"POST /api/v1/pool/:id/account/temp-unsched/:aid":                                {},
+	"POST /api/v1/pool/:id/account/batch-refresh":                                    {},
+	"POST /api/v1/pool/:id/account/batch-clear-error":                                {},
+	"POST /api/v1/pool/:id/account/batch-test":                                       {},
 	"DELETE /api/v1/pool/:id/account/delete/:aid":                                    {},
 	"PUT /api/v1/plan-provider/credentials/:id":                                      {},
 }

@@ -39,6 +39,13 @@ const (
 	refreshLeadTime = 5 * time.Minute
 )
 
+// P2 Token 刷新失败退避参数（对齐 sub2api 退避策略）：
+// 首次失败 5m → 10m → 20m → …，上限 2h。
+const (
+	failureBackoffBase = 5 * time.Minute
+	failureBackoffMax  = 2 * time.Hour
+)
+
 func init() {
 	// 注入选号触发刷新 + 手动刷新入口。
 	poolscheduler.TriggerRefreshAsync = func(poolID, accountID int) {
@@ -78,13 +85,25 @@ func refreshAccountImpl(ctx context.Context, poolID, accountID int) error {
 	}
 
 	newCred, expiresAt, err := refreshByPlatform(ctx, acct.Platform, cred)
+	now := time.Now()
 	if err != nil {
-		// 写 error_message。
+		// 失败：写入 error_message + 退避窗口（供 RefreshLoop/triggerRefresh 跳过）。
+		extra := acct.GetExtra()
+		extra.RefreshFailureCount++
+		extra.NextRefreshAllowedAt = computeNextBackoff(extra.RefreshFailureCount, now)
+		acct.SetExtra(extra)
 		_ = pool.UpdateAccount(poolID, accountID, map[string]interface{}{
 			"error_message": err.Error(),
+			"extra":         acct.Extra,
 		})
 		return err
 	}
+
+	// 成功：重置退避计数。
+	extra := acct.GetExtra()
+	extra.RefreshFailureCount = 0
+	extra.NextRefreshAllowedAt = 0
+	acct.SetExtra(extra)
 
 	// 构造新凭据 JSON 并加密。
 	credBytes, _ := json.Marshal(newCred)
@@ -92,8 +111,27 @@ func refreshAccountImpl(ctx context.Context, poolID, accountID int) error {
 		"credentials":      pool.EncryptCredentials(string(credBytes)),
 		"token_expires_at": expiresAt,
 		"error_message":    "",
+		"extra":            acct.Extra,
 	}
 	return pool.UpdateAccount(poolID, accountID, updates)
+}
+
+// computeNextBackoff 根据失败次数计算下一次允许刷新的时间（unix 秒）。
+// 首次失败 base；随后按 2 的幂次递进，上限 max。
+func computeNextBackoff(failureCount int, now time.Time) int64 {
+	if failureCount < 1 {
+		failureCount = 1
+	}
+	shift := failureCount - 1
+	if shift > 10 {
+		// 防止位移溢出；10 已远超 base<<10=85h>>max。
+		return now.Add(failureBackoffMax).Unix()
+	}
+	backoff := failureBackoffBase << shift
+	if backoff > failureBackoffMax || backoff < 0 {
+		backoff = failureBackoffMax
+	}
+	return now.Add(backoff).Unix()
 }
 
 // refreshByPlatform 按 platform 路由到对应刷新逻辑，返回新凭据与过期时间戳。
@@ -245,6 +283,8 @@ func refreshGrok(ctx context.Context, client *http.Client, cred model.PoolCreden
 
 // RefreshLoop 后台扫描所有即将过期的 oauth 账号，并发刷新。
 // 由 task 包周期调用。
+// 跳过仍处于退避窗口（NextRefreshAllowedAt > now）的账号，避免反复打上游。
+// 末尾同时执行 autoPauseExpired（等价 sub2api account_expiry_service.runOnce）。
 func RefreshLoop() {
 	ctx := context.Background()
 	accounts, err := pool.ListAllAccounts()
@@ -252,7 +292,8 @@ func RefreshLoop() {
 		log.Warnf("pooltokenrefresh: list accounts failed: %v", err)
 		return
 	}
-	now := time.Now().Unix()
+	now := time.Now()
+	nowUnix := now.Unix()
 	var wg sync.WaitGroup
 	for i := range accounts {
 		acct := &accounts[i]
@@ -260,7 +301,11 @@ func RefreshLoop() {
 			continue
 		}
 		// 即将过期或已过期才刷新（expires_at==0 也刷新，避免遗漏未记录过期的）。
-		if acct.TokenExpiresAt != 0 && acct.TokenExpiresAt-now > int64(refreshLeadTime.Seconds()) {
+		if acct.TokenExpiresAt != 0 && acct.TokenExpiresAt-nowUnix > int64(refreshLeadTime.Seconds()) {
+			continue
+		}
+		// 跳过退避窗口内的账号（对齐 sub2api ratelimit_service:301 退避逻辑）。
+		if !acct.IsRefreshAllowed(now) {
 			continue
 		}
 		wg.Add(1)
@@ -274,6 +319,35 @@ func RefreshLoop() {
 		}(acct)
 	}
 	wg.Wait()
+
+	// P2: 批次末尾同时执行 auto-pause，把 expires_at 过期的账号标记为 disabled。
+	autoPauseExpired(now)
+}
+
+// autoPauseExpired 把 expires_at 到期 + 开启了 auto_pause_on_expired 的账号自动
+// 置为 disabled。幂等：仅当账号仍为 active 状态时修改。
+func autoPauseExpired(now time.Time) {
+	accounts, err := pool.ListAllAccounts()
+	if err != nil {
+		return
+	}
+	nowUnix := now.Unix()
+	for i := range accounts {
+		a := &accounts[i]
+		if !a.AutoPauseOnExpired || a.ExpiresAt <= 0 {
+			continue
+		}
+		if a.Status != "active" {
+			continue
+		}
+		if nowUnix < a.ExpiresAt {
+			continue
+		}
+		_ = pool.UpdateAccount(a.PoolID, a.ID, map[string]interface{}{
+			"status":        "disabled",
+			"error_message": "auto-paused: expired at " + time.Unix(a.ExpiresAt, 0).Format(time.RFC3339),
+		})
+	}
 }
 
 func getEnvDefault(key, fallback string) string {

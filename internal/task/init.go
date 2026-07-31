@@ -13,6 +13,7 @@ import (
 	"github.com/lingyuins/octopus/internal/op/remotesite"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/op/stats"
+	"github.com/lingyuins/octopus/internal/poolhealthcheck"
 	"github.com/lingyuins/octopus/internal/pooltokenrefresh"
 	"github.com/lingyuins/octopus/internal/price"
 	"github.com/lingyuins/octopus/internal/relay"
@@ -229,4 +230,11 @@ func Init() {
 	Register(string(model.SettingKeyPoolQuotaSyncInterval), time.Duration(poolQuotaSyncMin)*time.Minute, true, func() {
 		porop.SyncAllQuotas(context.Background())
 	})
+
+	// 号池账号健康巡检（走 pool.TestAccount 主动探测，累计失败到阈值后 SetError）。
+	poolHealthCheckMin, err := setting.GetInt(model.SettingKeyPoolHealthCheckInterval)
+	if err != nil || poolHealthCheckMin < 1 {
+		poolHealthCheckMin = 30
+	}
+	Register(string(model.SettingKeyPoolHealthCheckInterval), time.Duration(poolHealthCheckMin)*time.Minute, false, poolhealthcheck.Run)
 }

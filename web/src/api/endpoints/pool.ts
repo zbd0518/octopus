@@ -13,6 +13,19 @@ export type AccountPool = {
     updated_at: string;
 };
 
+export type PoolAccountExtra = {
+    project_id?: string;
+    tier_id?: string;
+    oauth_type?: string;
+    auth_mode?: string;
+    privacy_mode?: string;
+    header_overrides_enabled?: boolean;
+    header_overrides?: Record<string, string>;
+    tls_fingerprint_profile?: string;
+    refresh_failure_count?: number;
+    next_refresh_allowed_at?: number;
+};
+
 export type PoolAccount = {
     id: number;
     pool_id: number;
@@ -37,6 +50,16 @@ export type PoolAccount = {
     last_used_at?: string | null;
     error_message: string;
     notes: string;
+    // P0–P3 新增
+    temp_unsched_until: number;
+    temp_unsched_reason: string;
+    auth_error_count: number;
+    auth_error_window_start: number;
+    expires_at: number;
+    auto_pause_on_expired: boolean;
+    extra: string;
+    weight: number;
+    load_factor: number;
     created_at: string;
     updated_at: string;
 };
@@ -74,6 +97,11 @@ export type PoolAccountRequest = {
     proxy_config_id?: number | null;
     notes?: string;
     token_expires_at?: number;
+    weight?: number;
+    load_factor?: number;
+    auto_pause_on_expired?: boolean;
+    expires_at?: number;
+    extra?: string;
 };
 
 export type CreatePoolAccountRequest = PoolAccountRequest;
@@ -193,6 +221,70 @@ export function useRefreshPoolToken(poolId: number) {
         mutationFn: (accountId: number) =>
             apiClient.post(`/api/v1/pool/${poolId}/account/refresh-token/${accountId}`, {}),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pools', poolId, 'accounts'] }),
+    });
+}
+
+export function useRecoverPoolAccount(poolId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (accountId: number) =>
+            apiClient.post(`/api/v1/pool/${poolId}/account/recover/${accountId}`, {}),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pools', poolId, 'accounts'] }),
+    });
+}
+
+export function useTempUnschedPoolAccount(poolId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ accountId, minutes, reason }: { accountId: number; minutes: number; reason: string }) =>
+            apiClient.post(`/api/v1/pool/${poolId}/account/temp-unsched/${accountId}`, { minutes, reason }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pools', poolId, 'accounts'] }),
+    });
+}
+
+export type BatchItemError = { id: number; error: string };
+export type BatchAccountsResponse = { ok: number; failed: BatchItemError[] };
+export type BatchTestItemResult = { id: number; success: boolean; latency_ms: number; error?: string };
+
+export function useBatchPoolAccounts(poolId: number) {
+    const queryClient = useQueryClient();
+    const invalidate = () => queryClient.invalidateQueries({ queryKey: ['pools', poolId, 'accounts'] });
+    const refresh = useMutation({
+        mutationFn: (accountIds: number[]) =>
+            apiClient.post<BatchAccountsResponse>(`/api/v1/pool/${poolId}/account/batch-refresh`, { account_ids: accountIds }),
+        onSuccess: invalidate,
+    });
+    const clearError = useMutation({
+        mutationFn: (accountIds: number[]) =>
+            apiClient.post<BatchAccountsResponse>(`/api/v1/pool/${poolId}/account/batch-clear-error`, { account_ids: accountIds }),
+        onSuccess: invalidate,
+    });
+    const test = useMutation({
+        mutationFn: ({ accountIds, model }: { accountIds: number[]; model: string }) =>
+            apiClient.post<BatchTestItemResult[]>(`/api/v1/pool/${poolId}/account/batch-test`, { account_ids: accountIds, model }),
+        onSuccess: invalidate,
+    });
+    return { refresh, clearError, test };
+}
+
+export type PoolAccountExport = {
+    name: string;
+    platform: string;
+    type: string;
+    models: string;
+    base_url: string;
+    priority: number;
+    concurrency: number;
+    weight: number;
+    load_factor: number;
+    notes: string;
+    extra?: string;
+    credentials: string;
+};
+
+export function useExportPoolAccounts(poolId: number) {
+    return useMutation({
+        mutationFn: () => apiClient.get<PoolAccountExport[]>(`/api/v1/pool/${poolId}/account/export`),
     });
 }
 

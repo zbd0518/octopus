@@ -8,9 +8,10 @@ import (
 
 // AccountPool 号池：集中管理上游账号凭据，渠道通过 PoolID 关联。
 type AccountPool struct {
-	ID                 int       `json:"id" gorm:"primaryKey"`
-	Name               string    `json:"name" gorm:"size:128;uniqueIndex;not null"`
-	Description        string    `json:"description" gorm:"size:512"`
+	ID          int    `json:"id" gorm:"primaryKey"`
+	Name        string `json:"name" gorm:"size:128;uniqueIndex;not null"`
+	Description string `json:"description" gorm:"size:512"`
+	// Strategy 调度策略：ewma（默认，错误率+TTFT 加权）/ round_robin / random / least_loaded（最小荷载比）。
 	Strategy           string    `json:"strategy" gorm:"type:varchar(32);not null;default:'ewma'"`
 	DefaultConcurrency int       `json:"default_concurrency" gorm:"default:1"`
 	CooldownBaseSec    int       `json:"cooldown_base_sec" gorm:"default:300"`
@@ -46,8 +47,26 @@ type PoolAccount struct {
 	LastUsedAt       *time.Time `json:"last_used_at"`
 	ErrorMessage     string     `json:"error_message" gorm:"type:text"`
 	Notes            string     `json:"notes" gorm:"size:512"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+
+	// P0 调度健壮性：临时不可调度（频控/鉴权失败，窗口截止前不参与调度）
+	TempUnschedUntil     int64  `json:"temp_unsched_until" gorm:"default:0"`
+	TempUnschedReason    string `json:"temp_unsched_reason" gorm:"type:text"`
+	AuthErrorCount       int    `json:"auth_error_count" gorm:"default:0"`
+	AuthErrorWindowStart int64  `json:"auth_error_window_start" gorm:"default:0"`
+
+	// P2 生命周期：账号整体过期（订阅到期）
+	ExpiresAt          int64 `json:"expires_at" gorm:"default:0"`
+	AutoPauseOnExpired bool  `json:"auto_pause_on_expired" gorm:"default:false"`
+
+	// P1 负载与路由
+	Weight     int `json:"weight" gorm:"default:0"`
+	LoadFactor int `json:"load_factor" gorm:"default:0"`
+
+	// P3 平台附加字段（加密存储）
+	Extra string `json:"extra" gorm:"type:text"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (PoolAccount) TableName() string { return "pool_accounts" }
@@ -71,6 +90,26 @@ const (
 	PoolTypeSetupToken = "setup-token"
 )
 
+// PoolAccountExtra 平台附加字段（Extra JSON 反序列化后的结构）
+// 敏感键（含 key/token/secret/cookie 字样的 header value）在写库前单独脱敏存储，
+// 但本 struct 只承载平台标识与路由相关字段，不直接放凭据。
+type PoolAccountExtra struct {
+	// P3 平台字段
+	ProjectID   string `json:"project_id,omitempty"`   // gemini/antigravity
+	TierID      string `json:"tier_id,omitempty"`      // gemini
+	OAuthType   string `json:"oauth_type,omitempty"`   // gemini code_assist
+	AuthMode    string `json:"auth_mode,omitempty"`    // openai personalAccessToken
+	PrivacyMode string `json:"privacy_mode,omitempty"` // openai/antigravity
+	// P3 自定义额外请求头（仅 apikey 类型，平台 anthropic/openai；grok 允许 oauth）
+	HeaderOverridesEnabled bool              `json:"header_overrides_enabled,omitempty"`
+	HeaderOverrides        map[string]string `json:"header_overrides,omitempty"`
+	// P3 TLS 指纹预留（本计划不实现 dialer）
+	TLSFingerprintProfile string `json:"tls_fingerprint_profile,omitempty"`
+	// P2 刷新失败退避（写入 Extra JSON，不加列）
+	RefreshFailureCount  int   `json:"refresh_failure_count,omitempty"`
+	NextRefreshAllowedAt int64 `json:"next_refresh_allowed_at,omitempty"`
+}
+
 // IsSchedulable 判断账号当前是否可参与调度。
 func (a *PoolAccount) IsSchedulable() bool {
 	if a.Status != "active" || !a.Schedulable {
@@ -80,10 +119,59 @@ func (a *PoolAccount) IsSchedulable() bool {
 	if a.RateLimitResetAt > now || a.OverloadUntil > now {
 		return false
 	}
+	if a.IsTempUnsched() {
+		return false
+	}
+	if a.IsExpired() {
+		return false
+	}
 	if a.IsTokenExpired() {
 		return false
 	}
 	return true
+}
+
+// IsTempUnsched 判断账号是否被临时调度禁用。
+func (a *PoolAccount) IsTempUnsched() bool {
+	return a.TempUnschedUntil > 0 && time.Now().Unix() < a.TempUnschedUntil
+}
+
+// IsExpired 判断账号是否整体过期（订阅到期）
+func (a *PoolAccount) IsExpired() bool {
+	return a.AutoPauseOnExpired && a.ExpiresAt > 0 && time.Now().Unix() >= a.ExpiresAt
+}
+
+// GetExtra 解析 Extra JSON；解析失败返回空结构。
+func (a *PoolAccount) GetExtra() PoolAccountExtra {
+	var e PoolAccountExtra
+	if a.Extra == "" {
+		return e
+	}
+	_ = json.Unmarshal([]byte(a.Extra), &e)
+	return e
+}
+
+// SetExtra 序列化 Extra 结构体并写入 Extra 字段。
+func (a *PoolAccount) SetExtra(e PoolAccountExtra) {
+	b, err := json.Marshal(e)
+	if err != nil {
+		return
+	}
+	a.Extra = string(b)
+}
+
+// EffectiveLoadFactor 返回调度荷载因子：load_factor>0 则返回它，否则回退 EffectiveConcurrency(0)。
+func (a *PoolAccount) EffectiveLoadFactor() int {
+	if a.LoadFactor > 0 {
+		return a.LoadFactor
+	}
+	return a.EffectiveConcurrency(0)
+}
+
+// IsRefreshAllowed 判断当前是否在刷新退避窗口内，true 表示允许刷新。
+func (a *PoolAccount) IsRefreshAllowed(now time.Time) bool {
+	extra := a.GetExtra()
+	return extra.NextRefreshAllowedAt <= now.Unix()
 }
 
 // IsTokenExpired 判断 OAuth 账号的 access_token 是否即将过期（提前 60 秒视为过期）。
@@ -150,9 +238,16 @@ func ParsePoolCredential(raw string) PoolCredential {
 	return cred
 }
 
-// EffectiveKey 返回用于出站鉴权的 ChannelKey 字符串。
-// 按 Type 选取最合适的字段；oauth 的 openai/codex 返回完整 OAuth JSON（供 codex 适配器解析）。
+// EffectiveKey 返回用于出站鉴权的 ChannelKey 字符串（空 extra）。
+// 调用方知账号 extra 时应使用 EffectiveKeyWithExtra，以支持 auth_mode=personalAccessToken 等分支。
 func (c PoolCredential) EffectiveKey(platform string) string {
+	return c.EffectiveKeyWithExtra(platform, PoolAccountExtra{})
+}
+
+// EffectiveKeyWithExtra 返回用于出站鉴权的 ChannelKey 字符串。
+// 按 Type 选取最合适的字段；oauth 的 openai/codex 返回完整 OAuth JSON（供 codex 适配器解析）。
+// extra.AuthMode==personalAccessToken 时返回 AccessToken 作为 Bearer，不走 JSON 透传。
+func (c PoolCredential) EffectiveKeyWithExtra(platform string, extra PoolAccountExtra) string {
 	switch c.Type {
 	case PoolTypeAPIKey:
 		if c.APIKey != "" {
@@ -167,6 +262,10 @@ func (c PoolCredential) EffectiveKey(platform string) string {
 	case PoolTypeUpstream:
 		return c.APIKey
 	case PoolTypeOAuth:
+		// personalAccessToken 模式：不走 OAuth JSON，直接用 access_token 作 Bearer。
+		if platform == PoolPlatformOpenAI && extra.AuthMode == "personalAccessToken" {
+			return c.AccessToken
+		}
 		// openai/codex 平台需要完整 OAuth JSON（含 account_id），交给 codex 适配器解析。
 		if platform == PoolPlatformOpenAI {
 			b, _ := json.Marshal(map[string]string{

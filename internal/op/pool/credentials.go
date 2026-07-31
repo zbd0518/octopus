@@ -79,13 +79,44 @@ func MaskAccountCredentials(acct *model.PoolAccount) string {
 	return string(out)
 }
 
-// MaskAccount 返回账号的脱敏副本（凭据字段替换为脱敏 JSON）。
+// MaskAccount 返回账号的脱敏副本（凭据字段替换为脱敏 JSON；Extra 中敏感 header 值同脱敏）。
 // 供 handler list/detail 返回前端使用。
 func MaskAccount(acct *model.PoolAccount) model.PoolAccount {
 	cp := *acct
 	cp.Credentials = MaskAccountCredentials(acct)
+	cp.Extra = MaskAccountExtra(acct)
 	// quota 字段不脱敏（额度快照无敏感信息）。
 	return cp
+}
+
+// MaskAccountExtra 将账号 Extra 中的敏感 header override 值脱敏后返回。
+// 仅处理嵌套 header_overrides map；key/token/secret/cookie 字样的 value 一律为 "***"
+// （避免管理员误将敏感值暴露给查看面板）。非敏感字段 project_id/tier_id/auth_mode 原样返回。
+func MaskAccountExtra(acct *model.PoolAccount) string {
+	if acct.Extra == "" {
+		return ""
+	}
+	var e model.PoolAccountExtra
+	if err := json.Unmarshal([]byte(acct.Extra), &e); err != nil {
+		return "***"
+	}
+	if len(e.HeaderOverrides) > 0 {
+		sanitized := make(map[string]string, len(e.HeaderOverrides))
+		for k, v := range e.HeaderOverrides {
+			lower := strings.ToLower(k)
+			if strings.Contains(lower, "key") || strings.Contains(lower, "token") || strings.Contains(lower, "secret") || strings.Contains(lower, "cookie") {
+				sanitized[k] = "***"
+			} else {
+				sanitized[k] = v
+			}
+		}
+		e.HeaderOverrides = sanitized
+	}
+	out, err := json.Marshal(e)
+	if err != nil {
+		return ""
+	}
+	return string(out)
 }
 
 // MaskAccounts 批量脱敏。
@@ -134,7 +165,10 @@ func ParseImportedAccounts(raw string, poolID int) ([]model.PoolAccount, error) 
 			Notes         string          `json:"notes"`
 			Priority      *int            `json:"priority"`
 			Concurrency   *int            `json:"concurrency"`
+			Weight        *int            `json:"weight"`
+			LoadFactor    *int            `json:"load_factor"`
 			ProxyConfigID *int            `json:"proxy_config_id"`
+			Extra         string          `json:"extra"`
 		}
 		if err := json.Unmarshal(item, &tmp); err != nil {
 			return nil, err
@@ -157,6 +191,13 @@ func ParseImportedAccounts(raw string, poolID int) ([]model.PoolAccount, error) 
 		if tmp.Concurrency != nil {
 			acct.Concurrency = *tmp.Concurrency
 		}
+		if tmp.Weight != nil {
+			acct.Weight = *tmp.Weight
+		}
+		if tmp.LoadFactor != nil {
+			acct.LoadFactor = *tmp.LoadFactor
+		}
+		acct.Extra = tmp.Extra
 		if tmp.ProxyConfigID != nil {
 			id := *tmp.ProxyConfigID
 			acct.ProxyConfigID = &id

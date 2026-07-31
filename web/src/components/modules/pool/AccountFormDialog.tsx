@@ -30,6 +30,28 @@ import {
     type PoolPlatform,
     type PoolAccountType,
 } from './type-options';
+import type { PoolAccountExtra } from '@/api/endpoints/pool';
+
+// 不豆名单（与后端 relay.applyHeaderOverrides 对齐）。静态查表 → Record。
+const HEADER_OVERRIDE_BLOCKED: Record<string, true> = {
+    authorization: true,
+    'x-api-key': true,
+    cookie: true,
+    host: true,
+    'content-length': true,
+    'chatgpt-account-id': true,
+    'x-claude-code-session-id': true,
+    'x-client-request-id': true,
+    'x-grok-conv-id': true,
+};
+
+// 同上 header override 资格条件（与 sub2api IsHeaderOverrideEligible 对齐）。
+function isHeaderOverrideEligible(platform: string, acctType: string): boolean {
+    return (
+        ((platform === 'anthropic' || platform === 'openai') && acctType === 'apikey') ||
+        (platform === 'grok' && (acctType === 'apikey' || acctType === 'oauth'))
+    );
+}
 
 type AccountFormDialogProps = {
     poolId: number;
@@ -47,9 +69,23 @@ const emptyForm: PoolAccountRequest = {
     base_url: '',
     priority: 0,
     concurrency: 0,
+    weight: 0,
+    load_factor: 0,
+    auto_pause_on_expired: false,
+    expires_at: 0,
     proxy_config_id: null,
     notes: '',
+    extra: '',
 };
+
+function parseExtra(raw: string): PoolAccountExtra {
+    if (!raw) return {};
+    try {
+        return JSON.parse(raw) as PoolAccountExtra;
+    } catch {
+        return {};
+    }
+}
 
 export function AccountFormDialog({ poolId, account, open, onOpenChange }: AccountFormDialogProps) {
     const t = useTranslations('pool');
@@ -70,8 +106,13 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
                     base_url: account.base_url || '',
                     priority: account.priority,
                     concurrency: account.concurrency,
+                    weight: account.weight ?? 0,
+                    load_factor: account.load_factor ?? 0,
+                    auto_pause_on_expired: account.auto_pause_on_expired ?? false,
+                    expires_at: account.expires_at ?? 0,
                     proxy_config_id: account.proxy_config_id ?? null,
                     notes: account.notes || '',
+                    extra: account.extra || '',
                 });
                 setProxyValue({ proxy_mode: account.proxy_config_id ? 'pool' : 'direct', proxy_config_id: account.proxy_config_id ?? null });
             } else {
@@ -290,7 +331,7 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
                         </div>
                     </div>
 
-                    {/* priority / concurrency / notes */}
+                    {/* priority / concurrency / weight / load_factor */}
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <Label>{t('priority')}</Label>
@@ -310,7 +351,57 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
                                 onChange={(e) => setForm({ ...form, concurrency: Number(e.target.value) })}
                             />
                         </div>
+                        <div>
+                            <Label>{t('weight')}</Label>
+                            <Input
+                                type="number"
+                                className="mt-1"
+                                value={form.weight ?? 0}
+                                onChange={(e) => setForm({ ...form, weight: Number(e.target.value) })}
+                            />
+                            <p className="mt-1 text-xs text-muted-foreground">{t('weightHint')}</p>
+                        </div>
+                        <div>
+                            <Label>{t('loadFactor')} (0={t('inheritPool')})</Label>
+                            <Input
+                                type="number"
+                                className="mt-1"
+                                value={form.load_factor ?? 0}
+                                onChange={(e) => setForm({ ...form, load_factor: Number(e.target.value) })}
+                            />
+                            <p className="mt-1 text-xs text-muted-foreground">{t('loadFactorHint')}</p>
+                        </div>
                     </div>
+
+                    {/* auto-pause lifecycle */}
+                    <div className="rounded-lg border border-border/60 p-3">
+                        <div className="flex items-center justify-between">
+                            <Label>{t('autoPauseOnExpired')}</Label>
+                            <input
+                                type="checkbox"
+                                className="h-4 w-4"
+                                checked={form.auto_pause_on_expired ?? false}
+                                onChange={(e) => setForm({ ...form, auto_pause_on_expired: e.target.checked })}
+                            />
+                        </div>
+                        {form.auto_pause_on_expired && (
+                            <div className="mt-2">
+                                <Label className="text-xs">{t('expiresAt')}</Label>
+                                <Input
+                                    type="datetime-local"
+                                    className="mt-1"
+                                    value={form.expires_at ? new Date(form.expires_at * 1000).toISOString().slice(0, 16) : ''}
+                                    onChange={(e) => {
+                                        const v = e.target.value;
+                                        setForm({ ...form, expires_at: v ? Math.floor(new Date(v).getTime() / 1000) : 0 });
+                                    }}
+                                />
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Platform extras + header overrides */}
+                    <ExtrasEditor form={form} setForm={setForm} platform={platform} acctType={acctType} />
                     <div>
                         <Label>{t('notes')}</Label>
                         <Input
@@ -334,6 +425,161 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
                     </Button>
                 </div>
             </div>
+        </div>
+    );
+}
+
+// ExtrasEditor 平台附加字段与自定义请求头编辑器。按 platform 显隐 gemini/openai 区。
+function ExtrasEditor({ form, setForm, platform, acctType }: {
+    form: PoolAccountRequest;
+    setForm: (next: PoolAccountRequest) => void;
+    platform: PoolPlatform;
+    acctType: PoolAccountType;
+}) {
+    const t = useTranslations('pool');
+    const extra = parseExtra(form.extra ?? '');
+
+    const updateExtra = (patch: Partial<PoolAccountExtra>) => {
+        const next: PoolAccountExtra = { ...extra, ...patch };
+        // 删除空字段让东西干净
+        Object.keys(next).forEach((k) => {
+            const key = k as keyof PoolAccountExtra;
+            const v = next[key];
+            if (v === '' || v === undefined) delete next[key];
+        });
+        setForm({ ...form, extra: JSON.stringify(next) });
+    };
+
+    const overrideEligible = isHeaderOverrideEligible(platform, acctType);
+    const headerEntries: Array<{ k: string; v: string }> = Object.entries(extra.header_overrides ?? {}).map(([k, v]) => ({ k, v }));
+
+    const addHeaderRow = () => {
+        if (headerEntries.length >= 20) return;
+        const next = { ...(extra.header_overrides ?? {}) };
+        next[`x-custom-${headerEntries.length + 1}`] = '';
+        updateExtra({ header_overrides: next, header_overrides_enabled: true });
+    };
+    const setHeaderRow = (idx: number, key: string, value: string) => {
+        const entries = [...headerEntries];
+        entries[idx] = { k: key, v: value };
+        const next: Record<string, string> = {};
+        for (const { k, v } of entries) if (k) next[k] = v;
+        updateExtra({ header_overrides: next, header_overrides_enabled: true });
+    };
+    const removeHeaderRow = (idx: number) => {
+        const entries = headerEntries.filter((_, i) => i !== idx);
+        const next: Record<string, string> = {};
+        for (const { k, v } of entries) if (k) next[k] = v;
+        updateExtra({ header_overrides: next, header_overrides_enabled: true });
+    };
+
+    return (
+        <div className="space-y-3 rounded-lg border border-border/60 p-3">
+            <Label>{t('extras.section')}</Label>
+
+            {platform === 'gemini' && (
+                <div className="grid grid-cols-2 gap-3">
+                    <div>
+                        <Label className="text-xs">{t('extras.projectId')}</Label>
+                        <Input
+                            className="mt-1"
+                            value={extra.project_id ?? ''}
+                            onChange={(e) => updateExtra({ project_id: e.target.value })}
+                        />
+                    </div>
+                    <div>
+                        <Label className="text-xs">{t('extras.tierId')}</Label>
+                        <Input
+                            className="mt-1"
+                            value={extra.tier_id ?? ''}
+                            onChange={(e) => updateExtra({ tier_id: e.target.value })}
+                        />
+                    </div>
+                    <div>
+                        <Label className="text-xs">{t('extras.oauthType')}</Label>
+                        <Select
+                            value={extra.oauth_type ?? ''}
+                            onValueChange={(v) => updateExtra({ oauth_type: v })}
+                        >
+                            <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="">{t('extras.oauthTypeNone')}</SelectItem>
+                                <SelectItem value="code_assist">code_assist</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </div>
+            )}
+
+            {platform === 'openai' && (
+                <div>
+                    <Label className="text-xs">{t('extras.authMode')}</Label>
+                    <Select
+                        value={extra.auth_mode ?? ''}
+                        onValueChange={(v) => updateExtra({ auth_mode: v })}
+                    >
+                        <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="">{t('extras.authModeDefault')}</SelectItem>
+                            <SelectItem value="personalAccessToken">personalAccessToken</SelectItem>
+                        </SelectContent>
+                    </Select>
+                </div>
+            )}
+
+            <div>
+                <Label className="text-xs">{t('extras.tlsFingerprint')} ({t('extras.reserved')})</Label>
+                <Input
+                    className="mt-1"
+                    value={extra.tls_fingerprint_profile ?? ''}
+                    onChange={(e) => updateExtra({ tls_fingerprint_profile: e.target.value })}
+                    placeholder="chrome_120"
+                />
+            </div>
+
+            {overrideEligible && (
+                <div className="border-t border-border/60 pt-3">
+                    <div className="flex items-center justify-between">
+                        <Label className="text-xs">{t('headerOverride.section')}</Label>
+                        <input
+                            type="checkbox"
+                            className="h-4 w-4"
+                            checked={extra.header_overrides_enabled ?? false}
+                            onChange={(e) => updateExtra({ header_overrides_enabled: e.target.checked })}
+                        />
+                    </div>
+                    {extra.header_overrides_enabled && (
+                        <div className="mt-2 space-y-2">
+                            {headerEntries.map(({ k, v }, idx) => {
+                                const blocked = HEADER_OVERRIDE_BLOCKED[k.toLowerCase()]
+                                    || k.toLowerCase().startsWith('x-codex-');
+                                return (
+                                    <div key={idx} className="flex gap-2">
+                                        <Input
+                                            placeholder={t('headerOverride.row.key')}
+                                            value={k}
+                                            onChange={(e) => setHeaderRow(idx, e.target.value, v)}
+                                            className={blocked ? 'border-destructive/50' : ''}
+                                        />
+                                        <Input
+                                            placeholder={t('headerOverride.row.value')}
+                                            value={v}
+                                            onChange={(e) => setHeaderRow(idx, k, e.target.value)}
+                                        />
+                                        <Button type="button" variant="outline" size="sm" onClick={() => removeHeaderRow(idx)}>
+                                            {t('headerOverride.remove')}
+                                        </Button>
+                                    </div>
+                                );
+                            })}
+                            <Button type="button" variant="outline" size="sm" onClick={addHeaderRow} disabled={headerEntries.length >= 20}>
+                                {t('headerOverride.add')}
+                            </Button>
+                            <p className="text-xs text-muted-foreground">{t('headerOverride.blockedWarning')}</p>
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 }

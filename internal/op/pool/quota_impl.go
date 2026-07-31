@@ -83,14 +83,14 @@ func syncAllQuotasImpl(ctx context.Context) {
 	for i := range accounts {
 		acct := &accounts[i]
 		// 仅查询有额度 API 的平台/类型组合，避免无效请求。
-		if !quotaSupported(acct.Platform, acct.Type) {
+		if !quotaSupportedForAccount(acct) {
 			continue
 		}
 		_, _ = FetchAccountQuota(ctx, acct.PoolID, acct.ID)
 	}
 }
 
-// quotaSupported 判断平台/类型组合是否支持额度查询。
+// quotaSupported 判断平台/类型组合是否支持额度查询（不考虑 extra）。
 func quotaSupported(platform, ctype string) bool {
 	switch {
 	case platform == model.PoolPlatformOpenAI && ctype == model.PoolTypeOAuth:
@@ -99,4 +99,16 @@ func quotaSupported(platform, ctype string) bool {
 		return true
 	}
 	return false
+}
+
+// quotaSupportedForAccount 考虑 extra.OAuthType==code_assist 的 Gemini 帐号不走额度查询
+// （Gemini Code Assist 未公开 quota API）。
+func quotaSupportedForAccount(acct *model.PoolAccount) bool {
+	if acct.Platform == model.PoolPlatformGemini {
+		extra := acct.GetExtra()
+		if extra.OAuthType == "code_assist" {
+			return false
+		}
+	}
+	return quotaSupported(acct.Platform, acct.Type)
 }

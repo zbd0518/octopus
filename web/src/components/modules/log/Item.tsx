@@ -29,7 +29,7 @@ import {
     MorphingDialogDescription,
     useMorphingDialog,
 } from '@/components/ui/morphing-dialog';
-import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/animate-ui/components/animate/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 
 /** Format count or money result into a compact display string like "1.23 万". */
 function fmt({ value, unit }: { value: string; unit: string }) {
@@ -386,8 +386,13 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
         : tCommon('unknown');
 
     return (
-        <TooltipProvider>
-            <MorphingDialog onOpen={() => fetchDetail(log.id)} onClose={resetDetail}>
+        // Root layout already provides the single global TooltipProvider (shared
+        // GlobalTooltipProvider + one TooltipOverlay) used by every other module
+        // (channel/group/setting cards). Wrapping EACH retry LogCard in its own
+        // provider creates many parallel global tooltip singletons — each with its
+        // own layoutId animation + useFloating autoUpdate listeners — which spirals
+        // into a layout-animation loop and OOMs the tab on hover. Reuse the global one.
+        <MorphingDialog onOpen={() => fetchDetail(log.id)} onClose={resetDetail}>
                 <MorphingDialogTrigger
                     className={cn(
                         "rounded-xl border bg-card w-full text-left",
@@ -903,7 +908,6 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                     </MorphingDialogContent>
                 </MorphingDialogContainer>
             </MorphingDialog>
-        </TooltipProvider>
     );
 });
 

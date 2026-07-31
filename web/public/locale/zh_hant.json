@@ -1341,6 +1341,18 @@
       "hint": "CIDR/IP 列表，用於從 X-Forwarded-For 解析真實客戶端 IP。留空=不信任任何代理，*=信任所有（有風險）。",
       "restartNotice": "修改後需重啟服務生效。"
     },
+    "pool": {
+      "title": "號池配置",
+      "description": "號池賬號健康巡檢與分層調度過濾。",
+      "healthCheckEnabled": "啟用健康巡檢",
+      "healthCheckEnabledHint": "定期調用 TestAccount 探測賬號連通性，連續失敗後自動 SetError。",
+      "healthCheckInterval": "巡檢間隔（分鐘）",
+      "healthCheckFailThreshold": "失敗閾值（連續 N 次失敗後 SetError）",
+      "layeredFilterEnabled": "啟用分層過濾",
+      "layeredFilterEnabledHint": "僅選擇 priority ≥ min_priority 的賬號。",
+      "minPriority": "最小優先級（默認 -9999 關閉）",
+      "minPriorityHint": "優先級低於該值的賬號被調度跳過。"
+    },
     "circuitBreaker": {
       "title": "熔斷器配置",
       "threshold": {
@@ -3543,6 +3555,57 @@
     "import": "導入",
     "importHint": "粘貼賬號 JSON 數組，每項含 platform/type/credentials 等字段。",
     "importPlaceholder": "[{\"name\":\"acct1\",\"platform\":\"anthropic\",\"type\":\"apikey\",\"credentials\":{\"api_key\":\"sk-...\"}}]",
-    "importSuccess": "已導入 {{count}} 個賬號"
+    "importSuccess": "已導入 {{count}} 個賬號",
+    "weight": "權重",
+    "weightHint": "調度評分傾斜（同 priority 生效順序：weight 優先）",
+    "weightCol": "W",
+    "loadFactor": "荷載因子",
+    "loadFactorHint": "賬號在 least_loaded/槽位控制下的等價權重，0 表示繼承 concurrency",
+    "loadFactorCol": "LF",
+    "autoPauseOnExpired": "到期自動停用",
+    "expiresAt": "到期時間",
+    "expiredBadge": "已到期",
+    "tempUnschedAction": "臨時禁用",
+    "tempUnschedBadge": "臨時 {{minutes}}m",
+    "tempUnschedDialog": {
+      "title": "臨時禁用賬號",
+      "minutes": "分鐘（≤0 表示解除）",
+      "minutesHint": "該期間內調度跳過此賬號",
+      "reason": "原因（可選）",
+      "confirm": "應用"
+    },
+    "tempUnschedApplied": "臨時禁用已應用",
+    "recoverAccount": "恢復",
+    "recoverSuccess": "賬號狀態已恢復",
+    "extras": {
+      "section": "平台附加",
+      "projectId": "Project ID",
+      "tierId": "Tier ID",
+      "oauthType": "OAuth Type",
+      "oauthTypeNone": "無",
+      "authMode": "Auth Mode",
+      "authModeDefault": "默認",
+      "tlsFingerprint": "TLS 指紋",
+      "reserved": "預留"
+    },
+    "headerOverride": {
+      "section": "自定義請求頭",
+      "row": {
+        "key": "Header",
+        "value": "Value"
+      },
+      "add": "新增一行",
+      "remove": "刪除",
+      "blockedWarning": "黑名單頭 (authorization / cookie / x-api-key 等) 將被後端跳過"
+    },
+    "exportAccounts": "導出",
+    "exportSuccess": "已導出 {{count}} 個賬號",
+    "selectedCount": "已選 {{count}} 項",
+    "batchRefresh": "批量刷新 Token",
+    "batchClearError": "批量清除錯誤",
+    "batchTest": "批量測試",
+    "batchRefreshResult": "Token 刷新：{{ok}} 成功 / {{failed}} 失敗",
+    "batchClearResult": "錯誤清除：{{ok}} 成功 / {{failed}} 失敗",
+    "batchTestResult": "連通性：{{ok}}/{{total}} 通過"
   }
 }

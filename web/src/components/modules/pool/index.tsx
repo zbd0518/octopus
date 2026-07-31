@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Layers, Plus, Trash2, ChevronLeft, Pencil, FlaskConical, RefreshCw, KeyRound, Upload } from 'lucide-react';
+import { Layers, Plus, Trash2, ChevronLeft, Pencil, FlaskConical, RefreshCw, KeyRound, Upload, Download, RotateCcw as RecoverIcon, Clock as TempUnschedIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from '@/components/common/Toast';
@@ -34,6 +34,10 @@ import {
     useFetchPoolQuota,
     useRefreshPoolToken,
     useImportPoolAccounts,
+    useRecoverPoolAccount,
+    useTempUnschedPoolAccount,
+    useBatchPoolAccounts,
+    useExportPoolAccounts,
     type AccountPool,
     type PoolAccount,
 } from '@/api/endpoints/pool';
@@ -132,6 +136,7 @@ function PoolList({ onSelect }: { onSelect: (pool: AccountPool) => void }) {
                                     <SelectItem value="ewma">EWMA</SelectItem>
                                     <SelectItem value="round_robin">Round Robin</SelectItem>
                                     <SelectItem value="random">Random</SelectItem>
+                                    <SelectItem value="least_loaded">Least Loaded</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>
@@ -193,11 +198,20 @@ function PoolDetail({ pool, onBack }: { pool: AccountPool; onBack: () => void })
     const fetchQuota = useFetchPoolQuota(pool.id);
     const refreshToken = useRefreshPoolToken(pool.id);
     const importAccounts = useImportPoolAccounts();
+    const recoverAccount = useRecoverPoolAccount(pool.id);
+    const tempUnsched = useTempUnschedPoolAccount(pool.id);
+    const batch = useBatchPoolAccounts(pool.id);
+    const exportAccounts = useExportPoolAccounts(pool.id);
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editingAccount, setEditingAccount] = useState<PoolAccount | null>(null);
     const [importOpen, setImportOpen] = useState(false);
     const [importText, setImportText] = useState('');
     const [now] = useState(() => Math.floor(Date.now() / 1000));
+    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    const [tempUnschedOpen, setTempUnschedOpen] = useState(false);
+    const [tempUnschedTarget, setTempUnschedTarget] = useState<PoolAccount | null>(null);
+    const [tempUnschedMinutes, setTempUnschedMinutes] = useState('10');
+    const [tempUnschedReason, setTempUnschedReason] = useState('');
 
     if (isLoading) return <LoadingState />;
     if (error) return <ErrorState message={String(error)} />;
@@ -215,6 +229,55 @@ function PoolDetail({ pool, onBack }: { pool: AccountPool; onBack: () => void })
         );
     };
 
+    const handleExport = () => {
+        exportAccounts.mutate(undefined, {
+            onSuccess: (data) => {
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `pool-${pool.name}-accounts-${Date.now()}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                toast.success(t('exportSuccess', { count: data.length }));
+            },
+            onError: (e) => toast.error(String(e)),
+        });
+    };
+
+    const handleOpenTempUnsched = (acct: PoolAccount) => {
+        setTempUnschedTarget(acct);
+        setTempUnschedMinutes('10');
+        setTempUnschedReason('');
+        setTempUnschedOpen(true);
+    };
+    const handleConfirmTempUnsched = () => {
+        if (!tempUnschedTarget) return;
+        tempUnsched.mutate(
+            { accountId: tempUnschedTarget.id, minutes: Number(tempUnschedMinutes) || 0, reason: tempUnschedReason },
+            {
+                onSuccess: () => { setTempUnschedOpen(false); toast.success(t('tempUnschedApplied')); },
+                onError: (e) => toast.error(String(e)),
+            },
+        );
+    };
+
+    const accounts_ = accounts ?? [];
+    const allSelected = accounts_.length > 0 && selectedIds.size === accounts_.length;
+    const toggleSelectAll = () => {
+        if (allSelected) setSelectedIds(new Set());
+        else setSelectedIds(new Set(accounts_.map((a) => a.id)));
+    };
+    const toggleSelect = (id: number) => {
+        const next = new Set(selectedIds);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        setSelectedIds(next);
+    };
+
+    const selected = Array.from(selectedIds);
+
     return (
         <div className="space-y-4 p-4">
             <div className="flex items-center justify-between">
@@ -228,6 +291,10 @@ function PoolDetail({ pool, onBack }: { pool: AccountPool; onBack: () => void })
                         <Upload className="h-4 w-4 mr-1" />
                         {t('importAccounts')}
                     </Button>
+                    <Button variant="outline" size="sm" onClick={handleExport} disabled={exportAccounts.isPending}>
+                        <Download className="h-4 w-4 mr-1" />
+                        {t('exportAccounts')}
+                    </Button>
                     <Button onClick={openCreate} size="sm">
                         <Plus className="h-4 w-4 mr-1" />
                         {t('addAccount')}
@@ -235,15 +302,59 @@ function PoolDetail({ pool, onBack }: { pool: AccountPool; onBack: () => void })
                 </div>
             </div>
 
+            {selectedIds.size > 0 && (
+                <div className="flex items-center gap-2 rounded-lg border bg-muted/40 p-2">
+                    <span className="text-sm">{t('selectedCount', { count: selectedIds.size })}</span>
+                    <Button
+                        variant="outline" size="sm"
+                        disabled={batch.refresh.isPending}
+                        onClick={() => batch.refresh.mutate(selected, {
+                            onSuccess: (res) => toast.success(t('batchRefreshResult', { ok: res.ok, failed: res.failed.length })),
+                            onError: (e) => toast.error(String(e)),
+                        })}
+                    >
+                        {t('batchRefresh')}
+                    </Button>
+                    <Button
+                        variant="outline" size="sm"
+                        disabled={batch.clearError.isPending}
+                        onClick={() => batch.clearError.mutate(selected, {
+                            onSuccess: (res) => toast.success(t('batchClearResult', { ok: res.ok, failed: res.failed.length })),
+                            onError: (e) => toast.error(String(e)),
+                        })}
+                    >
+                        {t('batchClearError')}
+                    </Button>
+                    <Button
+                        variant="outline" size="sm"
+                        disabled={batch.test.isPending}
+                        onClick={() => batch.test.mutate({ accountIds: selected, model: '' }, {
+                            onSuccess: (res) => {
+                                const ok = res.filter((r) => r.success).length;
+                                toast.success(t('batchTestResult', { ok, total: res.length }));
+                            },
+                            onError: (e) => toast.error(String(e)),
+                        })}
+                    >
+                        {t('batchTest')}
+                    </Button>
+                </div>
+            )}
+
             <div className="overflow-x-auto rounded-lg border">
                 <table className="w-full text-sm">
                     <thead className="bg-muted/50">
                         <tr>
+                            <th className="text-left p-3 w-8">
+                                <input type="checkbox" className="h-4 w-4" checked={allSelected} onChange={toggleSelectAll} />
+                            </th>
                             <th className="text-left p-3 font-medium whitespace-nowrap">{t('accountName')}</th>
                             <th className="text-left p-3 font-medium whitespace-nowrap">{t('platform')}</th>
                             <th className="text-left p-3 font-medium whitespace-nowrap">{t('type')}</th>
                             <th className="text-left p-3 font-medium whitespace-nowrap">{t('status')}</th>
                             <th className="text-left p-3 font-medium whitespace-nowrap">{t('models')}</th>
+                            <th className="text-left p-3 font-medium whitespace-nowrap" title={t('weightHint')}>{t('weightCol')}</th>
+                            <th className="text-left p-3 font-medium whitespace-nowrap" title={t('loadFactorHint')}>{t('loadFactorCol')}</th>
                             <th className="text-left p-3 font-medium whitespace-nowrap">{t('concurrency')}</th>
                             <th className="text-left p-3 font-medium whitespace-nowrap">{t('requests')}</th>
                             <th className="text-left p-3 font-medium whitespace-nowrap">{t('errors')}</th>
@@ -256,20 +367,38 @@ function PoolDetail({ pool, onBack }: { pool: AccountPool; onBack: () => void })
                         {(accounts ?? []).map((acct: PoolAccount) => {
                             const inCooldown = acct.rate_limit_reset_at > now || acct.overload_until > now;
                             const tokenExpired = acct.type === 'oauth' && acct.token_expires_at > 0 && acct.token_expires_at < now + 60;
+                            const tempUnschedUntil = acct.temp_unsched_until ?? 0;
+                            const inTempUnsched = tempUnschedUntil > now;
+                            const expired = (acct.auto_pause_on_expired ?? false) && (acct.expires_at ?? 0) > 0 && (acct.expires_at ?? 0) <= now;
+                            const minsLeft = inTempUnsched ? Math.max(1, Math.ceil((tempUnschedUntil - now) / 60)) : 0;
                             return (
                                 <tr key={acct.id} className="border-t">
+                                    <td className="p-3">
+                                        <input
+                                            type="checkbox"
+                                            className="h-4 w-4"
+                                            checked={selectedIds.has(acct.id)}
+                                            onChange={() => toggleSelect(acct.id)}
+                                        />
+                                    </td>
                                     <td className="p-3 whitespace-nowrap">{acct.name || `#${acct.id}`}</td>
                                     <td className="p-3"><PlatformBadge platform={acct.platform} /></td>
                                     <td className="p-3"><Badge variant="secondary" className="text-xs">{t(`typeLabels.${acct.type}`)}</Badge></td>
                                     <td className="p-3">
                                         {tokenExpired ? (
                                             <Badge variant="destructive" className="text-xs">{t('tokenExpired')}</Badge>
+                                        ) : expired ? (
+                                            <Badge variant="outline" className="text-xs text-muted-foreground">{t('expiredBadge')}</Badge>
+                                        ) : inTempUnsched ? (
+                                            <Badge variant="outline" className="text-xs text-amber-600" title={acct.temp_unsched_reason ?? ''}>
+                                                {t('tempUnschedBadge', { minutes: minsLeft })}
+                                            </Badge>
                                         ) : inCooldown ? (
                                             <Badge variant="outline" className="text-xs text-amber-600">{t('cooling')}</Badge>
                                         ) : acct.status === 'active' && acct.schedulable ? (
                                             <Badge variant="default" className="text-xs">{t('active')}</Badge>
                                         ) : (
-                                            <Badge variant="destructive" className="text-xs">{acct.status}</Badge>
+                                            <Badge variant="destructive" className="text-xs" title={acct.error_message ?? ''}>{acct.status}</Badge>
                                         )}
                                     </td>
                                     <td className="p-3 max-w-[160px]">
@@ -282,6 +411,8 @@ function PoolDetail({ pool, onBack }: { pool: AccountPool; onBack: () => void })
                                             </div>
                                         ) : <span className="text-xs text-muted-foreground">{t('allModels')}</span>}
                                     </td>
+                                    <td className="p-3">{acct.weight ?? 0}</td>
+                                    <td className="p-3">{acct.load_factor && acct.load_factor > 0 ? acct.load_factor : (acct.concurrency || pool.default_concurrency)}</td>
                                     <td className="p-3">{acct.concurrency || pool.default_concurrency}</td>
                                     <td className="p-3">{acct.total_requests}</td>
                                     <td className="p-3">{acct.total_errors}</td>
@@ -319,6 +450,19 @@ function PoolDetail({ pool, onBack }: { pool: AccountPool; onBack: () => void })
                                                     <KeyRound className="h-3.5 w-3.5" />
                                                 </Button>
                                             )}
+                                            <Button
+                                                variant="ghost" size="icon" className="h-7 w-7" title={t('recoverAccount')}
+                                                disabled={recoverAccount.isPending}
+                                                onClick={() => recoverAccount.mutate(acct.id, { onSuccess: () => toast.success(t('recoverSuccess')), onError: (e) => toast.error(String(e)) })}
+                                            >
+                                                <RecoverIcon className="h-3.5 w-3.5" />
+                                            </Button>
+                                            <Button
+                                                variant="ghost" size="icon" className="h-7 w-7" title={t('tempUnschedAction')}
+                                                onClick={() => handleOpenTempUnsched(acct)}
+                                            >
+                                                <TempUnschedIcon className="h-3.5 w-3.5" />
+                                            </Button>
                                             <Button variant="ghost" size="icon" className="h-7 w-7" title={t('accountDeleted')}
                                                 onClick={() => deleteAccount.mutate(acct.id, { onSuccess: () => toast.success(t('accountDeleted')), onError: (e) => toast.error(String(e)) })}
                                             >
@@ -330,7 +474,7 @@ function PoolDetail({ pool, onBack }: { pool: AccountPool; onBack: () => void })
                             );
                         })}
                         {(!accounts || accounts.length === 0) && (
-                            <tr><td colSpan={11} className="p-6 text-center text-muted-foreground">{t('noAccounts')}</td></tr>
+                            <tr><td colSpan={14} className="p-6 text-center text-muted-foreground">{t('noAccounts')}</td></tr>
                         )}
                     </tbody>
                 </table>
@@ -342,6 +486,27 @@ function PoolDetail({ pool, onBack }: { pool: AccountPool; onBack: () => void })
                 open={dialogOpen}
                 onOpenChange={setDialogOpen}
             />
+
+            <Dialog open={tempUnschedOpen} onOpenChange={setTempUnschedOpen}>
+                <DialogContent>
+                    <DialogHeader><DialogTitle>{t('tempUnschedDialog.title')}</DialogTitle></DialogHeader>
+                    <div className="space-y-3">
+                        <div>
+                            <Label>{t('tempUnschedDialog.minutes')}</Label>
+                            <Input type="number" value={tempUnschedMinutes} onChange={(e) => setTempUnschedMinutes(e.target.value)} />
+                            <p className="mt-1 text-xs text-muted-foreground">{t('tempUnschedDialog.minutesHint')}</p>
+                        </div>
+                        <div>
+                            <Label>{t('tempUnschedDialog.reason')}</Label>
+                            <Input value={tempUnschedReason} onChange={(e) => setTempUnschedReason(e.target.value)} />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setTempUnschedOpen(false)}>{t('cancel')}</Button>
+                        <Button onClick={handleConfirmTempUnsched}>{t('tempUnschedDialog.confirm')}</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             <Dialog open={importOpen} onOpenChange={setImportOpen}>
                 <DialogContent>

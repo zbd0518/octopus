@@ -699,6 +699,7 @@ func (ra *relayAttempt) forward() (int, error) {
 //     手动设置 Authorization: Bearer {access_token} + chatgpt-account-id: {account_id}。
 //     codex 适配器自身解析 OAuth JSON，无需覆盖。
 //   - 其他 oauth/apikey/upstream：适配器默认 Bearer 行为正确，无需覆盖。
+//   - P3 header overrides：符合资格条件时叠加自定义请求头（跳过黑名单与安全头）。
 func (ra *relayAttempt) applyPoolCredentialHeaders(req *http.Request) {
 	if ra.poolType == "" {
 		return
@@ -709,7 +710,7 @@ func (ra *relayAttempt) applyPoolCredentialHeaders(req *http.Request) {
 		req.Header.Set("Cookie", ra.usedKey.ChannelKey)
 	case dbmodel.PoolTypeOAuth:
 		if ra.poolPlatform == dbmodel.PoolPlatformOpenAI && ra.adapterType != outbound.OutboundTypeCodex {
-			// ChannelKey 对 openai-oauth 是 OAuth JSON（由 EffectiveKey 构造）。
+			// ChannelKey 对 openai-oauth 是 OAuth JSON（由 EffectiveKeyWithExtra 构造）。
 			var oauth struct {
 				AccessToken string `json:"access_token"`
 				AccountID   string `json:"account_id"`
@@ -721,6 +722,63 @@ func (ra *relayAttempt) applyPoolCredentialHeaders(req *http.Request) {
 				}
 			}
 		}
+	}
+	// P3 自定义请求头叠加（不依赖 poolType，仅检查是否为号池账号）。
+	ra.applyHeaderOverrides(req)
+}
+
+// blockedHeaderOverrideNames 与 sub2api 对齐的黑名单：防止误覆写鉴权/路由关键头。
+var blockedHeaderOverrideNames = map[string]struct{}{
+	"authorization":            {},
+	"x-api-key":                {},
+	"cookie":                   {},
+	"host":                     {},
+	"content-length":           {},
+	"chatgpt-account-id":       {},
+	"x-claude-code-session-id": {},
+	"x-client-request-id":      {},
+	"x-grok-conv-id":           {},
+}
+
+// applyHeaderOverrides 按账号 extra.header_overrides 应用自定义请求头。
+// 资格条件同 sub2api IsHeaderOverrideEligible：
+//   - anthropic / openai 且 type==apikey
+//   - grok 且 (type==apikey 或 oauth)
+//
+// 其他平台/类型不叫用（防御性），避免破坏 cookie/setup-token 类型的默认鉴权。
+// 黑名单头与空 value 会被跳过。
+func (ra *relayAttempt) applyHeaderOverrides(req *http.Request) {
+	if ra.poolAccount == nil {
+		return
+	}
+	acct := ra.poolAccount
+	eligible := false
+	switch acct.Platform {
+	case dbmodel.PoolPlatformAnthropic, dbmodel.PoolPlatformOpenAI:
+		eligible = acct.Type == dbmodel.PoolTypeAPIKey
+	case dbmodel.PoolPlatformGrok:
+		eligible = acct.Type == dbmodel.PoolTypeAPIKey || acct.Type == dbmodel.PoolTypeOAuth
+	}
+	if !eligible {
+		return
+	}
+	extra := acct.GetExtra()
+	if !extra.HeaderOverridesEnabled || len(extra.HeaderOverrides) == 0 {
+		return
+	}
+	for k, v := range extra.HeaderOverrides {
+		if v == "" {
+			continue
+		}
+		lower := strings.ToLower(k)
+		if _, blocked := blockedHeaderOverrideNames[lower]; blocked {
+			continue
+		}
+		// 前缀匹配 x-codex-* 名列黑名单
+		if strings.HasPrefix(lower, "x-codex-") {
+			continue
+		}
+		req.Header.Set(k, v)
 	}
 }
 
@@ -1525,7 +1583,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 						ID:         acct.ID,
 						ChannelID:  channel.ID,
 						Enabled:    true,
-						ChannelKey: cred.EffectiveKey(acct.Platform),
+						ChannelKey: cred.EffectiveKeyWithExtra(acct.Platform, acct.GetExtra()),
 						Priority:   acct.Priority,
 					}
 				} else {
@@ -1588,6 +1646,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 						poolPlatform:         poolPlatform,
 						poolType:             poolType,
 						poolAccountID:        poolAccountID,
+						poolAccount:          poolAccount,
 					}
 
 					result = ra.attempt()
@@ -1635,6 +1694,8 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					} else if result.Decision.Code >= 500 {
 						poolscheduler.SetOverload(channel.PoolID, poolAccount.ID, time.Now().Add(60*time.Second))
 					}
+					// P0 调度健壮性：OpenAI 403 阈值禁用 / OAuth 401 临时禁用（对齐 sub2api ratelimit_service）。
+					handlePoolAuthError(poolAccount, poolCredType, result.Decision.Code)
 				}
 
 				// 熔断器和 Auto 策略：在所有 adapter 类型（如 Responses→Chat）均失败后才记录，

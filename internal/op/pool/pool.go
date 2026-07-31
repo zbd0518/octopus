@@ -37,6 +37,11 @@ func CreatePool(pool *model.AccountPool) error {
 	if pool.Strategy == "" {
 		pool.Strategy = "ewma"
 	}
+	switch pool.Strategy {
+	case "ewma", "round_robin", "random", "least_loaded":
+	default:
+		return errors.New("unsupported pool strategy")
+	}
 	if pool.DefaultConcurrency <= 0 {
 		pool.DefaultConcurrency = 1
 	}

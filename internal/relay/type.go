@@ -260,6 +260,8 @@ type relayAttempt struct {
 	poolType     string
 	// poolAccountID 号池账号 ID，用于 ReportResult。
 	poolAccountID int
+	// poolAccount 号池账号指针（号池模式时使用），供 applyPoolCredentialHeaders 读取 extra。
+	poolAccount *dbmodel.PoolAccount
 
 	// filterCfg 缓存本次尝试的响应关键词过滤配置，避免在流式响应的每个
 	// chunk 上重复读取 setting 并解析关键词 JSON。通过 getResponseFilterConfig
