@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   buildCheckinSummary,
+  sitePlatformSupportsCheckin,
   type CheckinActiveFilterStatus,
   type CheckinFilterStatus,
 } from "./checkin-status";
@@ -152,11 +153,18 @@ export function CheckinPanel({
   );
   const hasContextBadges = Boolean(searchTerm) || platformFilters.length > 0;
 
-  const availablePlatforms = useMemo(
-    () => collectSitePlatforms(sites),
+  const checkinSupportedSites = useMemo(
+    () => (sites ?? []).filter((s) => sitePlatformSupportsCheckin(s.platform)),
     [sites],
   );
-  const platformCounts = useMemo(() => countSitesByPlatform(sites), [sites]);
+  const availablePlatforms = useMemo(
+    () => collectSitePlatforms(checkinSupportedSites),
+    [checkinSupportedSites],
+  );
+  const platformCounts = useMemo(
+    () => countSitesByPlatform(checkinSupportedSites),
+    [checkinSupportedSites],
+  );
 
   const manualCheckinUrls = useMemo(
     () =>
@@ -255,7 +263,7 @@ export function CheckinPanel({
                 platformChipTone(platformFilters.length === 0),
               )}
             >
-              <span>{sites?.length ?? 0}</span>
+              <span>{checkinSupportedSites.length}</span>
               <span>全部</span>
             </button>
             {availablePlatforms.map((platform) => {
