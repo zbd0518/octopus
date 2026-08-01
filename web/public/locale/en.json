@@ -1430,6 +1430,9 @@
       "minPriority": "Min priority (default -9999 = off)",
       "minPriorityHint": "Accounts with lower priority are skipped by the scheduler."
     },
+    "proxyPool": {
+      "title": "Proxy Pool"
+    },
     "circuitBreaker": {
       "title": "Circuit Breaker",
       "threshold": {
@@ -2753,6 +2756,41 @@
     "tabs": {
       "market": "Market",
       "capabilities": "Capabilities"
+    },
+    "priceCategory": {
+      "title": "Price Categories",
+      "description": "Fallback pricing by rule for models without an exact price. Matched in sort order; the first hit wins.",
+      "add": "Add category",
+      "edit": "Edit category",
+      "delete": "Delete",
+      "confirmDeleteTitle": "Delete category",
+      "confirmDelete": "Delete this price category? This cannot be undone.",
+      "name": "Name",
+      "namePlaceholder": "e.g. my-chat (unique, lowercase)",
+      "ruleType": "Rule type",
+      "ruleValue": "Rule value",
+      "ruleValuePlaceholder": "e.g. gpt or provider/",
+      "exact": "Exact match",
+      "prefix": "Prefix",
+      "contains": "Contains",
+      "input": "Input",
+      "output": "Output",
+      "cacheRead": "Cache read",
+      "cacheWrite": "Cache write",
+      "sortOrder": "Priority",
+      "sortOrderHint": "Lower matches first.",
+      "enabled": "Enabled",
+      "save": "Save category",
+      "saving": "Saving...",
+      "deleting": "Deleting...",
+      "empty": "No price categories yet. Add one to provide fallback pricing.",
+      "toastSaved": "Price category saved",
+      "toastDeleted": "Price category deleted",
+      "priceHint": "Price unit: USD per million tokens",
+      "missing": "Missing",
+      "actions": "Actions",
+      "cancel": "Cancel",
+      "toastError": "Operation failed"
     }
   },
   "log": {
@@ -3312,6 +3350,7 @@
       "testUrl": "Test Target URL",
       "testSuccess": "Test passed — HTTP {statusCode} in {durationMs}ms",
       "testFailed": "Test failed",
+      "schemeHint": "{scheme} proxy example: {example}",
       "formTitleCreate": "Create Proxy",
       "formTitleEdit": "Edit Proxy",
       "formDescription": "Fill in proxy details below and save.",

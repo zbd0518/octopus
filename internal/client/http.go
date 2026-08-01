@@ -11,6 +11,7 @@ import (
 
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/setting"
+	"github.com/lingyuins/octopus/internal/utils/proxyx"
 	"golang.org/x/net/proxy"
 )
 
@@ -278,6 +279,13 @@ func newHTTPClientCustomProxyWithTimeout(proxyURLStr string, timeout time.Durati
 		cloned.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return socksDialer.Dial(network, addr)
 		}
+	case "ss", "vmess", "vless", "trojan":
+		dialContext, err := proxyx.NewDialContext(proxyURLStr)
+		if err != nil {
+			return nil, err
+		}
+		cloned.Proxy = nil
+		cloned.DialContext = dialContext
 	default:
 		return nil, fmt.Errorf("unsupported proxy scheme: %s", proxyURL.Scheme)
 	}

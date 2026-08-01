@@ -5,7 +5,7 @@ import { useTranslations } from 'next-intl';
 import {
     Sun, User, Database,
     ScrollText, Monitor, RefreshCw, ChevronsUpDown,
-    Info, Bot, Sparkles, Cloud, Fingerprint, Wand2, Layers,
+    Info, Bot, Sparkles, Cloud, Fingerprint, Wand2, Layers, Network,
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { SettingAppearance } from './Appearance';
@@ -23,6 +23,7 @@ import { SettingWebDAV } from './WebDAV';
 import { SettingWebAuthn } from './WebAuthn';
 import { SettingNormalize } from './Normalize';
 import { SettingPool } from './Pool';
+import { useProxyPoolDialogStore } from '@/components/modules/proxy-pool/dialog-store';
 import { DEFAULT_SETTING_ORDER } from './SettingOrder';
 
 type SettingItemDef = {
@@ -48,6 +49,7 @@ const SETTING_ITEM_DEFS: SettingItemDef[] = [
     { id: 'webauthn',          icon: <Fingerprint className="h-5 w-5" />,      titleKey: 'webauthn.title',       component: <SettingWebAuthn /> },
     { id: 'normalize',         icon: <Wand2 className="h-5 w-5" />,           titleKey: 'normalize.title',      component: <SettingNormalize /> },
     { id: 'pool',              icon: <Layers className="h-5 w-5" />,           titleKey: 'pool.title',           component: <SettingPool /> },
+    { id: 'proxy-pool',        icon: <Network className="h-5 w-5" />,          titleKey: 'proxyPool.title',      component: null },
 ];
 
 const SETTING_ITEM_MAP = new Map<string, SettingItemDef>(
@@ -103,7 +105,13 @@ export function Setting() {
                         <button
                             key={item.id}
                             type="button"
-                            onClick={() => setOpenId(item.id)}
+                            onClick={() => {
+                                if (item.id === 'proxy-pool') {
+                                    useProxyPoolDialogStore.getState().open();
+                                    return;
+                                }
+                                setOpenId(item.id);
+                            }}
                             className="w-full flex items-center gap-3 rounded-xl border border-border/35 bg-card px-4 py-3.5 min-h-[3.25rem] text-left shadow-sm transition-colors hover:bg-accent/40 active:bg-accent/60"
                         >
                             <span className="shrink-0 text-muted-foreground">{item.icon}</span>

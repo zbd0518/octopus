@@ -29,13 +29,22 @@ func LLMBatchDelete(names []string, ctx context.Context) error { return llm.Batc
 func LLMCreate(m model.LLMInfo, ctx context.Context) error { return llm.Create(m, ctx) }
 
 // Deprecated: Use llm.BatchCreate from internal/op/llm instead.
-func LLMBatchCreate(infos []model.LLMInfo, ctx context.Context) error { return llm.BatchCreate(infos, ctx) }
+func LLMBatchCreate(infos []model.LLMInfo, ctx context.Context) error {
+	return llm.BatchCreate(infos, ctx)
+}
 
 // Deprecated: Use llm.BatchUpdate from internal/op/llm instead.
-func LLMBatchUpdate(infos []model.LLMInfo, ctx context.Context) error { return llm.BatchUpdate(infos, ctx) }
+func LLMBatchUpdate(infos []model.LLMInfo, ctx context.Context) error {
+	return llm.BatchUpdate(infos, ctx)
+}
 
 // Deprecated: Use llm.Get from internal/op/llm instead.
 func LLMGet(name string) (model.LLMPrice, error) { return llm.Get(name) }
 
 // llmRefreshCache is called by cache.go (same package)
-func llmRefreshCache(ctx context.Context) error { return llm.RefreshCache(ctx) }
+func llmRefreshCache(ctx context.Context) error {
+	if err := llm.RefreshCache(ctx); err != nil {
+		return err
+	}
+	return llm.RefreshPriceCategoryCache(ctx)
+}

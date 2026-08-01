@@ -106,7 +106,8 @@ test('resolveLogDisplayFields falls back to channel id label when no channel nam
 
     const result = resolveLogDisplayFields(log);
     assert.equal(result.channelId, 77);
-    assert.equal(result.channelName, 'channel_fallback');
+    // 渠道已删除/无名字时，不再暴露内部字面量 token，落到空串由外层显示占位。
+    assert.equal(result.channelName, '');
 });
 
 test('resolveLogDisplayFields falls back to chat when only generic chat models exist', () => {

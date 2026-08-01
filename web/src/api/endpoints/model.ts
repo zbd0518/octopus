@@ -327,3 +327,79 @@ export function useModelCapabilities() {
         refetchInterval: 60_000,
     });
 }
+
+/**
+ * 模型价格分类（兜底定价）。
+ */
+export interface ModelPriceCategory extends LLMPrice {
+    id: number;
+    name: string;
+    rule_type: 'exact' | 'prefix' | 'contains' | string;
+    rule_value: string;
+    sort_order: number;
+    enabled: boolean;
+    created_at?: string;
+    updated_at?: string;
+}
+
+/**
+ * 获取价格分类列表 Hook
+ */
+export function usePriceCategoryList() {
+    return useQuery({
+        queryKey: ['models', 'price-category', 'list'],
+        queryFn: async () => {
+            return apiClient.get<ModelPriceCategory[]>('/api/v1/model/price-category/list');
+        },
+        refetchInterval: REFETCH_INTERVAL_CONFIG,
+    });
+}
+
+/**
+ * 创建价格分类
+ */
+export function useCreatePriceCategory() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async (data: Omit<ModelPriceCategory, 'id'>) => {
+            return apiClient.post<ModelPriceCategory>('/api/v1/model/price-category/create', data);
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['models', 'price-category', 'list'] });
+            // 兜底定价改动需让价格缓存失效。
+            queryClient.invalidateQueries({ queryKey: ['models', 'market'] });
+        },
+    });
+}
+
+/**
+ * 更新价格分类
+ */
+export function useUpdatePriceCategory() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async (data: ModelPriceCategory) => {
+            return apiClient.post<ModelPriceCategory>('/api/v1/model/price-category/update', data);
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['models', 'price-category', 'list'] });
+            queryClient.invalidateQueries({ queryKey: ['models', 'market'] });
+        },
+    });
+}
+
+/**
+ * 删除价格分类
+ */
+export function useDeletePriceCategory() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async (id: number) => {
+            return apiClient.post<null>('/api/v1/model/price-category/delete', { id });
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['models', 'price-category', 'list'] });
+            queryClient.invalidateQueries({ queryKey: ['models', 'market'] });
+        },
+    });
+}

@@ -89,25 +89,26 @@ func TestAuthErrorCounter_RemoveAndPurge(t *testing.T) {
 		t.Fatalf("RemoveAuthError should delete entry")
 	}
 
-	// 添一条 count=0 且窗口过期的记录，应被 Purge 清理。
+	// 添一条窗口过期的记录（含 count），应被 Purge 清理——窗口过期即删，
+	// 因 IncrementAuthError 在窗口外会重置 windowStart 并重新计数。
 	key := authErrorKey(poolID, accountID)
 	globalAuthErrors.Store(key, &authErrorEntry{
-		count:       0,
+		count:       2,
 		windowStart: time.Now().Unix() - int64(authErrorWindow.Seconds()) - 10,
 	})
 	PurgeStaleAuthErrors()
 	if _, ok := globalAuthErrors.Load(key); ok {
-		t.Fatalf("PurgeStale should remove zero-count expired entry")
+		t.Fatalf("PurgeStale should remove window-expired entry (regardless of count)")
 	}
 
-	// 有计数的记录不应被删除。
+	// 窗口未过期的记录（无论计数）应被保留。
 	globalAuthErrors.Store(key, &authErrorEntry{
 		count:       1,
 		windowStart: time.Now().Unix(),
 	})
 	PurgeStaleAuthErrors()
 	if _, ok := globalAuthErrors.Load(key); !ok {
-		t.Fatalf("PurgeStale should keep active entry")
+		t.Fatalf("PurgeStale should keep non-expired entry")
 	}
 }
 

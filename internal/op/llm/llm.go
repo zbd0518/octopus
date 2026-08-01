@@ -77,6 +77,8 @@ func Update(m model.LLMInfo, ctx context.Context) error {
 	if !ok {
 		return fmt.Errorf("model not found")
 	}
+	// 模型管理页编辑 = 手动设置价格：标记 price_manual，同步刷新不覆盖。
+	m.PriceManual = true
 	if err := db.GetDB().WithContext(ctx).Save(m).Error; err != nil {
 		return err
 	}
@@ -113,6 +115,8 @@ func Create(m model.LLMInfo, ctx context.Context) error {
 	if ok {
 		return fmt.Errorf("model already exists")
 	}
+	// 模型管理页创建 = 手动设置价格：标记 price_manual，同步刷新不覆盖。
+	m.PriceManual = true
 	if err := db.GetDB().WithContext(ctx).Create(&m).Error; err != nil {
 		return err
 	}

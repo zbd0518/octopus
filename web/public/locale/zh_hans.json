@@ -1386,6 +1386,9 @@
       "minPriority": "最小优先级（默认 -9999 关闭）",
       "minPriorityHint": "优先级低于该值的账号被调度跳过。"
     },
+    "proxyPool": {
+      "title": "代理池"
+    },
     "circuitBreaker": {
       "title": "熔断器配置",
       "threshold": {
@@ -2709,6 +2712,41 @@
     "tabs": {
       "market": "市场",
       "capabilities": "能力"
+    },
+    "priceCategory": {
+      "title": "价格分类",
+      "description": "为没有精确价格的模型提供按规则的兜底定价。按优先级(priority)顺序匹配，首个命中生效。",
+      "add": "添加分类",
+      "edit": "编辑分类",
+      "delete": "删除",
+      "confirmDeleteTitle": "删除分类",
+      "confirmDelete": "确认删除该价格分类？此操作不可撤销。",
+      "name": "名称",
+      "namePlaceholder": "例如 my-chat（唯一，小写）",
+      "ruleType": "规则类型",
+      "ruleValue": "规则值",
+      "ruleValuePlaceholder": "例如 gpt 或 provider/",
+      "exact": "精确匹配",
+      "prefix": "前缀",
+      "contains": "包含",
+      "input": "输入",
+      "output": "输出",
+      "cacheRead": "缓存读取",
+      "cacheWrite": "缓存写入",
+      "sortOrder": "优先级",
+      "sortOrderHint": "数值越小越先匹配。",
+      "enabled": "启用",
+      "save": "保存分类",
+      "saving": "保存中…",
+      "deleting": "删除中…",
+      "empty": "暂无价格分类，添加一个以提供兜底定价。",
+      "toastSaved": "价格分类已保存",
+      "toastDeleted": "价格分类已删除",
+      "priceHint": "价格单位：美元/百万 tokens",
+      "missing": "缺失",
+      "actions": "操作",
+      "cancel": "取消",
+      "toastError": "操作失败"
     }
   },
   "log": {
@@ -3268,6 +3306,7 @@
       "testUrl": "测试目标 URL",
       "testSuccess": "测试通过——HTTP {statusCode}，{durationMs}ms",
       "testFailed": "测试失败",
+      "schemeHint": "{scheme} 代理示例：{example}",
       "formTitleCreate": "创建代理",
       "formTitleEdit": "编辑代理",
       "formDescription": "填写代理信息并保存。",

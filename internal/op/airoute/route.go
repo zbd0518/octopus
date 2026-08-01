@@ -23,6 +23,7 @@ import (
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 	"github.com/lingyuins/octopus/internal/utils/log"
+	"github.com/lingyuins/octopus/internal/utils/proxyx"
 	"github.com/lingyuins/octopus/internal/utils/xstrings"
 	"golang.org/x/net/proxy"
 	"golang.org/x/sync/semaphore"
@@ -1801,6 +1802,13 @@ func newAIRouteHTTPClient(proxyURLStr string) (*http.Client, error) {
 		cloned.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return socksDialer.Dial(network, addr)
 		}
+	case "ss", "vmess", "vless", "trojan":
+		dialContext, err := proxyx.NewDialContext(proxyURLStr)
+		if err != nil {
+			return nil, err
+		}
+		cloned.Proxy = nil
+		cloned.DialContext = dialContext
 	default:
 		return nil, fmt.Errorf("unsupported proxy scheme: %s", proxyURL.Scheme)
 	}

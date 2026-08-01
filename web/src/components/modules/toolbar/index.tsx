@@ -605,6 +605,19 @@ export function Toolbar() {
                             >
                                 {endpointsT('title')}
                             </button>
+                            <button
+                                type="button"
+                                onClick={() => setModelView('categories')}
+                                aria-pressed={modelView === 'categories'}
+                                className={cn(
+                                    'rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:px-4 sm:py-2 sm:text-sm',
+                                    modelView === 'categories'
+                                        ? 'bg-primary text-primary-foreground shadow-sm'
+                                        : 'text-muted-foreground hover:text-foreground',
+                                )}
+                            >
+                                {modelT('priceCategory.title')}
+                            </button>
                         </div>
                     ) : null}
 

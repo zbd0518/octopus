@@ -12,6 +12,10 @@ type LLMPrice struct {
 type LLMInfo struct {
 	Name string `json:"name" gorm:"primaryKey;not null"`
 	LLMPrice
+	// PriceManual 标记价格是否由用户手动设置（模型管理页创建/编辑）。
+	// 手动设置的价格不参与"同步价格"刷新（不会被同步源未命中的 0 覆盖），
+	// 也不被"删 0 价格模型"任务自动删除。同步/自动来源的模型保持 false。
+	PriceManual bool `json:"price_manual" gorm:"column:price_manual;default:false"`
 }
 
 // ChannelUpstreamPrice 是投影渠道从上游站点同步到的展示用定价。
@@ -116,14 +120,14 @@ type AnthropicModelList struct {
 }
 
 // TableName explicitly returns "-" for DTO structs to prevent GORM auto-mapping.
-func (LLMChannel) TableName() string             { return "-" }
-func (ModelMarketChannel) TableName() string     { return "-" }
-func (ModelMarketItem) TableName() string        { return "-" }
-func (ModelMarketSummary) TableName() string     { return "-" }
-func (ModelMarketResponse) TableName() string    { return "-" }
-func (GeminiModel) TableName() string            { return "-" }
-func (GeminiModelList) TableName() string        { return "-" }
-func (OpenAIModel) TableName() string            { return "-" }
-func (OpenAIModelList) TableName() string        { return "-" }
-func (AnthropicModel) TableName() string         { return "-" }
-func (AnthropicModelList) TableName() string { return "-" }
+func (LLMChannel) TableName() string          { return "-" }
+func (ModelMarketChannel) TableName() string  { return "-" }
+func (ModelMarketItem) TableName() string     { return "-" }
+func (ModelMarketSummary) TableName() string  { return "-" }
+func (ModelMarketResponse) TableName() string { return "-" }
+func (GeminiModel) TableName() string         { return "-" }
+func (GeminiModelList) TableName() string     { return "-" }
+func (OpenAIModel) TableName() string         { return "-" }
+func (OpenAIModelList) TableName() string     { return "-" }
+func (AnthropicModel) TableName() string      { return "-" }
+func (AnthropicModelList) TableName() string  { return "-" }

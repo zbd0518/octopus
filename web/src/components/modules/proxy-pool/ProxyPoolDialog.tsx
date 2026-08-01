@@ -18,10 +18,20 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from '@/components/common/Toast';
 import { cn } from '@/lib/utils';
 import { useJumpStore } from '@/stores/jump';
 import { useProxyPoolDialogStore } from './dialog-store';
+import {
+    PROXY_SCHEMES,
+    PROXY_SCHEME_PLACEHOLDERS,
+    buildSchemeTemplate,
+    detectProxyScheme,
+    schemeBadgeClass,
+    schemeLabel,
+    type ProxyScheme,
+} from './scheme';
 
 type FormState = {
     id?: number;
@@ -167,24 +177,6 @@ function buildReferenceTree(references: ProxyConfigurationReference[]) {
     return roots;
 }
 
-export function ProxyPoolHeaderAction() {
-    const t = useTranslations('proxyPool');
-    const open = useProxyPoolDialogStore((state) => state.open);
-    return (
-        <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="rounded-xl transition-none hover:bg-transparent text-muted-foreground hover:text-foreground"
-            aria-label={t('name')}
-            title={t('name')}
-            onClick={() => open()}
-        >
-            <Network className="size-4" />
-        </Button>
-    );
-}
-
 export function ProxyPoolDialog() {
     const t = useTranslations('proxyPool.dialog');
     const isOpen = useProxyPoolDialogStore((state) => state.isOpen);
@@ -204,6 +196,9 @@ export function ProxyPoolDialog() {
     const [referencesProxy, setReferencesProxy] = useState<ProxyConfiguration | null>(null);
     const [expandedReferenceKeys, setExpandedReferenceKeys] = useState<Set<string>>(() => new Set());
     const focusedProxyRefs = useRef<Map<number, HTMLElement>>(new Map());
+    // 表单 URL 当前识别的协议（下拉联动 + 自动识别提示）。
+    const detectedScheme = detectProxyScheme(form.url);
+    const selectedScheme = detectedScheme ?? 'socks5';
     const { data: references = [], isLoading: referencesLoading, error: referencesError } = useProxyConfigurationReferences(
         referencesProxy?.id ?? null,
         isOpen && !!referencesProxy,
@@ -276,6 +271,16 @@ export function ProxyPoolDialog() {
             default:
                 return;
         }
+    }
+
+    function handleSchemeSelect(scheme: ProxyScheme) {
+        // 选择协议：若 URL 为空或当前前缀与目标不同，用模板填充；否则只换前缀。
+        const current = detectProxyScheme(form.url);
+        if (!current || current !== scheme) {
+            setForm({ ...form, url: buildSchemeTemplate(scheme) });
+            return;
+        }
+        // 相同协议：聚焦 URL 输入框（无实际变更）。
     }
 
     function submitForm(event: FormEvent<HTMLFormElement>) {
@@ -395,6 +400,14 @@ export function ProxyPoolDialog() {
                                         <div className="min-w-0 flex-1">
                                             <div className="flex flex-wrap items-center gap-2">
                                                 <h3 className="truncate font-semibold">{proxy.name}</h3>
+                                                {(() => {
+                                                    const scheme = detectProxyScheme(proxy.url);
+                                                    return scheme ? (
+                                                        <Badge variant="outline" className={cn('font-mono text-[10px]', schemeBadgeClass(scheme))}>
+                                                            {schemeLabel(scheme)}
+                                                        </Badge>
+                                                    ) : null;
+                                                })()}
                                                 <Badge variant={proxy.enabled ? 'default' : 'secondary'}>
                                                     {proxy.enabled ? t('enabled') : t('disabled')}
                                                 </Badge>
@@ -446,7 +459,30 @@ export function ProxyPoolDialog() {
                             </div>
                             <div className="space-y-2">
                                 <label className="text-sm font-medium">{t('url')}</label>
-                                <Input value={form.url} onChange={(event) => setForm({ ...form, url: event.target.value })} placeholder="socks5://127.0.0.1:1080" className="rounded-xl" required />
+                                <div className="flex items-start gap-2">
+                                    <Select value={selectedScheme} onValueChange={(v) => handleSchemeSelect(v as ProxyScheme)}>
+                                        <SelectTrigger className="w-28 shrink-0 rounded-xl" size="sm">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent className="rounded-xl">
+                                            {PROXY_SCHEMES.map((scheme) => (
+                                                <SelectItem key={scheme} value={scheme} className="rounded-lg">
+                                                    {schemeLabel(scheme)}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    <Input
+                                        value={form.url}
+                                        onChange={(event) => setForm({ ...form, url: event.target.value })}
+                                        placeholder={PROXY_SCHEME_PLACEHOLDERS[selectedScheme]}
+                                        className="rounded-xl flex-1 font-mono"
+                                        required
+                                    />
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                    {t('schemeHint', { scheme: selectedScheme, example: PROXY_SCHEME_PLACEHOLDERS[selectedScheme] })}
+                                </p>
                             </div>
                             <div className="space-y-2">
                                 <label className="text-sm font-medium">{t('remark')}</label>

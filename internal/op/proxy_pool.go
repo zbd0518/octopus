@@ -13,6 +13,7 @@ import (
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/utils/cache"
+	"github.com/lingyuins/octopus/internal/utils/proxyx"
 	"github.com/lingyuins/octopus/internal/utils/xurl"
 	"golang.org/x/net/proxy"
 )
@@ -316,6 +317,18 @@ func proxyConfigurationRefreshCache(ctx context.Context) error {
 	if err := db.GetDB().WithContext(ctx).Find(&items).Error; err != nil {
 		return err
 	}
+	// 存量规范化：旧数据中的 socks:// 统一改写为 socks5://（代理池新格式
+	// 支持后 socks 仅作别名保留，避免重复 scheme 导致展示/解析歧义）。
+	for i := range items {
+		normalized, err := model.NormalizeProxyURL(items[i].URL)
+		if err == nil && normalized != items[i].URL {
+			items[i].URL = normalized
+			if err := db.GetDB().WithContext(ctx).Model(&model.ProxyConfiguration{}).
+				Where("id = ?", items[i].ID).Update("url", normalized).Error; err != nil {
+				return err
+			}
+		}
+	}
 	proxyConfigurationCache.Clear()
 	for _, item := range items {
 		proxyConfigurationCache.Set(item.ID, item)
@@ -345,6 +358,13 @@ func newProxyTestHTTPClient(proxyURLStr string) (*http.Client, error) {
 		cloned.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return socksDialer.Dial(network, addr)
 		}
+	case "ss", "vmess", "vless", "trojan":
+		dialContext, err := proxyx.NewDialContext(proxyURLStr)
+		if err != nil {
+			return nil, err
+		}
+		cloned.Proxy = nil
+		cloned.DialContext = dialContext
 	default:
 		return nil, fmt.Errorf("unsupported proxy scheme: %s", proxyURL.Scheme)
 	}

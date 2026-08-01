@@ -38,8 +38,9 @@ func IncrementAuthError(poolID, accountID int) (count int, exceeded bool) {
 	val, _ := globalAuthErrors.LoadOrStore(key, &authErrorEntry{windowStart: time.Now().Unix()})
 	entry := val.(*authErrorEntry)
 	now := time.Now().Unix()
-	// 窗口外：重置
-	if now-entry.windowStart > int64(authErrorWindow.Seconds()) {
+	// 窗口外：重置（原子读，避免与 ResetAuthError/PurgeStaleAuthErrors 并发读到
+	// 半更新的 windowStart 造成数据竞争）。
+	if now-atomic.LoadInt64(&entry.windowStart) > int64(authErrorWindow.Seconds()) {
 		atomic.StoreInt64(&entry.windowStart, now)
 		atomic.StoreInt64(&entry.count, 1)
 		return 1, false
@@ -63,12 +64,17 @@ func RemoveAuthError(poolID, accountID int) {
 	globalAuthErrors.Delete(authErrorKey(poolID, accountID))
 }
 
-// PurgeStaleAuthErrors 后台任务清理长期无新增且窗口已过期的条目。
+// PurgeStaleAuthErrors 后台任务清理窗口已过期的条目（无论计数是否为 0）。
+// 窗口过期即删：IncrementAuthError 在窗口外会重置 windowStart 并重新计数，
+// 因此过期条目保留与否不影响正确性，直接删除可避免 globalAuthErrors 长期驻留
+// （ResetAuthError 会刷新 windowStart，仅靠 count==0 判定会让活跃账号条目永不回收）。
 func PurgeStaleAuthErrors() {
 	now := time.Now().Unix()
+	deadline := now - int64(authErrorWindow.Seconds())
 	globalAuthErrors.Range(func(k, v interface{}) bool {
 		entry := v.(*authErrorEntry)
-		if now-entry.windowStart > int64(authErrorWindow.Seconds()) && atomic.LoadInt64(&entry.count) == 0 {
+		// 覆盖完窗口后仍无新增：窗口已过期，删除。
+		if atomic.LoadInt64(&entry.windowStart) < deadline {
 			globalAuthErrors.Delete(k)
 		}
 		return true

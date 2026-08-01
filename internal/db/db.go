@@ -298,6 +298,7 @@ func Migrate(conn *gorm.DB) error {
 		&model.GroupItem{},
 		&model.AIRouteTask{},
 		&model.LLMInfo{},
+		&model.ModelPriceCategory{},
 		&model.APIKey{},
 		&model.AuditLog{},
 		&model.Setting{},

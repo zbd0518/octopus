@@ -134,6 +134,9 @@ func Init() {
 		stats.PurgeIdleModelStats(balancerIdleThreshold)
 		// 清理长时间未活动的号池调度统计（EWMA、并发槽位）。
 		poolscheduler.PurgeStale(balancerIdleThreshold)
+		// 清理号池账号鉴权错误计数中窗口已过期的条目，防止 globalAuthErrors
+		// 因频繁 ResetAuthError 刷新 windowStart 而长期驻留（见 auth_error_counter.go）。
+		poolscheduler.PurgeStaleAuthErrors()
 
 		if db.IsSQLite() {
 			db.EnqueueWrite(db.WriteJob{Name: "relay_log_save", Fn: func(_ context.Context) error {

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type ModelView = 'market' | 'endpoints';
+export type ModelView = 'market' | 'endpoints' | 'categories';
 
 interface ModelViewState {
     modelView: ModelView;

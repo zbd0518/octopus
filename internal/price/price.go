@@ -115,6 +115,10 @@ func GetLLMPrice(modelName string) *model.LLMPrice {
 	if ok {
 		return &price
 	}
+	// 分类表兜底：按规则匹配的模型价格分类（优先级高于整词子串兜底）。
+	if cat := llm.PriceCategoryMatch(modelName); cat != nil {
+		return cat
+	}
 	// Fallback: try matching by base model name
 	if fallback := matchFallbackPrice(modelName); fallback != nil {
 		return fallback

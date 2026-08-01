@@ -150,7 +150,6 @@ export function resolveLogDisplayFields(
         log.channel_name,
         lastAttemptValue(mergedAttempts, (attempt) => attempt.channel_name),
         channelId > 0 ? channelNameById?.get(channelId) : '',
-        channelId > 0 ? 'channel_fallback' : '',
     );
 
     return {

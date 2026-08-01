@@ -99,17 +99,32 @@ func NormalizeProxyURL(value string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid proxy url: %w", err)
 	}
-	parsed.Scheme = strings.ToLower(strings.TrimSpace(parsed.Scheme))
-	parsed.Host = strings.ToLower(strings.TrimSpace(parsed.Host))
-	switch parsed.Scheme {
-	case "http", "https", "socks", "socks5":
+	rawScheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	switch rawScheme {
+	case "socks":
+		// Legacy alias: normalize stored socks:// URLs to socks5://. Keep the
+		// remainder byte-for-byte identical (host, payloads, credentials). The
+		// host is still validated below.
+		idx := strings.Index(trimmed, "://")
+		if idx < 0 {
+			return "", fmt.Errorf("invalid proxy url: missing '://'")
+		}
+		trimmed = "socks5://" + trimmed[idx+3:]
+		parsed, err = url.Parse(trimmed)
+		if err != nil {
+			return "", fmt.Errorf("invalid proxy url: %w", err)
+		}
+		// Fall through to the shared host check.
+	case "http", "https", "socks5", "ss", "vmess", "vless", "trojan":
 	default:
-		return "", fmt.Errorf("unsupported proxy scheme: %s", parsed.Scheme)
+		return "", fmt.Errorf("unsupported proxy scheme: %s", rawScheme)
 	}
-	if parsed.Host == "" {
+	if strings.TrimSpace(parsed.Hostname()) == "" {
 		return "", fmt.Errorf("proxy url must have a host")
 	}
-	return parsed.String(), nil
+	// Return the original value verbatim: url.URL.String() would re-encode the
+	// base64 payloads inside ss:// / vmess:// links (e.g. stripping '=').
+	return trimmed, nil
 }
 
 func (p *ProxyConfiguration) Normalize() error {

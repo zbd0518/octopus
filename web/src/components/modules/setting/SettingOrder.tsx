@@ -28,6 +28,7 @@ export type SettingItemId =
     | 'redis'
     | 'normalize'
     | 'pool'
+    | 'proxy-pool'
     | 'webdav'
     | 'webauthn';
 
@@ -46,6 +47,7 @@ export const DEFAULT_SETTING_ORDER: SettingItemId[] = [
     'webdav',
     'normalize',
     'pool',
+    'proxy-pool',
     'webauthn',
 ];
 
@@ -122,6 +124,7 @@ export function SettingOrder() {
             webdav: settingT('webdav.title'),
             webauthn: settingT('webauthn.title'),
             pool: settingT('pool.title'),
+            'proxy-pool': settingT('proxyPool.title'),
         };
         return map;
     }, [settingT]);

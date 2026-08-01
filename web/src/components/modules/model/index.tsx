@@ -9,6 +9,7 @@ import { useTranslations } from 'next-intl';
 import { ModelItem } from './Item';
 import { MobileModelItem } from './MobileModelItem';
 import { EndpointsView } from './EndpointsView';
+import { PriceCategoriesView } from './PriceCategoriesView';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useSearchStore, useToolbarViewOptionsStore } from '@/components/modules/toolbar';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
@@ -233,6 +234,10 @@ export function Model() {
             {view === 'endpoints' ? (
                 <div className="flex h-full min-h-0 flex-col overflow-y-auto overscroll-contain rounded-t-xl pb-3 md:pb-4">
                     <EndpointsView />
+                </div>
+            ) : view === 'categories' ? (
+                <div className="flex h-full min-h-0 flex-col overflow-y-auto overscroll-contain rounded-t-xl pb-3 md:pb-4">
+                    <PriceCategoriesView />
                 </div>
             ) : (
                 visibleModels.length > 0 ? (

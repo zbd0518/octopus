@@ -3,6 +3,7 @@ package helper
 import (
 	"context"
 
+	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/llm"
 	"github.com/lingyuins/octopus/internal/price"
@@ -38,9 +39,17 @@ func LLMPriceDeleteFromDBWithNoPrice(modelNames []string, ctx context.Context) e
 	if len(modelNames) == 0 {
 		return nil
 	}
+	// 手动设置过价格的模型不自动删除（用户明确创建/编辑过）。
+	manualSet, err := loadManualPriceModelSet(ctx)
+	if err != nil {
+		return err
+	}
 	needDeleteModelNames := make([]string, 0, len(modelNames))
 	for _, modelName := range modelNames {
 		if modelName == "" {
+			continue
+		}
+		if _, ok := manualSet[modelName]; ok {
 			continue
 		}
 		modelPrice, err := llm.Get(modelName)
@@ -58,14 +67,39 @@ func LLMPriceDeleteFromDBWithNoPrice(modelNames []string, ctx context.Context) e
 	return nil
 }
 
+// loadManualPriceModelSet 查询所有手动设置价格的模型名集合（price_manual=true）。
+// modelCache 只缓存价格不缓存 manual 标记，因此需直查 DB。
+func loadManualPriceModelSet(ctx context.Context) (map[string]struct{}, error) {
+	var names []string
+	if err := db.GetDB().WithContext(ctx).Model(&model.LLMInfo{}).
+		Where("price_manual = ?", true).
+		Pluck("name", &names).Error; err != nil {
+		return nil, err
+	}
+	set := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		set[n] = struct{}{}
+	}
+	return set, nil
+}
+
 func LLMPriceRefreshExistingModels(ctx context.Context) error {
 	models, err := llm.List(ctx)
+	if err != nil {
+		return err
+	}
+	// 手动设置价格的模型不参与同步刷新：保留用户配置，不被同步源未命中
+	// 的 0 覆盖，也不被同步源命中值覆盖（用户手动价优先）。
+	manualSet, err := loadManualPriceModelSet(ctx)
 	if err != nil {
 		return err
 	}
 
 	updates := make([]model.LLMInfo, 0, len(models))
 	for _, existing := range models {
+		if _, ok := manualSet[existing.Name]; ok {
+			continue
+		}
 		// 仅从同步价格源（外部价格文件 + 托底价格）查找，跳过 DB 旧值，
 		// 确保"同步价格"真正生效：外部命中用外部价，未命中回落托底价。
 		modelPrice := price.GetLLMPriceFromUpstream(existing.Name)
