@@ -469,14 +469,15 @@ func dailyDimensionUpdateColumns(dbConn *gorm.DB, includeName bool) clause.Set {
 		max("ftut_p50"),
 		max("ftut_p95"),
 		max("ftut_p99"),
-		// 列名须与 GORM 对字段的蛇形命名一致（HistogramLt100 → histogram_lt100，
-		// 数字前不插下划线）；用 JSON tag 名（histogram_lt_100）会引用不存在的列，
+		// 列名须与 model.StatsMetrics 的显式 gorm column tag 一致
+		// （HistogramLt100 → histogram_lt_100）；migration 043 已把 GORM 默认
+		// 蛇形名（histogram_lt100）重命名为这里的名字。用错名字会引用不存在的列，
 		// 导致 stats_daily_* 的 ON CONFLICT upsert 全部失败（历史 bug）。
-		add("histogram_lt100"),
-		add("histogram100to500"),
-		add("histogram500to1k"),
-		add("histogram1kto5k"),
-		add("histogram_gt5k"),
+		add("histogram_lt_100"),
+		add("histogram_100_500"),
+		add("histogram_500_1k"),
+		add("histogram_1k_5k"),
+		add("histogram_gt_5k"),
 	}
 	if includeName {
 		assignments = append([]clause.Assignment{{Column: clause.Column{Name: "name"}, Value: gorm.Expr(dailyDimensionExcludedExpr(dbConn, "name"))}}, assignments...)
