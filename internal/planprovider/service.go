@@ -7,13 +7,97 @@ import (
 	"time"
 
 	"github.com/lingyuins/octopus/internal/db"
+	"github.com/lingyuins/octopus/internal/helper"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op"
+	stats "github.com/lingyuins/octopus/internal/op/stats"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
+	"github.com/lingyuins/octopus/internal/utils/crypto"
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
 const planChannelGroupName = "Plan"
+
+// planFetchModels 拉取渠道最新模型列表的可注入函数（测试时替换）。
+var planFetchModels = func(ctx context.Context, channelType outbound.OutboundType, baseURL, apiKey string) ([]string, error) {
+	request := model.Channel{
+		Type: channelType,
+		BaseUrls: []model.BaseUrl{
+			{URL: baseURL, Delay: 0},
+		},
+		Keys: []model.ChannelKey{
+			{Enabled: true, ChannelKey: apiKey},
+		},
+	}
+	return helper.FetchModelsShortTimeout(ctx, request)
+}
+
+// resolvePlanChannelModels 解析创建渠道用的模型列表：
+// 优先从上游拉取最新模型（Codex 除外——其凭据是 OAuth JSON，无法作为 Bearer 请求 /models），
+// 拉取失败或结果为空时回退到厂商默认列表。
+func resolvePlanChannelModels(ctx context.Context, category model.PlanProviderCategory, channelType outbound.OutboundType, baseURL, apiKey, fallback string) string {
+	if category == model.PlanProviderCodex {
+		return fallback
+	}
+	fetched, err := planFetchModels(ctx, channelType, baseURL, apiKey)
+	if err != nil {
+		log.Warnf("plan provider %s: fetch models from %s failed, fallback to default models: %v", category, baseURL, err)
+		return fallback
+	}
+	normalized := normalizeModelList(strings.Join(fetched, ","))
+	if normalized == "" {
+		log.Warnf("plan provider %s: fetch models from %s returned empty, fallback to default models", category, baseURL)
+		return fallback
+	}
+	return normalized
+}
+
+// legacyDeepSeekDefaultModels 旧版 DeepSeek 额度监控自动创建渠道时的默认模型列表
+// （官方已弃用）。仅当渠道模型列表规范化后与此完全一致时，才判定为旧版自动创建的渠道。
+var legacyDeepSeekDefaultModels = []string{"deepseek-chat", "deepseek-reasoner"}
+
+// MigrateLegacyDeepSeekChannels 幂等迁移：把旧版自动创建的 DeepSeek 额度渠道
+// （模型列表恰为弃用的 deepseek-chat,deepseek-reasoner）更新为当前默认模型
+// （deepseek-v4-flash,deepseek-v4-pro）。只匹配与旧默认完全一致的渠道，
+// 不触碰用户手动配置过模型列表的渠道。返回迁移数量。
+func MigrateLegacyDeepSeekChannels(ctx context.Context) (int, error) {
+	var providers []model.PlanProvider
+	if err := db.GetDB().WithContext(ctx).
+		Where("category = ? AND channel_id > 0", model.PlanProviderDeepSeek).
+		Find(&providers).Error; err != nil {
+		return 0, fmt.Errorf("list deepseek plan providers: %w", err)
+	}
+
+	old := normalizeModelList(strings.Join(legacyDeepSeekDefaultModels, ","))
+	info := getCategoryInfo(model.PlanProviderDeepSeek)
+	if info == nil {
+		return 0, fmt.Errorf("deepseek category info not found")
+	}
+
+	migrated := 0
+	for _, p := range providers {
+		ch, err := op.ChannelGet(p.ChannelID, ctx)
+		if err != nil || ch == nil {
+			continue
+		}
+		if normalizeModelList(ch.Model) != old {
+			continue
+		}
+		updateReq := &model.ChannelUpdateRequest{
+			ID:    ch.ID,
+			Model: &info.Models,
+		}
+		if _, err := op.ChannelUpdate(updateReq, ctx); err != nil {
+			log.Warnf("planprovider: migrate legacy deepseek channel %d models failed: %v", ch.ID, err)
+			continue
+		}
+		migrated++
+	}
+	if migrated > 0 {
+		log.Infof("planprovider: migrated %d legacy deepseek channel(s) to default models %q", migrated, info.Models)
+	}
+	return migrated, nil
+}
 
 // ListProviders 列出所有 Plan Provider
 func ListProviders(ctx context.Context, providerType model.PlanProviderType) ([]model.PlanProviderListItem, error) {
@@ -30,6 +114,15 @@ func ListProviders(ctx context.Context, providerType model.PlanProviderType) ([]
 		item := model.PlanProviderListItem{PlanProvider: p}
 		item.APIKey = ""
 		item.ForwardAPIKey = ""
+		item.LoginConfigured = p.LoginUsername != "" && p.LoginPasswordEnc != ""
+		// 本次与上次检测之间的消费增量：
+		// balance 类 = 上次余额 − 本次余额（充值导致的负值按 0）；
+		// tokenplan 类 = 本次已用 − 上次已用（周期重置导致的负值按 0）。
+		if p.ProviderType == model.PlanProviderTypeBalance {
+			item.BalanceDelta = max(0, p.LastBalance-p.Balance)
+		} else {
+			item.QuotaUsedDelta = max(0, p.QuotaUsed-p.LastQuotaUsed)
+		}
 		if p.ChannelID > 0 {
 			channel, err := op.ChannelGet(p.ChannelID, ctx)
 			if err == nil {
@@ -37,10 +130,53 @@ func ListProviders(ctx context.Context, providerType model.PlanProviderType) ([]
 				item.ChannelName = channel.Name
 				item.ChannelEnabled = channel.Enabled
 			}
+			// DeepSeek 渠道调用统计：优先官方控制台 usage（配置了账号密码时），
+			// 官方查询失败或无账号密码时回退本地 relay stats。
+			if p.Category == model.PlanProviderDeepSeek {
+				item.ChannelStats = queryPlanChannelStats(ctx, &p, p.ChannelID)
+			}
 		}
 		result = append(result, item)
 	}
 	return result, nil
+}
+
+// queryPlanChannelStats 查询 DeepSeek 关联渠道的调用统计（累计 + 今日）。
+//
+// 数据源优先级：
+//  1. 官方控制台 usage（platform.deepseek.com，配置了账号密码时）——真实 token 用量；
+//  2. 本地 relay stats 落库表（与 Analytics 页口径一致）——无账号密码或官方查询失败时兜底。
+func queryPlanChannelStats(ctx context.Context, provider *model.PlanProvider, channelID int) *model.PlanChannelStats {
+	if channelID <= 0 {
+		return nil
+	}
+	// 官方 usage 优先：真实 token 用量（覆盖账号下所有 API key 的调用）。
+	if provider != nil && provider.LoginUsername != "" && provider.LoginPasswordEnc != "" {
+		if official, err := queryDeepSeekOfficialUsage(ctx, provider); err == nil && official != nil {
+			return &model.PlanChannelStats{
+				TotalRequests: official.totalRequests,
+				TotalTokens:   official.totalTokens,
+				TodayRequests: official.todayRequests,
+				TodayTokens:   official.todayTokens,
+				Source:        "official",
+			}
+		} else if err != nil {
+			logDeepSeekUsageErr(provider.ID, err)
+		}
+	}
+	chStats := &model.PlanChannelStats{Source: "local"}
+	var total model.StatsChannel
+	if err := db.GetDB().WithContext(ctx).Where("channel_id = ?", channelID).First(&total).Error; err == nil {
+		chStats.TotalRequests = total.RequestSuccess + total.RequestFailed
+		chStats.TotalTokens = total.InputToken + total.OutputToken
+	}
+	today := stats.Now().Format("20060102")
+	var daily model.StatsDailyChannel
+	if err := db.GetDB().WithContext(ctx).Where("date = ? AND channel_id = ?", today, channelID).First(&daily).Error; err == nil {
+		chStats.TodayRequests = daily.RequestSuccess + daily.RequestFailed
+		chStats.TodayTokens = daily.InputToken + daily.OutputToken
+	}
+	return chStats
 }
 
 // AddProvider 添加 Plan Provider：查询额度 → （可选）创建/复用 Channel 并归入渠道 Plan 分组
@@ -52,10 +188,18 @@ func ListProviders(ctx context.Context, providerType model.PlanProviderType) ([]
 //
 // proxyMode / proxyConfigID 仅 Codex 类生效（chatgpt.com 国内不可直连）：
 // 同时作用于用量查询链路与自动创建的转发渠道；其他厂商强制 direct。
-func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKey, forwardAPIKey, customName string, proxyMode model.ProxyUsageMode, proxyConfigID *int, teamOrgID, teamProjectID string) (*model.PlanProvider, error) {
+// refreshIntervalMin 自动刷新间隔（分钟），0 表示跟随全局默认设置。
+//
+// loginUsername / loginPassword 仅 sensenova_plan 使用（可选）：
+// 配置商汤控制台账号密码后，系统自动完成 OIDC 登录获取控制台 Bearer Token 并自动续期，
+// 无需手动更换每 3 小时过期的 Token；此时 apiKey 可留空（登录成功后会写入 access_token）。
+func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKey, forwardAPIKey, customName string, refreshIntervalMin int, proxyMode model.ProxyUsageMode, proxyConfigID *int, teamOrgID, teamProjectID, loginUsername, loginPassword string) (*model.PlanProvider, error) {
 	info := getCategoryInfo(category)
 	if info == nil {
 		return nil, fmt.Errorf("unknown plan provider category: %s", category)
+	}
+	if refreshIntervalMin < 0 {
+		return nil, fmt.Errorf("refresh interval must be greater than or equal to 0")
 	}
 
 	// 代理配置仅 Codex 类采纳；其他厂商防御性强制 direct。
@@ -77,8 +221,51 @@ func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKe
 	}
 
 	apiKey = strings.TrimSpace(apiKey)
-	if apiKey == "" {
-		return nil, fmt.Errorf("API key is required")
+	loginUsername = strings.TrimSpace(loginUsername)
+	loginPassword = strings.TrimSpace(loginPassword)
+	// 账号密码自动登录目前支持 sensenova_plan 与 deepseek。
+	// sensenova：登录 token 作为主凭据（覆盖 APIKey）；deepseek：账号密码
+	// 用于查询控制台官方 usage，APIKey 仍保留用于余额查询，两者并存。
+	if loginUsername != "" && category != model.PlanProviderSenseNovaPlan && category != model.PlanProviderDeepSeek {
+		return nil, fmt.Errorf("account login is only supported for sensenova_plan and deepseek")
+	}
+	if loginUsername != "" && loginPassword == "" {
+		return nil, fmt.Errorf("login password is required")
+	}
+	if apiKey == "" && loginUsername == "" {
+		return nil, fmt.Errorf("API key or login credentials is required")
+	}
+	// DeepSeek 的账号密码是"附加"的官方 usage 数据源，余额查询仍需要 API key。
+	if category == model.PlanProviderDeepSeek && apiKey == "" {
+		return nil, fmt.Errorf("deepseek requires an API key for balance query (account login is optional)")
+	}
+
+	// 账号密码模式：sensenova 需先完成 OIDC 登录，用拿到的 access_token 作为
+	// 主凭据，并保存加密的 refresh_token 供后续自动续期；deepseek 只保存
+	// 加密的账号密码（登录发生在查询官方 usage 时，token 不落库、不覆盖 APIKey）。
+	var loginPasswordEnc, refreshTokenEnc string
+	if loginUsername != "" && category == model.PlanProviderSenseNovaPlan {
+		enc, err := crypto.Encrypt(loginPassword)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt login password: %w", err)
+		}
+		loginPasswordEnc = enc
+		sess, err := senseNovaOIDCLogin(ctx, loginUsername, loginPassword)
+		if err != nil {
+			return nil, fmt.Errorf("sensenova login: %w", err)
+		}
+		apiKey = sess.accessToken
+		if sess.refreshToken != "" {
+			if enc, err := crypto.Encrypt(sess.refreshToken); err == nil {
+				refreshTokenEnc = enc
+			}
+		}
+	} else if loginUsername != "" && category == model.PlanProviderDeepSeek {
+		enc, err := crypto.Encrypt(loginPassword)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt login password: %w", err)
+		}
+		loginPasswordEnc = enc
 	}
 
 	teamOrgID = strings.TrimSpace(teamOrgID)
@@ -150,7 +337,6 @@ func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKe
 		// 控制台 token plan 类用各自的转发 API 地址 + forwardAPIKey；
 		// Codex 用 info.BaseURL + apiKey（OAuth JSON），channel type 为 Codex。
 		channelBaseURL := info.BaseURL
-		channelModel := info.Models
 		channelKey := apiKey
 		channelName := fmt.Sprintf("[%s] %s", info.Name, name)
 		if customName != "" {
@@ -166,6 +352,9 @@ func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKe
 			channelType = outbound.OutboundTypeCodex
 			channelKey = apiKey // OAuth JSON, same as monitoring credential
 		}
+
+		// 默认使用厂商内置模型列表；优先尝试从上游拉取最新模型，失败时回退。
+		channelModel := resolvePlanChannelModels(ctx, category, channelType, channelBaseURL, channelKey, info.Models)
 
 		// 查找可复用的已有渠道（同 category + 接入点 + 模型相同的渠道）
 		reuseChannelID := findReusablePlanChannel(ctx, category, channelBaseURL, channelModel)
@@ -221,18 +410,25 @@ func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKe
 		ForwardAPIKey:      forwardAPIKey,
 		TeamOrganizationID: teamOrgID,
 		TeamProjectID:      teamProjectID,
+		LoginUsername:      loginUsername,
+		LoginPasswordEnc:   loginPasswordEnc,
+		RefreshTokenEnc:    refreshTokenEnc,
 		BaseURL:            info.BaseURL,
 		ChannelID:          channelID,
 		ProxyMode:          proxyMode,
 		ProxyConfigID:      proxyConfigID,
-		Balance:            balance,
-		BalanceUsed:        balanceUsed,
-		QuotaTotal:         quotaTotal,
-		QuotaUsed:          quotaUsed,
-		WeeklyTotal:        weeklyTotal,
-		WeeklyUsed:         weeklyUsed,
-		FiveHourTotal:      fiveHourTotal,
-		FiveHourUsed:       fiveHourUsed,
+		RefreshIntervalMin: refreshIntervalMin,
+		// 首次添加即建立快照：本次与上次检测之间暂无增量（delta 为 0）
+		LastBalance:   balance,
+		LastQuotaUsed: quotaUsed,
+		Balance:       balance,
+		BalanceUsed:   balanceUsed,
+		QuotaTotal:    quotaTotal,
+		QuotaUsed:     quotaUsed,
+		WeeklyTotal:   weeklyTotal,
+		WeeklyUsed:    weeklyUsed,
+		FiveHourTotal: fiveHourTotal,
+		FiveHourUsed:  fiveHourUsed,
 	}
 
 	if quotaResetAt != nil {
@@ -279,17 +475,31 @@ func RefreshProvider(ctx context.Context, id int) (*model.PlanProvider, error) {
 	}
 
 	if provider.ProviderType == model.PlanProviderTypeBalance {
+		// 快照旧余额：本次刷新后 LastBalance 表示"上次检测时的余额"，
+		// 与最新 Balance 的差值即两次检测之间的消费；差额累加进累计已用额度。
+		lastBalance := provider.Balance
 		result, err := QueryBalance(ctx, provider.Category, provider.APIKey, provider.BaseURL)
 		if err != nil {
 			return nil, fmt.Errorf("refresh balance: %w", err)
 		}
+		provider.LastBalance = lastBalance
 		provider.Balance = result.Balance
 		provider.BalanceUsed = result.BalanceUsed
+		provider.TotalUsed += max(0, lastBalance-provider.Balance)
 	} else {
+		// 商汤日日新：若配置了账号密码，先确保控制台 access_token 有效
+		// （过期则自动 refresh_token 续期或重新登录），再查套餐用量。
+		if provider.Category == model.PlanProviderSenseNovaPlan && provider.LoginUsername != "" {
+			if _, err := ensureSenseNovaSession(ctx, &provider); err != nil {
+				return nil, fmt.Errorf("refresh sensenova session: %w", err)
+			}
+		}
+		lastQuotaUsed := provider.QuotaUsed
 		result, err := QueryTokenPlan(ctx, provider.Category, provider.APIKey, provider.BaseURL, provider.ProxyMode, provider.ProxyConfigID, provider.TeamOrganizationID, provider.TeamProjectID)
 		if err != nil {
 			return nil, fmt.Errorf("refresh tokenplan: %w", err)
 		}
+		provider.LastQuotaUsed = lastQuotaUsed
 		provider.QuotaTotal = result.QuotaTotal
 		provider.QuotaUsed = result.QuotaUsed
 		if result.QuotaResetAt != nil {
@@ -323,12 +533,15 @@ func RefreshProvider(ctx context.Context, id int) (*model.PlanProvider, error) {
 // 需要用户重新从控制台获取凭据并替换，而非删除重建（删除会连带删掉关联的转发渠道与 channel keys 状态）。
 //
 // 行为：
-//   - newAPIKey 必填，trim 后非空；
+//   - newAPIKey 与 loginUsername 至少填一个（sensenova_plan 支持账号密码模式）：
+//     账号密码模式下 newAPIKey 可留空，系统自动登录拿 access_token 作为主凭据。
+//   - 填了 loginUsername（仅 sensenova_plan）：保存账号密码，并保存加密 refresh_token 自动续期；
+//     不填则清空账号密码模式（切回纯 Bearer Token）。
 //   - newForwardAPIKey 仅控制台 token plan 类生效（normalizePlanForwardAPIKey 会清空其他类），传空串表示"清空转发凭据"。
 //   - 用新凭据立即查询一次用量并更新 quota/balance 字段（等价于一次 RefreshProvider）。
 //   - forward_api_key 变更且关联渠道存在时，同步更新渠道里匹配旧 forward 值的那把 key；
 //     若原本没有渠道（旧 forward 为空）而本次填了新 forward，则新建/复用渠道（逻辑同 AddProvider）。
-func UpdateProviderCredentials(ctx context.Context, id int, newAPIKey, newForwardAPIKey string, newTeamOrgID, newTeamProjectID string) (*model.PlanProvider, error) {
+func UpdateProviderCredentials(ctx context.Context, id int, newAPIKey, newForwardAPIKey string, newTeamOrgID, newTeamProjectID, loginUsername, loginPassword string) (*model.PlanProvider, error) {
 	var provider model.PlanProvider
 	if err := db.GetDB().WithContext(ctx).First(&provider, id).Error; err != nil {
 		return nil, fmt.Errorf("find plan provider: %w", err)
@@ -340,9 +553,55 @@ func UpdateProviderCredentials(ctx context.Context, id int, newAPIKey, newForwar
 	}
 
 	newAPIKey = strings.TrimSpace(newAPIKey)
-	if newAPIKey == "" {
-		return nil, fmt.Errorf("API key is required")
+	loginUsername = strings.TrimSpace(loginUsername)
+	loginPassword = strings.TrimSpace(loginPassword)
+	if newAPIKey == "" && loginUsername == "" {
+		return nil, fmt.Errorf("API key or login credentials is required")
 	}
+	if loginUsername != "" && provider.Category != model.PlanProviderSenseNovaPlan && provider.Category != model.PlanProviderDeepSeek {
+		return nil, fmt.Errorf("account login is only supported for sensenova_plan and deepseek")
+	}
+	if loginUsername != "" && loginPassword == "" {
+		return nil, fmt.Errorf("login password is required")
+	}
+
+	// 账号密码模式：sensenova 登录获取新 token 作为主凭据并更新登录凭据字段；
+	// deepseek 只保存加密账号密码（查询官方 usage 时再登录，token 不落库）。
+	// 未填账号密码：清空账号密码模式。
+	if loginUsername != "" && provider.Category == model.PlanProviderSenseNovaPlan {
+		loginPasswordEnc, err := crypto.Encrypt(loginPassword)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt login password: %w", err)
+		}
+		sess, err := senseNovaOIDCLogin(ctx, loginUsername, loginPassword)
+		if err != nil {
+			return nil, fmt.Errorf("sensenova login: %w", err)
+		}
+		newAPIKey = sess.accessToken
+		provider.LoginUsername = loginUsername
+		provider.LoginPasswordEnc = loginPasswordEnc
+		provider.RefreshTokenEnc = ""
+		if sess.refreshToken != "" {
+			if enc, err := crypto.Encrypt(sess.refreshToken); err == nil {
+				provider.RefreshTokenEnc = enc
+			}
+		}
+	} else if loginUsername != "" && provider.Category == model.PlanProviderDeepSeek {
+		loginPasswordEnc, err := crypto.Encrypt(loginPassword)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt login password: %w", err)
+		}
+		provider.LoginUsername = loginUsername
+		provider.LoginPasswordEnc = loginPasswordEnc
+		provider.RefreshTokenEnc = ""
+	} else {
+		provider.LoginUsername = ""
+		provider.LoginPasswordEnc = ""
+		provider.RefreshTokenEnc = ""
+	}
+	clearSenseNovaSession(id)
+	clearDeepSeekSession(id)
+
 	newForwardAPIKey = normalizePlanForwardAPIKey(provider.Category, strings.TrimSpace(newForwardAPIKey))
 	newTeamOrgID = strings.TrimSpace(newTeamOrgID)
 	newTeamProjectID = strings.TrimSpace(newTeamProjectID)
@@ -357,6 +616,12 @@ func UpdateProviderCredentials(ctx context.Context, id int, newAPIKey, newForwar
 		}
 	}
 
+	// DeepSeek 特殊：API key（查余额）与账号密码（查官方 usage）并存。
+	// 只填账号密码时保留原 API key，避免被清空导致余额查询失效。
+	if provider.Category == model.PlanProviderDeepSeek && newAPIKey == "" {
+		newAPIKey = provider.APIKey
+	}
+
 	// 2. 用新主凭据查询用量。
 	provider.APIKey = newAPIKey
 	provider.ForwardAPIKey = newForwardAPIKey
@@ -364,17 +629,24 @@ func UpdateProviderCredentials(ctx context.Context, id int, newAPIKey, newForwar
 	provider.TeamProjectID = newTeamProjectID
 
 	if provider.ProviderType == model.PlanProviderTypeBalance {
+		// 换凭据后立即查询用量，等价于一次刷新：同样保存旧值快照，保证增量对比连续，
+		// 并把差额累加进累计已用额度。
+		lastBalance := provider.Balance
 		result, err := QueryBalance(ctx, provider.Category, provider.APIKey, provider.BaseURL)
 		if err != nil {
 			return nil, fmt.Errorf("query balance: %w", err)
 		}
+		provider.LastBalance = lastBalance
 		provider.Balance = result.Balance
 		provider.BalanceUsed = result.BalanceUsed
+		provider.TotalUsed += max(0, lastBalance-provider.Balance)
 	} else {
+		lastQuotaUsed := provider.QuotaUsed
 		result, err := QueryTokenPlan(ctx, provider.Category, provider.APIKey, provider.BaseURL, provider.ProxyMode, provider.ProxyConfigID, provider.TeamOrganizationID, provider.TeamProjectID)
 		if err != nil {
 			return nil, fmt.Errorf("query tokenplan: %w", err)
 		}
+		provider.LastQuotaUsed = lastQuotaUsed
 		provider.QuotaTotal = result.QuotaTotal
 		provider.QuotaUsed = result.QuotaUsed
 		if result.QuotaResetAt != nil {
@@ -509,6 +781,8 @@ func updatePlanForwardChannelKey(ctx context.Context, provider *model.PlanProvid
 // 若 provider 删除成功而 channel 删除失败：provider 已不存在，留下一个 channel 孤儿，
 // 用户可在渠道管理页手动删除；这比反过来（provider 指向不存在的 channel）更易恢复。
 func DeleteProvider(ctx context.Context, id int) error {
+	clearSenseNovaSession(id)
+	clearDeepSeekSession(id)
 	var provider model.PlanProvider
 	if err := db.GetDB().WithContext(ctx).First(&provider, id).Error; err != nil {
 		return fmt.Errorf("find plan provider: %w", err)

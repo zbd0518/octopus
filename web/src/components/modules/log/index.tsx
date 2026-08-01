@@ -6,10 +6,12 @@ import { useAPIKeyList } from '@/api/endpoints/apikey';
 import { useLogs, type LogFilter } from '@/api/endpoints/log';
 import { useModelList } from '@/api/endpoints/model';
 import { LogCard } from './Item';
+import { ErrorLogView } from './ErrorLogView';
 import { Loader2, X, Columns3, Check, ChevronsUpDown, Search } from 'lucide-react';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { useLogFieldVisibilityStore, useLogModelSearchStore, useLogAutoRefreshStore, type LogFieldName } from './ui-store';
 import { useTranslations } from 'next-intl';
+import { cn } from '@/lib/utils';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
 import { useNavHandoff } from '@/lib/nav-handoff';
 import {
@@ -333,6 +335,7 @@ function LogFilterBar({
  */
 export function Log() {
     const t = useTranslations('log');
+    const [view, setView] = useState<'relay' | 'error'>('relay');
     const [filter, setFilter] = useState<LogFilter>(EMPTY_FILTER);
     const modelSearch = useLogModelSearchStore((s) => s.modelSearch);
     const setModelSearch = useLogModelSearchStore((s) => s.setModelSearch);
@@ -404,32 +407,56 @@ export function Log() {
 
     return (
         <div className="flex h-full min-h-0 flex-col gap-2 overflow-hidden">
-            <LogFilterBar filter={filter} onChange={setFilter} />
-            {isLoading && logs.length === 0 ? (
-                <div className="flex min-h-[18rem] items-center justify-center rounded-xl border border-border/35 bg-card">
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                </div>
-            ) : logs.length === 0 ? (
-                <div className="flex min-h-[18rem] items-center justify-center rounded-xl border border-dashed border-border/35 bg-card px-6 py-6 text-center">
-                    <p className="text-sm text-muted-foreground">{t('list.empty')}</p>
-                </div>
+            {/* 视图切换：转发日志 / 错误日志 */}
+            <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/35 bg-card p-1">
+                {(['relay', 'error'] as const).map((v) => (
+                    <button
+                        key={v}
+                        type="button"
+                        onClick={() => setView(v)}
+                        className={cn(
+                            'rounded-md px-3 py-1 text-xs transition-colors',
+                            view === v
+                                ? 'bg-foreground text-background'
+                                : 'text-muted-foreground hover:text-foreground'
+                        )}
+                    >
+                        {v === 'relay' ? t('view.relay') : t('view.error')}
+                    </button>
+                ))}
+            </div>
+            {view === 'error' ? (
+                <ErrorLogView />
             ) : (
-                <div className="min-h-0 flex-1">
-                    <VirtualizedGrid
-                        items={logs}
-                        layout="list"
-                        columns={{ default: 1 }}
-                        estimateItemHeight={180}
-                        overscan={8}
-                        getItemKey={(log) => `log-${log.id}`}
-                        renderItem={(log) => <LogCard log={log} channelNameById={channelNameById} />}
-                        footer={footer}
-                        onReachEnd={handleReachEnd}
-                        reachEndEnabled={canLoadMore}
-                        reachEndOffset={2}
-                        bottomPaddingClassName="pb-16 md:pb-4"
-                    />
-                </div>
+                <>
+                    <LogFilterBar filter={filter} onChange={setFilter} />
+                    {isLoading && logs.length === 0 ? (
+                        <div className="flex min-h-[18rem] items-center justify-center rounded-xl border border-border/35 bg-card">
+                            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                        </div>
+                    ) : logs.length === 0 ? (
+                        <div className="flex min-h-[18rem] items-center justify-center rounded-xl border border-dashed border-border/35 bg-card px-6 py-6 text-center">
+                            <p className="text-sm text-muted-foreground">{t('list.empty')}</p>
+                        </div>
+                    ) : (
+                        <div className="min-h-0 flex-1">
+                            <VirtualizedGrid
+                                items={logs}
+                                layout="list"
+                                columns={{ default: 1 }}
+                                estimateItemHeight={180}
+                                overscan={8}
+                                getItemKey={(log) => `log-${log.id}`}
+                                renderItem={(log) => <LogCard log={log} channelNameById={channelNameById} />}
+                                footer={footer}
+                                onReachEnd={handleReachEnd}
+                                reachEndEnabled={canLoadMore}
+                                reachEndOffset={2}
+                                bottomPaddingClassName="pb-16 md:pb-4"
+                            />
+                        </div>
+                    )}
+                </>
             )}
         </div>
     );

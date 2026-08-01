@@ -16,6 +16,7 @@ import {
 import { ProxySelector } from '@/components/modules/proxy-pool/ProxySelector';
 import type { ProxyMode } from '@/api/endpoints/proxy-pool';
 import { toast } from '@/components/common/Toast';
+import { apiClient } from '@/api/client';
 import {
     useCreatePoolAccount,
     useUpdatePoolAccount,
@@ -138,11 +139,22 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
         setForm({ ...form, type });
     };
 
-    const handleOAuthLogin = () => {
+    const handleOAuthLogin = async () => {
         const platform = form.platform as PoolPlatform;
         if (!platformSupportsOAuth(platform)) return;
-        // 跳转 OAuth initiate 端点，回调后前端刷新列表。
-        window.location.href = `/api/v1/pool/oauth/initiate?platform=${platform}&pool_id=${poolId}`;
+        try {
+            // 先通过管理 API 发起 initiate（带 JWT），拿到 auth_url 后再跳转授权页。
+            const data = await apiClient.get<{ auth_url: string }>(
+                '/api/v1/pool/oauth/initiate',
+                { platform, pool_id: poolId },
+            );
+            if (!data?.auth_url) {
+                throw new Error(t('oauthInitiateFailed'));
+            }
+            window.location.href = data.auth_url;
+        } catch (e) {
+            toast.error(String(e));
+        }
     };
 
     const handleSubmit = () => {

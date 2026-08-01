@@ -138,6 +138,7 @@
       "delete": "刪除",
       "balanceAvailable": "可用餘額",
       "balanceUsed": "已用額度",
+      "totalUsed": "累計已用",
       "tierFiveHour": "近5小時用量",
       "tierWeekly": "近一週用量",
       "tierMonthly": "近一月用量",
@@ -157,6 +158,16 @@
       "oasisTokenPlaceholder": "貼上控制台 Cookie 中的 Oasis-Token 值",
       "oasisTokenHint": "需登入 platform.stepfun.com 控制台，從瀏覽器 Cookie 複製 Oasis-Token 值（格式：access...refresh）。此 Token 有效期約 30 分鐘，過期後需重新取得。",
       "monitorOnly": "僅監控",
+      "refreshInterval": "自動刷新間隔",
+      "refreshFollowGlobal": "跟隨全域（{minutes} 分鐘）",
+      "refreshEvery": "每 {minutes} 分鐘",
+      "refreshIntervalHint": "按此間隔自動查詢額度；全域預設可在 Hub 自動化面板調整",
+      "refreshIntervalShort": "自動刷新",
+      "refreshFollowGlobalShort": "跟隨全域",
+      "deltaSpent": "上次檢測後消耗",
+      "sysStats": "DeepSeek 額度調用統計",
+      "sysTotalRequests": "累計調用",
+      "sysTodayRequests": "今日調用",
       "forwardApiKeyLabel": "API Key（可選）",
       "forwardApiKeyPlaceholder": "sk- 開頭的 API Key，用於轉發",
       "forwardApiKeyHint": "填寫後將自動建立或復用轉發渠道，模型相同的合併為同一渠道。留空則僅監控套餐額度。",
@@ -191,7 +202,29 @@
       "updateFailed": "更新失敗",
       "update": "更新並查詢",
       "forwardApiKeyPlaceholderOptional": "留空保持不變，填寫則更新轉發渠道 key",
-      "forwardApiKeyEditHint": "留空表示不更換轉發憑證；填寫新值將同步更新關聯渠道的 key。"
+      "forwardApiKeyEditHint": "留空表示不更換轉發憑證；填寫新值將同步更新關聯渠道的 key。",
+      "senseNovaAuthModeLabel": "憑據方式",
+      "senseNovaAuthModeAccount": "帳號密碼（自動登入續期）",
+      "senseNovaUsernameLabel": "登入帳號",
+      "senseNovaUsernamePlaceholder": "platform.sensenova.cn 控制台登入帳號（手機號/用戶名）",
+      "senseNovaPasswordLabel": "登入密碼",
+      "senseNovaPasswordPlaceholder": "控制台登入密碼",
+      "senseNovaAccountHint": "系統自動完成登入並續期控制台 Token（約 3 小時有效期），全程無需手動更換。帳號密碼 AES 加密儲存，僅用於自動登入。",
+      "senseNovaAccountMissing": "請填寫登入帳號和密碼",
+      "senseNovaLoginConfiguredHint": "目前已啟用帳號密碼自動登入（{username}）。重新填寫密碼即可更換帳號。",
+      "senseNovaAutoLoginBadge": "自動登入",
+      "volcengineAuthModeLabel": "憑據方式",
+      "volcengineAuthModeCookie": "Cookie + CSRF Token",
+      "volcengineAuthModeAKSK": "AK/SK（AccessKey 簽名）",
+      "sysTotalTokens": "累計 Token",
+      "sysTodayTokens": "今日 Token",
+      "deepSeekAccountLabel": "控制台帳號（可選，用於官方用量統計）",
+      "deepSeekAccountPlaceholder": "platform.deepseek.com 登入手機號",
+      "deepSeekPasswordPlaceholder": "控制台登入密碼",
+      "deepSeekAccountHint": "設定後系統自動登入控制台，把卡片統計切換為官方 token 用量（涵蓋帳號下所有 API key 的呼叫，比本地轉發統計更準確）。帳號密碼 AES 加密儲存；不填則繼續使用本地統計。",
+      "sysStatsOfficial": "官方用量",
+      "sysStatsLocal": "本地統計",
+      "deepSeekApiKeyMissing": "請填寫 API Key（用於餘額查詢，控制台帳號為可選）"
     },
     "title": "遠端站點",
     "addSite": "新增站點",
@@ -1770,6 +1803,10 @@
         "label": "自動簽到間隔（小時）",
         "placeholder": "請輸入間隔（小時）"
       },
+      "planRefreshInterval": {
+        "label": "額度監控自動刷新（分鐘）",
+        "placeholder": "預設 30 分鐘"
+      },
       "manualSync": {
         "label": "手動站點全量同步",
         "button": "立即同步",
@@ -1930,6 +1967,7 @@
       "description": "將模型名稱變體（如 dmxapi-kimi-k2.5、kimi-k2.5-cc）合併為基礎名（kimi-k2.5），用於聚合與去重。僅影響展示，不會改寫請求。",
       "saved": "歸一化規則已儲存",
       "saveFailed": "歸一化規則儲存失敗",
+      "conflict": "顯式映射存在衝突（{{count}} 組）：同一變體歸一後映射到不同基準名，去重會失效。請修正後再儲存。衝突範例：{{first}}",
       "saving": "儲存中...",
       "save": "儲存",
       "duplicate": "規則已存在",
@@ -1964,7 +2002,7 @@
         "promptHint": "複製後貼到離線 AI 對話，配合上方匯出的渠道模型名稱 JSON 一起使用，讓 AI 按指定格式產出歸一化規則。",
         "promptCopy": "複製提示詞",
         "promptCopied": "已複製",
-        "prompt": "你是一個模型名稱歸一化分析助手。我會給你一份 JSON，其中 channels 陣列的每個元素含 name 欄位（渠道宣告的模型名稱，可能含變體）。請分析這些模型名稱，找出同一基礎模型在不同渠道下的命名變體，並產出歸一化規則。\n\n歸一化規則分三類：\n1. router_prefixes：路由商/平台前綴（出現在模型名稱開頭，與底層模型無關），如 \"dmxapi-\"、\"agent-\"。元素需帶末尾連字號。\n2. functional_suffixes：功能性後綴（出現在模型名稱結尾，與模型本體無關），如 \"-cc\"、\"-fast\"、\"-thinking\"。元素需帶前導連字號。\n3. explicit_mappings：點對點變體→基準名映射，用於前綴/後綴規則無法覆蓋的情況，如 {\"variant\":\"claude-3.5-sonnet\",\"canonical\":\"claude-3-5-sonnet\"}。\n\n分析原則：\n- 只把確實屬於同一基礎模型的變體歸併，避免誤併（如 gpt-4o 與 gpt-4o-mini 是不同模型，不可歸併）。\n- provider 路徑前綴（如 moonshotai/、@cf/org/）會被自動剝離，無需列入 router_prefixes。\n- 優先用前綴/後綴規則；僅當無法用前綴/後綴表達時才用 explicit_mappings。\n\n請僅輸出一個 JSON 物件，不要解釋，格式如下：\n{\n  \"router_prefixes\": [\"...\"],\n  \"functional_suffixes\": [\"...\"],\n  \"explicit_mappings\": [{\"variant\":\"...\",\"canonical\":\"...\"}]\n}"
+        "prompt": "你是一個模型名稱歸一化分析助手。我會給你一份 JSON，其中 channels 陣列的每個元素含 name 欄位（渠道宣告的模型名稱，可能含變體）。請分析這些模型名稱，找出同一基礎模型在不同渠道下的命名變體，並產出歸一化規則。\n\n歸一化規則分三類，按以下優先級與格式產出：\n\n1. router_prefixes：渠道商/路由前綴（出現在模型名稱開頭、與底層模型無關），如 \"dmxapi-\"、\"agent-\"、\"gateway-\"。元素需帶末尾連字號。像 [官B]、[特價C] 這類渠道標記前綴，即使渠道名稱中其後沒有連字號（如 [官B]claude-opus-4-6），也請寫成 \"[官B]-\"，系統會自動相容。\n   不要列入 provider 路徑前綴（如 moonshotai/、@cf/org/、deepseek-ai/）——路徑會被自動剝離，列入無效。\n\n2. functional_suffixes：功能性後綴（出現在模型名稱末尾、與模型本體無關），如 \"-cc\"、\"-fast\"、\"-thinking\"、\"-vip\"、\"-ssvip\"。元素需帶前導連字號。\n   渠道的免費標記有多種寫法，請對應產出：\n   - 連字號形式（如 xxx-free）→ \"-free\"\n   - 冒號形式（如 xxx:free）→ \"-:free\"\n   - 括號形式（如 xxx(free)）→ \"-(free)\"\n   日期後綴（如 -20250514）請用正則 \"-\\d{8}\"（8 位）、\"-\\d{6}\"（6 位）、\"-\\d{4}\"（4 位），不要為每個日期枚舉映射。注意 JSON 中反斜線需轉義為雙反斜線。\n   @版本形式（如 claude-3-haiku@20240307）→ \"-\\@\\w+\"。\n\n3. explicit_mappings：點對點變體→基準名映射，僅在無法用前綴/後綴表達時使用（如縮寫、字母拼寫變體、日期+版本混合）。要點：\n   - variant 寫不帶渠道前綴的裸名（如 \"claude-opus-4-6\" 而非 \"[官B]claude-opus-4-6\"），系統會自動匹配任意前綴/路徑的渠道名稱。\n   - canonical 用帶點號的官方版本號（如 \"claude-opus-4.6\"、\"gpt-5.2\"、\"gemini-3.1-pro\"），並保持全庫統一：同一模型的所有變體必須映射到同一個 canonical，嚴禁雙向/矛盾映射（\"claude-opus-4-6 → claude-opus-4.6\" 與 \"claude-opus-4.6 → claude-opus-4-6\" 同時存在會使去重失效）。\n   - 能用前綴/後綴表達的（如 -thinking、-vip、日期）不要寫進顯式映射，保持映射數量精簡。\n\n分析原則：\n- 只歸併確實屬於同一基礎模型的變體，避免誤併（gpt-4o 與 gpt-4o-mini 是不同模型；gemini-2.5-pro 與 gemini-25-pro 是不同模型）。\n- 版本號寫法統一為點號（4-6 → 4.6、v3-1 → v3.1）。\n- 優先使用前綴/後綴規則，顯式映射越少越好。\n\n請僅輸出一個 JSON 物件，不要解釋，格式如下：\n{\n  \"router_prefixes\": [\"dmxapi-\", \"[官B]-\"],\n  \"functional_suffixes\": [\"-cc\", \"-:free\", \"-(free)\", \"-\\d{8}\", \"-\\@\\w+\"],\n  \"explicit_mappings\": [{\"variant\": \"claude-opus-4-6\", \"canonical\": \"claude-opus-4.6\"}]\n}"
       },
       "export": {
         "title": "匯出渠道模型名",
@@ -2002,7 +2040,9 @@
         "addPrefix": "加入為前綴",
         "addSuffix": "加入為後綴",
         "disclaimer": "疑似群集是依前綴/後綴關係推斷，可能誤報（如 gpt-4o 與 gpt-4o-mini）。加入前請先審查。"
-      }
+      },
+      "clearAll": "刪除全部",
+      "clearAllConfirm": "確定刪除全部歸一化規則？此操作不可復原。"
     },
     "webauthn": {
       "title": "Passkey(WebAuthn)",
@@ -2773,6 +2813,30 @@
       },
       "reasoningChars": "思考",
       "reasoningCharsUnit": "字"
+    },
+    "view": {
+      "relay": "轉發日誌",
+      "error": "錯誤日誌"
+    },
+    "errorLog": {
+      "title": "錯誤日誌",
+      "clear": "清空",
+      "clearConfirm": "確定清空全部錯誤日誌？此操作不可復原。",
+      "empty": "暫無錯誤日誌",
+      "loadMore": "載入更多",
+      "filter": {
+        "allSources": "全部來源",
+        "backend": "後端",
+        "frontend": "前端",
+        "allLevels": "全部級別"
+      },
+      "context": {
+        "request": "請求",
+        "pageUrl": "頁面",
+        "route": "路由",
+        "clientIp": "用戶端 IP",
+        "version": "版本"
+      }
     }
   },
   "channel": {
@@ -3551,6 +3615,9 @@
     "oauthLoginBtn": "去授權",
     "oauthLoginHint": "點擊跳轉到平台授權頁，授權完成後自動創建賬號。也可手動粘貼 OAuth JSON。",
     "oauthManualPaste": "手動粘貼 OAuth JSON（可選）",
+    "oauthInitiateFailed": "OAuth 發起失敗，請重試",
+    "oauthSuccess": "OAuth 授權成功，賬號已創建",
+    "oauthFailed": "OAuth 授權失敗",
     "importAccounts": "批量導入",
     "import": "導入",
     "importHint": "粘貼賬號 JSON 數組，每項含 platform/type/credentials 等字段。",

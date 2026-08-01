@@ -9,18 +9,22 @@
 #
 # 需要在 repo Settings → Secrets 中添加：
 #   OCTOPUS_API_KEY  — Octopus 网关 chat 权限 API Key
-#   OCTOPUS_BASE_URL — Octopus 网关地址（如 https://api.lyux.space）
+#   OCTOPUS_BASE_URL — Octopus 网关地址（如 https://your-gateway.example.com）
 #
 # 配置文件：.github/issue-bot-config.yml
 
 name: 🤖 Issue Bot
 
 on:
+  # Issue 仅在创建时触发一次：AI 分类/打标签后不再次触发（避免 bot 自触发
+  # 重复执行），人工回复、手动打标签等后续动作均不触发。
   issues:
-    types: [opened, labeled]
+    types: [opened]
   # pull_request_target：在 base 仓库上下文运行，GITHUB_TOKEN 有写权限，
   # fork PR 也能被打标签/评论。本 bot 不 checkout PR 代码、不执行 PR 内容，
   # checkout 默认取 base ref，因此是安全的。
+  # PR 保留 edited/labeled：edited 用于标题修正后移除 invalid 标签并道谢；
+  # labeled 是功能依赖链（opened 打前缀标签 → labeled → 请求 reviewer）。
   pull_request_target:
     types: [opened, edited, labeled]
 
@@ -35,10 +39,10 @@ jobs:
 
     steps:
       - name: 📥 Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🐍 Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 

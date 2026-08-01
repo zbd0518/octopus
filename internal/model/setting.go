@@ -43,6 +43,7 @@ const (
 
 	SettingKeyPoolTokenRefreshInterval             SettingKey = "pool_token_refresh_interval"              // 号池 OAuth token 刷新检查间隔（分钟）
 	SettingKeyPoolQuotaSyncInterval                SettingKey = "pool_quota_sync_interval"                 // 号池额度同步间隔（分钟）
+	SettingKeyPlanProviderRefreshInterval          SettingKey = "plan_provider_refresh_interval"           // 额度监控自动刷新默认间隔（分钟）
 	SettingKeyPoolMinPriority                      SettingKey = "pool_min_priority"                        // 号池分层过滤 minPriority 阈值（默认 -9999 表示关闭）
 	SettingKeyPoolLayeredFilterEnabled             SettingKey = "pool_layered_filter_enabled"              // 号池分层过滤开关：开启后 SelectAccount 过滤掉 priority < min_priority 的候选
 	SettingKeyPoolHealthCheckEnabled               SettingKey = "pool_health_check_enabled"                // 号池账号健康巡检开关
@@ -202,10 +203,10 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyResponseFilterErrorMessage, Value: "The response contains blocked keywords and has been intercepted."},
 		{Key: SettingKeyLogLevel, Value: "info"},
 		{Key: SettingKeyLogExcludedGroups, Value: "[]"},
-		{Key: SettingKeyModelNormalizeRouterPrefixes, Value: "[]"},         // 默认无自定义路由前缀，回退到前端内置默认
-		{Key: SettingKeyModelNormalizeFunctionalSuffixes, Value: "[]"},     // 默认无自定义功能后缀，回退到前端内置默认
-		{Key: SettingKeyModelNormalizeExplicitMappings, Value: "[]"},       // 默认无显式变体→基准名映射
-		{Key: SettingKeyModelNormalizeMarketDedupeDefault, Value: "false"}, // 默认不在模型广场自动开启归一化去重
+		{Key: SettingKeyModelNormalizeRouterPrefixes, Value: "[]"},        // 默认无自定义路由前缀，回退到前端内置默认
+		{Key: SettingKeyModelNormalizeFunctionalSuffixes, Value: "[]"},    // 默认无自定义功能后缀，回退到前端内置默认
+		{Key: SettingKeyModelNormalizeExplicitMappings, Value: "[]"},      // 默认无显式变体→基准名映射
+		{Key: SettingKeyModelNormalizeMarketDedupeDefault, Value: "true"}, // 模型广场默认开启归一化去重
 		{Key: SettingKeyWebAuthnRPID, Value: ""},
 		{Key: SettingKeyWebAuthnRPName, Value: "Octopus"},
 		{Key: SettingKeyWebAuthnOrigins, Value: ""},
@@ -220,6 +221,7 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyGroupUpstreamMetaDisplayEnabled, Value: "true"}, // 默认开启分组上游元信息展示
 		{Key: SettingKeyPoolTokenRefreshInterval, Value: "10"},          // 默认 10 分钟检查号池 OAuth token 刷新
 		{Key: SettingKeyPoolQuotaSyncInterval, Value: "360"},            // 默认 6 小时同步号池额度
+		{Key: SettingKeyPlanProviderRefreshInterval, Value: "30"},       // 默认 30 分钟自动刷新额度监控
 		{Key: SettingKeyPoolMinPriority, Value: "-9999"},                // 默认关闭分层过滤
 		{Key: SettingKeyPoolLayeredFilterEnabled, Value: "false"},       // 默认关闭号池分层过滤
 		{Key: SettingKeyPoolHealthCheckEnabled, Value: "false"},         // 默认关闭号池巡检
@@ -254,7 +256,7 @@ func (s *Setting) Validate() error {
 		SettingKeyStreamSessionTTLMinutes, SettingKeyStreamSessionMaxEvents, SettingKeyStreamSessionMaxBytesMB,
 		SettingKeyNotifyHTTPTimeoutSeconds,
 		SettingKeyFailureHintTTLUnauthorized, SettingKeyFailureHintTTLRateLimit, SettingKeyFailureHintTTLNetwork,
-		SettingKeyPoolTokenRefreshInterval, SettingKeyPoolQuotaSyncInterval,
+		SettingKeyPoolTokenRefreshInterval, SettingKeyPoolQuotaSyncInterval, SettingKeyPlanProviderRefreshInterval,
 		SettingKeyPoolMinPriority, SettingKeyPoolHealthCheckInterval, SettingKeyPoolHealthCheckFailThreshold:
 		v, err := strconv.Atoi(s.Value)
 		if err != nil {
@@ -309,7 +311,7 @@ func (s *Setting) Validate() error {
 			SettingKeyStreamSessionTTLMinutes, SettingKeyStreamSessionMaxEvents, SettingKeyStreamSessionMaxBytesMB,
 			SettingKeyFailureHintTTLUnauthorized, SettingKeyFailureHintTTLRateLimit, SettingKeyFailureHintTTLNetwork,
 			SettingKeyKeyHealthCheckInterval, SettingKeyKeyHealthCheckFailThreshold, SettingKeyKeyHealthCheckNotifyCooldown,
-			SettingKeyPoolTokenRefreshInterval, SettingKeyPoolQuotaSyncInterval,
+			SettingKeyPoolTokenRefreshInterval, SettingKeyPoolQuotaSyncInterval, SettingKeyPlanProviderRefreshInterval,
 			SettingKeyPoolHealthCheckInterval, SettingKeyPoolHealthCheckFailThreshold:
 			if v < 1 {
 				return fmt.Errorf("setting value must be greater than 0")

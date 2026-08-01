@@ -21,6 +21,8 @@ import { REFETCH_INTERVAL_CONFIG } from '@/api/constants';
 import { CONTENT_MAP } from '@/route';
 import { parseNavOrder, parseNavVisible } from '@/components/modules/navbar';
 import { useSubTabStore, parseSubTabOrder, parseSubTabVisible, type ModuleId } from '@/components/modules/navbar/sub-tab-store';
+import { initErrorReporting } from '@/lib/error-report';
+import { AppErrorBoundary } from '@/components/common/AppErrorBoundary';
 import { apiClient } from '@/api/client';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
@@ -135,6 +137,7 @@ export function AppContainer() {
     const { isAuthenticated, isAPIKeyAuth, isLoading: authLoading } = useAuth();
     const { activeItem, direction, visibleItems, setNavOrder, setVisibleItems, resetNavOrder } = useNavStore();
     const t = useTranslations('navbar');
+    const tPool = useTranslations('pool');
     const queryClient = useQueryClient();
     const isMobile = useIsMobile();
     const reduceMotion = useReducedMotion();
@@ -164,6 +167,11 @@ export function AppContainer() {
     const bootstrapStartedRef = useRef(false);
     const warmedRoutesRef = useRef<Set<NavItem>>(new Set());
 
+    // 挂载全局错误监听（JS 错误 / 未处理 Promise），捕获后上报后端错误日志。
+    useEffect(() => {
+        initErrorReporting();
+    }, []);
+
     // 首屏最早的 server-rendered loader：一旦客户端开始渲染，就淡出移除
     useEffect(() => {
         const el = document.getElementById('initial-loader');
@@ -173,6 +181,41 @@ export function AppContainer() {
         const timer = setTimeout(() => el.remove(), 220);
         return () => clearTimeout(timer);
     }, []);
+
+    // OAuth 回跳处理：后端回调 302 到 /pool?oauth=success|error&pool_id=N&msg=...。
+    // 这里 toast 结果并导航到 pool 模块；pool_id 保留在 URL，由 Pool 列表挂载后
+    // 自动选中对应池子并清理。
+    const oauthRedirectHandledRef = useRef(false);
+    useEffect(() => {
+        if (oauthRedirectHandledRef.current || typeof window === 'undefined') return;
+        const params = new URLSearchParams(window.location.search);
+        const oauth = params.get('oauth');
+        if (!oauth) return;
+        oauthRedirectHandledRef.current = true;
+
+        const msg = params.get('msg') || '';
+        const poolIdStr = params.get('pool_id');
+
+        // 清理 oauth/msg 参数，避免刷新后重复提示；pool_id 留给 Pool 列表处理。
+        const url = new URL(window.location.href);
+        url.searchParams.delete('oauth');
+        url.searchParams.delete('msg');
+        window.history.replaceState({}, '', url.toString());
+
+        if (oauth === 'success') {
+            toast.success(tPool('oauthSuccess'));
+        } else {
+            toast.error(msg ? `${tPool('oauthFailed')}: ${msg}` : tPool('oauthFailed'));
+        }
+
+        if (poolIdStr) {
+            // 导航到 pool 模块（若该模块在导航中可见），列表挂载后自动选中池子。
+            const { activeItem: current, visibleItems: visible } = useNavStore.getState();
+            if (visible.includes('pool') && current !== 'pool') {
+                useNavStore.getState().setActiveItem('pool');
+            }
+        }
+    }, [tPool]);
 
     useEffect(() => {
         const timer = setTimeout(() => setLogoAnimationComplete(true), LOGO_DRAW_END_MS);
@@ -506,7 +549,9 @@ export function AppContainer() {
                     </div>
                 </header>
                 <div className="h-full min-h-0 flex-1 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] md:pb-[calc(1rem+env(safe-area-inset-bottom,0px))]">
-                    <ContentLoader activeRoute={activeItem} />
+                    <AppErrorBoundary>
+                        <ContentLoader activeRoute={activeItem} />
+                    </AppErrorBoundary>
                 </div>
             </main>
             <ProxyPoolDialog />

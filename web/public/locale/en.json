@@ -138,6 +138,7 @@
       "delete": "Delete",
       "balanceAvailable": "Available Balance",
       "balanceUsed": "Used",
+      "totalUsed": "Total Used",
       "tierFiveHour": "Last 5 Hours Usage",
       "tierWeekly": "Last Week Usage",
       "tierMonthly": "Last Month Usage",
@@ -157,6 +158,16 @@
       "oasisTokenPlaceholder": "Paste Oasis-Token from console browser cookie",
       "oasisTokenHint": "Log in to platform.stepfun.com console, copy the Oasis-Token value from browser cookies (format: access...refresh). The token is valid for ~30 minutes; re-obtain after expiry.",
       "monitorOnly": "Monitor Only",
+      "refreshInterval": "Auto refresh interval",
+      "refreshFollowGlobal": "Follow global ({minutes} min)",
+      "refreshEvery": "Every {minutes} min",
+      "refreshIntervalHint": "Quota is auto-refreshed at this interval; the global default is set in the Hub Automation panel",
+      "refreshIntervalShort": "Auto refresh",
+      "refreshFollowGlobalShort": "Follow global",
+      "deltaSpent": "Spent since last check",
+      "sysStats": "DeepSeek quota usage stats",
+      "sysTotalRequests": "Total requests",
+      "sysTodayRequests": "Today requests",
       "forwardApiKeyLabel": "API Key (Optional)",
       "forwardApiKeyPlaceholder": "sk- API Key for forwarding",
       "forwardApiKeyHint": "When provided, a forwarding channel will be created or reused. Channels with the same models are merged. Leave empty to monitor quota only.",
@@ -191,7 +202,29 @@
       "updateFailed": "Update failed",
       "update": "Update & Query",
       "forwardApiKeyPlaceholderOptional": "Leave blank to keep unchanged, or enter a new forwarding key",
-      "forwardApiKeyEditHint": "Leave blank to keep the forwarding credential unchanged; entering a new value will sync-update the associated channel key."
+      "forwardApiKeyEditHint": "Leave blank to keep the forwarding credential unchanged; entering a new value will sync-update the associated channel key.",
+      "senseNovaAuthModeLabel": "Credential Mode",
+      "senseNovaAuthModeAccount": "Account & Password (auto-login)",
+      "senseNovaUsernameLabel": "Login Account",
+      "senseNovaUsernamePlaceholder": "platform.sensenova.cn console login account (phone/username)",
+      "senseNovaPasswordLabel": "Login Password",
+      "senseNovaPasswordPlaceholder": "Console login password",
+      "senseNovaAccountHint": "The system automatically logs in and renews the console Token (~3h validity) — no manual refresh needed. Credentials are AES-encrypted and only used for auto-login.",
+      "senseNovaAccountMissing": "Please fill in the login account and password",
+      "senseNovaLoginConfiguredHint": "Account auto-login is enabled ({username}). Re-enter the password to switch accounts.",
+      "senseNovaAutoLoginBadge": "Auto-login",
+      "volcengineAuthModeLabel": "Credential Mode",
+      "volcengineAuthModeCookie": "Cookie + CSRF Token",
+      "volcengineAuthModeAKSK": "AK/SK (AccessKey signing)",
+      "sysTotalTokens": "Total Tokens",
+      "sysTodayTokens": "Today Tokens",
+      "deepSeekAccountLabel": "Console account (optional, for official usage stats)",
+      "deepSeekAccountPlaceholder": "platform.deepseek.com login phone number",
+      "deepSeekPasswordPlaceholder": "Console login password",
+      "deepSeekAccountHint": "When configured, the system auto-logs in and switches card stats to official token usage (covers all API keys under the account, more accurate than local relay stats). Credentials are AES-encrypted; leave blank to keep local stats.",
+      "sysStatsOfficial": "Official usage",
+      "sysStatsLocal": "Local stats",
+      "deepSeekApiKeyMissing": "API Key is required (for balance query; console account is optional)"
     },
     "title": "Remote Sites",
     "addSite": "Add Site",
@@ -1814,6 +1847,10 @@
         "label": "Auto Check-in Interval (hours)",
         "placeholder": "Enter interval (hours)"
       },
+      "planRefreshInterval": {
+        "label": "Quota Monitor Auto Refresh (minutes)",
+        "placeholder": "Default 30 min"
+      },
       "manualSync": {
         "label": "Manual Full Site Sync",
         "button": "Sync Now",
@@ -1974,6 +2011,7 @@
       "description": "Rules to merge model name variants (e.g. dmxapi-kimi-k2.5, kimi-k2.5-cc) into a base name (kimi-k2.5) for aggregation and dedup. Used only for display, does not rewrite requests.",
       "saved": "Normalization rules saved",
       "saveFailed": "Failed to save normalization rules",
+      "conflict": "Conflicting explicit mappings ({{count}} groups): the same normalized variant maps to different canonical names, dedup will fail. Fix before saving. Examples: {{first}}",
       "saving": "Saving...",
       "save": "Save",
       "duplicate": "Rule already exists",
@@ -2008,7 +2046,7 @@
         "promptHint": "Copy this prompt and paste it into your offline AI chat along with the exported channel model names JSON. The AI will produce normalization rules in the expected format.",
         "promptCopy": "Copy Prompt",
         "promptCopied": "Copied",
-        "prompt": "You are a model name normalization assistant. I will give you a JSON whose `channels` array contains objects with a `name` field (channel-declared model names, possibly with variants). Analyze these names, find naming variants of the same base model, and produce normalization rules.\n\nRules come in three categories:\n1. router_prefixes: router/platform prefixes at the start of a model name that are unrelated to the underlying model, e.g. \"dmxapi-\", \"agent-\". Each entry must end with a hyphen.\n2. functional_suffixes: functional suffixes at the end of a model name unrelated to the model itself, e.g. \"-cc\", \"-fast\", \"-thinking\". Each entry must start with a hyphen.\n3. explicit_mappings: point-to-point variant→canonical mappings for cases prefix/suffix rules cannot cover, e.g. {\"variant\":\"claude-3.5-sonnet\",\"canonical\":\"claude-3-5-sonnet\"}.\n\nPrinciples:\n- Only merge variants that truly belong to the same base model; avoid false merges (e.g. gpt-4o and gpt-4o-mini are different models and must not be merged).\n- Provider path prefixes (e.g. moonshotai/, @cf/org/) are stripped automatically and need not be listed in router_prefixes.\n- Prefer prefix/suffix rules; use explicit_mappings only when prefix/suffix cannot express the relationship.\n\nOutput ONLY a single JSON object, no explanation, in this format:\n{\n  \"router_prefixes\": [\"...\"],\n  \"functional_suffixes\": [\"...\"],\n  \"explicit_mappings\": [{\"variant\":\"...\",\"canonical\":\"...\"}]\n}"
+        "prompt": "You are a model name normalization assistant. I will give you a JSON whose `channels` array contains objects with a `name` field (channel-declared model names, possibly with variants). Analyze these names, find naming variants of the same base model, and produce normalization rules.\n\nRules come in three categories, produced in the following priority and format:\n\n1. router_prefixes: channel/router prefixes at the start of a model name that are unrelated to the underlying model, e.g. \"dmxapi-\", \"agent-\", \"gateway-\". Each entry must end with a hyphen. For channel marker prefixes like [官B], [特价C] that appear without a following hyphen in channel names (e.g. [官B]claude-opus-4-6), still write them as \"[官B]-\"; the system handles the missing hyphen.\n   Do NOT include provider path prefixes (e.g. moonshotai/, @cf/org/, deepseek-ai/) — paths are stripped automatically, listing them is useless.\n\n2. functional_suffixes: functional suffixes at the end of a model name unrelated to the model itself, e.g. \"-cc\", \"-fast\", \"-thinking\", \"-vip\", \"-ssvip\". Each entry must start with a hyphen.\n   Free-tier markers appear in several forms; emit the matching rule:\n   - hyphen form (e.g. xxx-free) → \"-free\"\n   - colon form (e.g. xxx:free) → \"-:free\"\n   - parenthesized form (e.g. xxx(free)) → \"-(free)\"\n   Date suffixes (e.g. -20250514) should use the regex \"-\\d{8}\" (8 digits), \"-\\d{6}\" (6 digits), \"-\\d{4}\" (4 digits) — do not enumerate one mapping per date. Note: backslashes must be escaped as double backslashes in JSON.\n   @-version form (e.g. claude-3-haiku@20240307) → \"-\\@\\w+\".\n\n3. explicit_mappings: one-to-one variant→canonical mappings, used only when prefix/suffix rules cannot express the relationship (e.g. abbreviations, letter-spelled variants, date+version mixtures). Requirements:\n   - Write `variant` as the bare model name WITHOUT channel prefixes (e.g. \"claude-opus-4-6\", not \"[官B]claude-opus-4-6\"); the system matches any prefix/path automatically.\n   - Use the official dotted version for `canonical` (e.g. \"claude-opus-4.6\", \"gpt-5.2\", \"gemini-3.1-pro\") and keep it consistent across the whole ruleset: all variants of the same model must map to the SAME canonical. Bidirectional/contradictory mappings (e.g. \"claude-opus-4-6 → claude-opus-4.6\" together with \"claude-opus-4.6 → claude-opus-4-6\") break dedup.\n   - Do not put things expressible with prefixes/suffixes (e.g. -thinking, -vip, dates) into explicit mappings; keep the mapping list small.\n\nAnalysis principles:\n- Only merge variants that are truly the same base model; avoid false merges (gpt-4o and gpt-4o-mini are different models; gemini-2.5-pro and gemini-25-pro are different models).\n- Normalize version-number spelling to dots (4-6 → 4.6, v3-1 → v3.1).\n- Prefer prefix/suffix rules; keep explicit mappings minimal.\n\nOutput ONLY a JSON object, no explanation, in this format:\n{\n  \"router_prefixes\": [\"dmxapi-\", \"[官B]-\"],\n  \"functional_suffixes\": [\"-cc\", \"-:free\", \"-(free)\", \"-\\d{8}\", \"-\\@\\w+\"],\n  \"explicit_mappings\": [{\"variant\": \"claude-opus-4-6\", \"canonical\": \"claude-opus-4.6\"}]\n}"
       },
       "export": {
         "title": "Export Channel Model Names",
@@ -2046,7 +2084,9 @@
         "addPrefix": "Add as prefix",
         "addSuffix": "Add as suffix",
         "disclaimer": "Suspected clusters are inferred by prefix/suffix relationships and may include false positives (e.g. gpt-4o vs gpt-4o-mini). Review before adding."
-      }
+      },
+      "clearAll": "Clear all",
+      "clearAllConfirm": "Clear all normalization rules? This cannot be undone."
     },
     "webauthn": {
       "title": "Passkey (WebAuthn)",
@@ -2817,6 +2857,30 @@
       },
       "reasoningChars": "Reasoning",
       "reasoningCharsUnit": " chars"
+    },
+    "view": {
+      "relay": "Relay Logs",
+      "error": "Error Logs"
+    },
+    "errorLog": {
+      "title": "Error Logs",
+      "clear": "Clear",
+      "clearConfirm": "Clear all error logs? This cannot be undone.",
+      "empty": "No error logs yet",
+      "loadMore": "Load more",
+      "filter": {
+        "allSources": "All sources",
+        "backend": "Backend",
+        "frontend": "Frontend",
+        "allLevels": "All levels"
+      },
+      "context": {
+        "request": "Request",
+        "pageUrl": "Page",
+        "route": "Route",
+        "clientIp": "Client IP",
+        "version": "Version"
+      }
     }
   },
   "channel": {
@@ -3551,6 +3615,9 @@
     "oauthLoginBtn": "Authorize",
     "oauthLoginHint": "Click to go to the platform authorization page. An account is created automatically after authorization. You can also paste OAuth JSON manually.",
     "oauthManualPaste": "Paste OAuth JSON manually (optional)",
+    "oauthInitiateFailed": "Failed to start OAuth, please retry",
+    "oauthSuccess": "OAuth authorized, account created",
+    "oauthFailed": "OAuth authorization failed",
     "importAccounts": "Import",
     "import": "Import",
     "importHint": "Paste an array of account JSON objects, each with platform/type/credentials fields.",

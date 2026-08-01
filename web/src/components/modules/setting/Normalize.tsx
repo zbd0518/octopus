@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Wand2, Save, Loader2, Plus, X, Search, CheckCircle2, AlertCircle, Download, Check, ClipboardCopy } from 'lucide-react';
+import { Wand2, Save, Loader2, Plus, X, Search, CheckCircle2, AlertCircle, Download, Check, ClipboardCopy, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -10,7 +10,7 @@ import { Switch } from '@/components/ui/switch';
 import { SettingKey, useSetSetting, useSettingList } from '@/api/endpoints/setting';
 import { useModelChannelList, type LLMChannel } from '@/api/endpoints/model';
 import { toast } from '@/components/common/Toast';
-import { setNormalizeRules, type ExplicitMapping } from '@/components/modules/model/normalize';
+import { setNormalizeRules, normalizeToBase, dotDashKey, type ExplicitMapping } from '@/components/modules/model/normalize';
 import { writeClipboardText } from '@/lib/clipboard';
 import { cn } from '@/lib/utils';
 
@@ -228,12 +228,14 @@ function RuleList({
     items,
     onAdd,
     onRemove,
+    onClearAll,
     addPlaceholder,
     emptyHint,
 }: {
     items: string[];
     onAdd: (value: string) => void;
     onRemove: (index: number) => void;
+    onClearAll: () => void;
     addPlaceholder: string;
     emptyHint: string;
 }) {
@@ -245,6 +247,12 @@ function RuleList({
         if (!v) return;
         onAdd(v);
         setDraft('');
+    };
+
+    const handleClearAll = () => {
+        if (items.length === 0) return;
+        if (!window.confirm(t('normalize.clearAllConfirm'))) return;
+        onClearAll();
     };
 
     return (
@@ -274,6 +282,19 @@ function RuleList({
                     {t('normalize.add')}
                 </Button>
             </div>
+
+            {items.length > 0 && (
+                <div className="flex items-center justify-end">
+                    <button
+                        type="button"
+                        onClick={handleClearAll}
+                        className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                    >
+                        <Trash2 className="size-3" />
+                        {t('normalize.clearAll')}
+                    </button>
+                </div>
+            )}
 
             {items.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
@@ -348,6 +369,31 @@ export function SettingNormalize() {
     const handleRemoveSuffix = (index: number) => setFunctionalSuffixes((prev) => prev.filter((_, i) => i !== index));
 
     const handleSave = async () => {
+        // 先注入编辑态规则（含显式映射），用于下方冲突检测与分析。
+        setNormalizeRules({ routerPrefixes, functionalSuffixes, explicitMappings });
+
+        // 冲突检测：dotDashKey（-/. 统一）后相同的变体不得映射到不同基准名
+        // （如 claude-opus-4-6→claude-opus-4.6 与 claude-opus-4.6→claude-opus-4-6
+        // 是同一模型两种命名，但映射到相反方向，去重失效）。
+        const normToCanonical = new Map<string, string>();
+        const conflicts: string[] = [];
+        for (const m of explicitMappings) {
+            const key = dotDashKey(normalizeToBase(m.variant));
+            if (!key) continue;
+            const canon = m.canonical.toLowerCase().trim();
+            const existing = normToCanonical.get(key);
+            if (existing !== undefined && existing !== canon) {
+                conflicts.push(`${m.variant} → ${m.canonical}`);
+            } else {
+                normToCanonical.set(key, canon);
+            }
+        }
+        if (conflicts.length > 0) {
+            setSaving(false);
+            toast.error(t('normalize.conflict', { count: conflicts.length, first: conflicts.slice(0, 3).join('、') }));
+            return;
+        }
+
         setSaving(true);
         try {
             await setSetting.mutateAsync({ key: SettingKey.ModelNormalizeRouterPrefixes, value: JSON.stringify(routerPrefixes) });
@@ -529,6 +575,7 @@ export function SettingNormalize() {
                     items={routerPrefixes}
                     onAdd={handleAddPrefix}
                     onRemove={handleRemovePrefix}
+                    onClearAll={() => setRouterPrefixes([])}
                     addPlaceholder={t('normalize.routerPrefixes.placeholder')}
                     emptyHint={t('normalize.routerPrefixes.empty')}
                 />
@@ -545,6 +592,7 @@ export function SettingNormalize() {
                     items={functionalSuffixes}
                     onAdd={handleAddSuffix}
                     onRemove={handleRemoveSuffix}
+                    onClearAll={() => setFunctionalSuffixes([])}
                     addPlaceholder={t('normalize.functionalSuffixes.placeholder')}
                     emptyHint={t('normalize.functionalSuffixes.empty')}
                 />
@@ -557,6 +605,20 @@ export function SettingNormalize() {
                     <Badge variant="secondary" className="text-xs">{explicitMappings.length}</Badge>
                 </div>
                 <p className="text-xs leading-5 text-muted-foreground">{t('normalize.explicitMappings.hint')}</p>
+                {explicitMappings.length > 0 && (
+                    <div className="flex items-center justify-end">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (window.confirm(t('normalize.clearAllConfirm'))) setExplicitMappings([]);
+                            }}
+                            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                        >
+                            <Trash2 className="size-3" />
+                            {t('normalize.clearAll')}
+                        </button>
+                    </div>
+                )}
                 {explicitMappings.length > 0 ? (
                     <div className="max-h-56 space-y-1 overflow-y-auto">
                         {explicitMappings.map((m, index) => (

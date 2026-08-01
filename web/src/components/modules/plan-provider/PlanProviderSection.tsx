@@ -42,6 +42,10 @@ import {
 } from '@/api/endpoints/plan-provider';
 import { ProxySelector } from '@/components/modules/proxy-pool/ProxySelector';
 import type { ProxyMode } from '@/api/endpoints/proxy-pool';
+import { useSettingList, SettingKey } from '@/api/endpoints/setting';
+
+// 与后端 model.PlanProviderDeepSeek 对应的类别标识（DeepSeek 专属统计展示）
+const DEEPSEEK_PLAN_CATEGORY = 'deepseek';
 
 // --- Balance Section ---
 
@@ -106,12 +110,23 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
     const [forwardApiKey, setForwardApiKey] = useState('');
     const [customName, setCustomName] = useState('');
     const [mimoAuthMode, setMimoAuthMode] = useState<'passToken' | 'serviceToken'>('serviceToken');
+    // 火山方舟 Agent Plan 凭据方式：Cookie+CSRF / AK/SK（两个条目合并为一个厂商）
+    const [volcengineAuthMode, setVolcengineAuthMode] = useState<'cookie' | 'aksk'>('cookie');
+    // 商汤日日新凭据方式：Bearer Token（手动） / 账号密码（自动登录续期）
+    const [senseNovaAuthMode, setSenseNovaAuthMode] = useState<'token' | 'account'>('token');
+    const [loginUsername, setLoginUsername] = useState('');
+    const [loginPassword, setLoginPassword] = useState('');
     // 智谱团队版组织/项目 ID
     const [teamOrgId, setTeamOrgId] = useState('');
     const [teamProjectId, setTeamProjectId] = useState('');
     // 代理配置（仅 Codex 类展示/提交，chatgpt.com 国内不可直连）
     const [proxyMode, setProxyMode] = useState<ProxyMode>('direct');
     const [proxyConfigId, setProxyConfigId] = useState<number | null>(null);
+    // 自动刷新间隔（分钟），0 = 跟随全局默认
+    const [refreshInterval, setRefreshInterval] = useState(0);
+    // 全局默认刷新间隔（来自设置），用于展示"跟随全局（N 分钟）"
+    const { data: settings } = useSettingList();
+    const globalRefreshMin = Number(settings?.find((s) => s.key === SettingKey.PlanProviderRefreshInterval)?.value) || 30;
     
     // Compact view state with localStorage persistence
     const [compactView, setCompactView] = useState(() => {
@@ -125,14 +140,27 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
     }, [compactView]);
     const isConsoleTokenPlan = selectedCategory === 'stepfun_plan' || selectedCategory === 'sensenova_plan' || selectedCategory === 'mimo_plan' || selectedCategory === 'bailian_plan' || selectedCategory === 'volcengine_plan' || selectedCategory === 'volcengine_plan_ak';
     const isVolcenginePlan = selectedCategory === 'volcengine_plan';
-    const isVolcengineAKSK = selectedCategory === 'volcengine_plan_ak';
+    // AK/SK 条目从厂商下拉隐藏，由凭据方式切换决定实际提交的 category
+    const isVolcengineAKSK = isVolcenginePlan && volcengineAuthMode === 'aksk';
+    const visibleCategories = categories.filter((c) => c.category !== 'volcengine_plan_ak');
     const isZhipuTeam = selectedCategory === 'zhipu_team';
     const isMiMoPlan = selectedCategory === 'mimo_plan';
+    const isSenseNovaPlan = selectedCategory === 'sensenova_plan';
     const isCodexPlan = selectedCategory === 'codex';
     const supportsForwardApiKey = isConsoleTokenPlan && !isMiMoPlan;
+    // 商汤日日新账号密码模式：apiKey 可留空，改填账号密码
+    const useAccountLogin = isSenseNovaPlan && senseNovaAuthMode === 'account';
 
     const handleAdd = useCallback(async () => {
-        if (!selectedCategory || !apiKey.trim()) return;
+        if (!selectedCategory) return;
+        if (useAccountLogin) {
+            if (!loginUsername.trim() || !loginPassword.trim()) {
+                toast.error(t('plan.senseNovaAccountMissing') || '请填写登录账号和密码');
+                return;
+            }
+        } else if (!apiKey.trim()) {
+            return;
+        }
         if (isCodexPlan && proxyMode === 'pool' && !proxyConfigId) {
             toast.error(tProxy('selectRequired'));
             return;
@@ -143,10 +171,13 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
         }
         try {
             await addMutation.mutateAsync({
-                category: selectedCategory,
-                api_key: apiKey.trim(),
+                category: isVolcengineAKSK ? 'volcengine_plan_ak' : selectedCategory,
+                ...(useAccountLogin
+                    ? { api_key: '', login_username: loginUsername.trim(), login_password: loginPassword.trim() }
+                    : { api_key: apiKey.trim() }),
                 forward_api_key: supportsForwardApiKey && forwardApiKey.trim() ? forwardApiKey.trim() : undefined,
                 name: customName.trim() || undefined,
+                refresh_interval_min: refreshInterval,
                 ...(isZhipuTeam
                     ? { team_organization_id: teamOrgId.trim(), team_project_id: teamProjectId.trim() }
                     : {}),
@@ -161,15 +192,20 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
             setForwardApiKey('');
             setCustomName('');
             setMimoAuthMode('serviceToken');
+            setVolcengineAuthMode('cookie');
+            setSenseNovaAuthMode('token');
+            setLoginUsername('');
+            setLoginPassword('');
             setTeamOrgId('');
             setTeamProjectId('');
             setProxyMode('direct');
             setProxyConfigId(null);
+            setRefreshInterval(0);
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : '添加失败';
             toast.error(msg);
         }
-    }, [selectedCategory, apiKey, forwardApiKey, supportsForwardApiKey, customName, addMutation, isCodexPlan, proxyMode, proxyConfigId, tProxy, isZhipuTeam, teamOrgId, teamProjectId, t]);
+    }, [selectedCategory, apiKey, forwardApiKey, supportsForwardApiKey, customName, addMutation, isCodexPlan, proxyMode, proxyConfigId, tProxy, isZhipuTeam, teamOrgId, teamProjectId, t, refreshInterval, useAccountLogin, loginUsername, loginPassword, isVolcengineAKSK]);
 
     const handleRefresh = useCallback(async (id: number) => {
         try {
@@ -196,6 +232,10 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
     }, []);
 
     const selectedInfo = categories.find(c => c.category === selectedCategory);
+    // 火山方舟合并展示：切到 AK/SK 模式时描述换成 AK/SK 条目的说明
+    const selectedInfoDesc = isVolcengineAKSK
+        ? (categories.find(c => c.category === 'volcengine_plan_ak')?.description ?? selectedInfo?.description ?? '')
+        : (selectedInfo?.description ?? '');
 
     return (
         <div className="space-y-4">
@@ -214,7 +254,7 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
                             <span className="hidden sm:inline">{compactView ? '详细' : '极简'}</span>
                         </Button>
                     )}
-                    <Dialog open={addOpen} onOpenChange={(open) => { setAddOpen(open); if (!open) { setMimoAuthMode('serviceToken'); setApiKey(''); } }}>
+                    <Dialog open={addOpen} onOpenChange={(open) => { setAddOpen(open); if (!open) { setMimoAuthMode('serviceToken'); setVolcengineAuthMode('cookie'); setSenseNovaAuthMode('token'); setApiKey(''); setLoginUsername(''); setLoginPassword(''); } }}>
                         <DialogTrigger asChild>
                             <Button size="sm" className="rounded-xl gap-1.5">
                                 <Plus className="size-4" />
@@ -236,7 +276,7 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
                                         <SelectValue placeholder={t('plan.selectProvider') || '选择厂商'} />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        {categories.map((cat) => (
+                                        {visibleCategories.map((cat) => (
                                             <SelectItem key={cat.category} value={cat.category}>
                                                 {cat.name}
                                             </SelectItem>
@@ -245,7 +285,7 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
                                 </Select>
                                 {selectedInfo && (
                                     <p className="text-xs text-muted-foreground">
-                                        {selectedInfo.description}
+                                        {selectedInfoDesc}
                                         {selectedInfo.help_url && (
                                             <a
                                                 href={selectedInfo.help_url}
@@ -262,6 +302,38 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
                             </div>
 
                             <div className="space-y-2">
+                                {isSenseNovaPlan && (
+                                    <div className="space-y-1">
+                                        <label className="text-sm font-medium">
+                                            {t('plan.senseNovaAuthModeLabel') || '凭据方式'}
+                                        </label>
+                                        <Select value={senseNovaAuthMode} onValueChange={(v: string) => { setSenseNovaAuthMode(v as 'token' | 'account'); setApiKey(''); setLoginPassword(''); }}>
+                                            <SelectTrigger className="h-9 text-sm">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="token">Bearer Token（3 小时过期，需手动更换）</SelectItem>
+                                                <SelectItem value="account">{t('plan.senseNovaAuthModeAccount') || '账号密码（自动登录续期）'}</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                )}
+                                {isVolcenginePlan && (
+                                    <div className="space-y-1">
+                                        <label className="text-sm font-medium">
+                                            {t('plan.volcengineAuthModeLabel') || '凭据方式'}
+                                        </label>
+                                        <Select value={volcengineAuthMode} onValueChange={(v: string) => { setVolcengineAuthMode(v as 'cookie' | 'aksk'); setApiKey(''); }}>
+                                            <SelectTrigger className="h-9 text-sm">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="cookie">{t('plan.volcengineAuthModeCookie') || 'Cookie + CSRF Token'}</SelectItem>
+                                                <SelectItem value="aksk">{t('plan.volcengineAuthModeAKSK') || 'AK/SK（AccessKey 签名）'}</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                )}
                                 <label className="text-sm font-medium">
                                     {isMiMoPlan
                                         ? (t('plan.cookieLabel') || 'Cookie')
@@ -284,6 +356,30 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
                                         </Select>
                                     </div>
                                 )}
+                                {isSenseNovaPlan && senseNovaAuthMode === 'account' ? (
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-medium">
+                                            {t('plan.senseNovaUsernameLabel') || '登录账号'}
+                                        </label>
+                                        <Input
+                                            placeholder={t('plan.senseNovaUsernamePlaceholder') || 'platform.sensenova.cn 控制台登录账号（手机号/用户名）'}
+                                            value={loginUsername}
+                                            onChange={(e) => setLoginUsername(e.target.value)}
+                                        />
+                                        <label className="text-sm font-medium">
+                                            {t('plan.senseNovaPasswordLabel') || '登录密码'}
+                                        </label>
+                                        <Input
+                                            type="password"
+                                            placeholder={t('plan.senseNovaPasswordPlaceholder') || '控制台登录密码'}
+                                            value={loginPassword}
+                                            onChange={(e) => setLoginPassword(e.target.value)}
+                                        />
+                                        <p className="text-[11px] leading-tight text-emerald-600">
+                                            {t('plan.senseNovaAccountHint') || '系统自动完成登录并续期控制台 Token（约 3 小时有效期），全程无需手动更换。账号密码 AES 加密存储，仅用于自动登录。'}
+                                        </p>
+                                    </div>
+                                ) : (
                                 <Input
                                     type="password"
                                     placeholder={isMiMoPlan
@@ -293,10 +389,10 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
                                         : isCodexPlan
                                             ? (t('plan.codexOAuthPlaceholder') || '粘贴 OAuth JSON 凭据（含 access_token 和 account_id）')
                                             : isConsoleTokenPlan
-                                                ? (isVolcenginePlan
-                                                    ? (t('plan.volcengineCredentialPlaceholder') || 'Cookie值|||x-csrf-token值（从控制台请求头复制，用竖线分隔）')
-                                                    : isVolcengineAKSK
-                                                        ? (t('plan.volcengineAKSKPlaceholder') || 'AccessKey ID|||Secret Access Key（火山控制面 OpenAPI 签名用，与推理 Key 不同）')
+                                                ? (isVolcengineAKSK
+                                                    ? (t('plan.volcengineAKSKPlaceholder') || 'AccessKey ID|||Secret Access Key（火山控制面 OpenAPI 签名用，与推理 Key 不同）')
+                                                    : isVolcenginePlan
+                                                        ? (t('plan.volcengineCredentialPlaceholder') || 'Cookie值|||x-csrf-token值（从控制台请求头复制，用竖线分隔）')
                                                         : selectedInfo?.category === 'sensenova_plan'
                                                             ? (t('plan.sensenovaTokenPlaceholder') || '粘贴控制台 Bearer Token 值')
                                                             : selectedInfo?.category === 'bailian_plan'
@@ -306,6 +402,7 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
                                     value={apiKey}
                                     onChange={(e) => setApiKey(e.target.value)}
                                 />
+                                )}
                                 {isMiMoPlan && mimoAuthMode === 'passToken' && (
                                     <p className="text-[11px] leading-tight text-red-500">
                                         {t('plan.mimoPassTokenHint') || '⚠️ 安全风险极高：passToken 是小米账号长期会话凭证，可能可以换取小米云、小米社区、MiMo 等任何接入小米账号体系的服务的 Token（未验证）。填入后系统自动通过 SSO 刷新 serviceToken，无需手动更新。'}
@@ -316,12 +413,12 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
                                         {t('plan.mimoServiceTokenHint') || '登录 platform.xiaomimimo.com → F12 → Application → Cookies，复制 api-platform 域下所有 Cookie。有效期约 1 天，过期后需手动更新。'}
                                     </p>
                                 )}
-                                {isConsoleTokenPlan && !isMiMoPlan && (
+                                {isConsoleTokenPlan && !isMiMoPlan && !(isSenseNovaPlan && senseNovaAuthMode === 'account') && (
                                     <p className="text-[11px] leading-tight text-amber-500">
-                                        {isVolcenginePlan
-                                            ? (t('plan.volcengineCredentialHint') || '登录 console.volcengine.com/ark → F12 → Network → 任意 plan 接口，复制完整 Cookie 请求头和 x-csrf-token 请求头，用 ||| 连接。会话过期后需重新获取。')
-                                            : isVolcengineAKSK
-                                                ? (t('plan.volcengineAKSKHint') || '在 console.volcengine.com/iam → 密钥管理 创建 AccessKey ID 与 Secret（与推理 API Key 是两套凭据），用 ||| 连接。系统通过控制面 OpenAPI 签名查询，先查 Agent Plan，无订阅再查 Coding Plan。')
+                                        {isVolcengineAKSK
+                                            ? (t('plan.volcengineAKSKHint') || '在 console.volcengine.com/iam → 密钥管理 创建 AccessKey ID 与 Secret（与推理 API Key 是两套凭据），用 ||| 连接。系统通过控制面 OpenAPI 签名查询，先查 Agent Plan，无订阅再查 Coding Plan。')
+                                            : isVolcenginePlan
+                                                ? (t('plan.volcengineCredentialHint') || '登录 console.volcengine.com/ark → F12 → Network → 任意 plan 接口，复制完整 Cookie 请求头和 x-csrf-token 请求头，用 ||| 连接。会话过期后需重新获取。')
                                                 : selectedInfo?.category === 'bailian_plan'
                                                     ? (t('plan.bailianTokenHint') || '需登录 bailian.console.aliyun.com 控制台，按 F12 打开开发者工具 → Network（网络）→ 刷新页面，点击任意请求，从请求头（Request Headers）复制完整 Cookie 值。会话过期后需重新获取。')
                                                     : selectedInfo?.category === 'sensenova_plan'
@@ -394,10 +491,37 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
                                 />
                             </div>
 
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium">
+                                    {t('plan.refreshInterval') || '自动刷新间隔'}
+                                </label>
+                                <Select
+                                    value={String(refreshInterval)}
+                                    onValueChange={(v) => setRefreshInterval(Number(v))}
+                                >
+                                    <SelectTrigger className="h-9 text-sm">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="0">
+                                            {t('plan.refreshFollowGlobal')?.replace('{minutes}', String(globalRefreshMin)) || `跟随全局（${globalRefreshMin} 分钟）`}
+                                        </SelectItem>
+                                        {[10, 15, 30, 60, 120, 360, 1440].map((m) => (
+                                            <SelectItem key={m} value={String(m)}>
+                                                {t('plan.refreshEvery')?.replace('{minutes}', String(m)) || `每 ${m} 分钟`}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <p className="text-xs text-muted-foreground">
+                                    {t('plan.refreshIntervalHint') || '按此间隔自动查询额度；全局默认可在 Hub 自动化面板调整'}
+                                </p>
+                            </div>
+
                             <Button
                                 className="w-full rounded-xl"
                                 onClick={handleAdd}
-                                disabled={!selectedCategory || !apiKey.trim() || addMutation.isPending}
+                                disabled={!selectedCategory || (useAccountLogin ? (!loginUsername.trim() || !loginPassword.trim()) : !apiKey.trim()) || addMutation.isPending}
                             >
                                 {addMutation.isPending ? (
                                     <>
@@ -459,6 +583,14 @@ const formatBalance = (val: number) => {
     if (val === 0) return '0';
     if (Math.abs(val) < 0.01) return val.toFixed(6);
     return val.toLocaleString(undefined, { maximumFractionDigits: 2 });
+};
+
+// formatTokens 格式化 token 使用量（万/亿中文单位，与 Analytics 页 formatCount 口径一致）。
+const formatTokens = (val: number) => {
+    if (!val) return '0';
+    if (val >= 100_000_000) return `${(val / 100_000_000).toFixed(2)}亿`;
+    if (val >= 10_000) return `${(val / 10_000).toFixed(2)}万`;
+    return val.toLocaleString();
 };
 
 const formatTime = (val: string | null) => {
@@ -619,6 +751,11 @@ function ProviderCard({
                         <Badge variant="outline" className="text-xs shrink-0">
                             {isBalance ? '余额' : '套餐'}
                         </Badge>
+                        {provider.login_configured && (
+                            <Badge className="text-xs shrink-0 bg-emerald-600 hover:bg-emerald-600">
+                                {t('plan.senseNovaAutoLoginBadge') || '自动登录'}
+                            </Badge>
+                        )}
                     </div>
                     <div className="flex items-center gap-2 mt-1">
                         <p className="text-xs text-muted-foreground truncate">
@@ -693,10 +830,12 @@ function ProviderCard({
                     </div>
                     <div className="rounded-lg bg-muted/50 p-2.5">
                         <p className="text-xs text-muted-foreground mb-1">
-                            {t('plan.balanceUsed') || '已用额度'}
+                            {provider.balance_used > 0
+                                ? (t('plan.balanceUsed') || '已用额度')
+                                : (t('plan.totalUsed') || '累计已用')}
                         </p>
                         <p className="text-lg font-bold tabular-nums text-muted-foreground">
-                            {formatBalance(provider.balance_used)}
+                            {formatBalance(provider.balance_used > 0 ? provider.balance_used : provider.total_used)}
                         </p>
                     </div>
                 </div>
@@ -736,6 +875,68 @@ function ProviderCard({
                             className={idx === tiers.length - 1 && tiers.length % 2 === 1 ? 'sm:col-span-2' : undefined}
                         />
                     ))}
+                </div>
+            )}
+
+            {/* 自动刷新间隔 */}
+            <div className="mt-2 flex items-center gap-1 flex-wrap text-[11px] text-muted-foreground">
+                <span>
+                    {t('plan.refreshIntervalShort') || '自动刷新'}：
+                    {provider.refresh_interval_min > 0
+                        ? (t('plan.refreshEvery')?.replace('{minutes}', String(provider.refresh_interval_min)) || `每 ${provider.refresh_interval_min} 分钟`)
+                        : (t('plan.refreshFollowGlobalShort') || '跟随全局')}
+                </span>
+            </div>
+
+            {/* 本次与上次检测之间的消费增量 */}
+            {isBalance && provider.balance_delta > 0 && (
+                <div className="mt-2 rounded-lg bg-muted/50 p-2.5 flex items-center justify-between">
+                    <p className="text-xs text-muted-foreground">{t('plan.deltaSpent') || '上次检测后消耗'}</p>
+                    <p className="text-sm font-semibold tabular-nums text-destructive">
+                        -{formatBalance(provider.balance_delta)}
+                    </p>
+                </div>
+            )}
+            {!isBalance && provider.quota_used_delta > 0 && (
+                <div className="mt-2 rounded-lg bg-muted/50 p-2.5 flex items-center justify-between">
+                    <p className="text-xs text-muted-foreground">{t('plan.deltaSpent') || '上次检测后消耗'}</p>
+                    <p className="text-sm font-semibold tabular-nums text-destructive">
+                        +{formatBalance(provider.quota_used_delta)}
+                    </p>
+                </div>
+            )}
+
+            {/* DeepSeek 专属：通过额度渠道转发的系统内调用统计 */}
+            {provider.category === DEEPSEEK_PLAN_CATEGORY && provider.channel_stats && (
+                <div className="mt-2 rounded-lg bg-muted/50 p-2.5">
+                    <div className="flex items-center justify-between mb-1.5">
+                        <p className="text-xs text-muted-foreground">
+                            {t('plan.sysStats') || 'DeepSeek 额度调用统计'}
+                        </p>
+                        <span className="text-[10px] text-muted-foreground/70">
+                            {provider.channel_stats.source === 'official'
+                                ? (t('plan.sysStatsOfficial') || '官方用量')
+                                : (t('plan.sysStatsLocal') || '本地统计')}
+                        </span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <div>
+                            <p className="text-[11px] text-muted-foreground">{t('plan.sysTotalRequests') || '累计调用'}</p>
+                            <p className="text-sm font-semibold tabular-nums">{provider.channel_stats.total_requests}</p>
+                        </div>
+                        <div>
+                            <p className="text-[11px] text-muted-foreground">{t('plan.sysTotalTokens') || '累计 Token'}</p>
+                            <p className="text-sm font-semibold tabular-nums">{formatTokens(provider.channel_stats.total_tokens)}</p>
+                        </div>
+                        <div>
+                            <p className="text-[11px] text-muted-foreground">{t('plan.sysTodayRequests') || '今日调用'}</p>
+                            <p className="text-sm font-semibold tabular-nums">{provider.channel_stats.today_requests}</p>
+                        </div>
+                        <div>
+                            <p className="text-[11px] text-muted-foreground">{t('plan.sysTodayTokens') || '今日 Token'}</p>
+                            <p className="text-sm font-semibold tabular-nums">{formatTokens(provider.channel_stats.today_tokens)}</p>
+                        </div>
+                    </div>
                 </div>
             )}
 
@@ -780,6 +981,10 @@ function EditCredentialsDialog({
     const [forwardApiKey, setForwardApiKey] = useState('');
     const [teamOrgId, setTeamOrgId] = useState('');
     const [teamProjectId, setTeamProjectId] = useState('');
+    // 商汤日日新凭据方式（默认跟随当前配置：已启用账号密码则切到账号密码模式）
+    const [senseNovaAuthMode, setSenseNovaAuthMode] = useState<'token' | 'account'>('token');
+    const [loginUsername, setLoginUsername] = useState('');
+    const [loginPassword, setLoginPassword] = useState('');
 
     const open = provider !== null;
     const editingId = provider?.id;
@@ -791,8 +996,11 @@ function EditCredentialsDialog({
             setForwardApiKey('');
             setTeamOrgId('');
             setTeamProjectId('');
+            setSenseNovaAuthMode(provider?.login_configured ? 'account' : 'token');
+            setLoginUsername(provider?.login_username || '');
+            setLoginPassword('');
         }
-    }, [editingId]);
+    }, [editingId, provider]);
 
     if (!provider) {
         return (
@@ -808,19 +1016,41 @@ function EditCredentialsDialog({
     const isZhipuTeam = category === 'zhipu_team';
     const isMiMoPlan = category === 'mimo_plan';
     const isCodexPlan = category === 'codex';
+    const isDeepSeek = category === 'deepseek';
     const supportsForwardApiKey = isConsoleTokenPlan && !isMiMoPlan;
 
     const catInfo = categories.find(c => c.category === category);
+    // 商汤日日新账号密码模式：apiKey 可留空，改填账号密码
+    const useAccountLogin = category === 'sensenova_plan' && senseNovaAuthMode === 'account';
 
     const handleSubmit = async () => {
-        if (!apiKey.trim()) return;
+        if (useAccountLogin) {
+            if (!loginUsername.trim() || !loginPassword.trim()) {
+                toast.error(t('plan.senseNovaAccountMissing') || '请填写登录账号和密码');
+                return;
+            }
+        } else if (!apiKey.trim()) {
+            // DeepSeek 账号密码是附加数据源，API key 必须保留（余额查询用）
+            if (isDeepSeek) {
+                toast.error(t('plan.deepSeekApiKeyMissing') || '请填写 API Key（用于余额查询，控制台账号为可选）');
+                return;
+            }
+            return;
+        }
         try {
             await updateMutation.mutateAsync({
                 id: provider.id,
-                api_key: apiKey.trim(),
+                api_key: useAccountLogin ? '' : apiKey.trim(),
                 forward_api_key: supportsForwardApiKey && forwardApiKey.trim() ? forwardApiKey.trim() : undefined,
                 team_organization_id: isZhipuTeam ? teamOrgId.trim() : undefined,
                 team_project_id: isZhipuTeam ? teamProjectId.trim() : undefined,
+                ...(useAccountLogin
+                    ? { login_username: loginUsername.trim(), login_password: loginPassword.trim() }
+                    : isDeepSeek && loginUsername.trim() && loginPassword.trim()
+                        ? { login_username: loginUsername.trim(), login_password: loginPassword.trim() }
+                        // DeepSeek 密码留空视为"不修改账号密码"：不回传 login 字段，
+                        // 后端保留原配置（仅当用户显式清空用户名时才清除）。
+                        : {}),
             });
             toast.success(t('plan.credentialsUpdated') || '凭据已更新');
             onOpenChange(false);
@@ -846,6 +1076,27 @@ function EditCredentialsDialog({
                     </div>
 
                     <div className="space-y-2">
+                        {category === 'sensenova_plan' && (
+                            <div className="space-y-1">
+                                <label className="text-sm font-medium">
+                                    {t('plan.senseNovaAuthModeLabel') || '凭据方式'}
+                                </label>
+                                <Select value={senseNovaAuthMode} onValueChange={(v: string) => { setSenseNovaAuthMode(v as 'token' | 'account'); setApiKey(''); setLoginPassword(''); }}>
+                                    <SelectTrigger className="h-9 text-sm">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="token">Bearer Token（3 小时过期，需手动更换）</SelectItem>
+                                        <SelectItem value="account">{t('plan.senseNovaAuthModeAccount') || '账号密码（自动登录续期）'}</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                {provider.login_configured && senseNovaAuthMode === 'account' && (
+                                    <p className="text-[11px] leading-tight text-emerald-600">
+                                        {t('plan.senseNovaLoginConfiguredHint', { username: provider.login_username || '' })}
+                                    </p>
+                                )}
+                            </div>
+                        )}
                         <label className="text-sm font-medium">
                             {isMiMoPlan
                                 ? (t('plan.cookieLabel') || 'Cookie')
@@ -855,6 +1106,30 @@ function EditCredentialsDialog({
                                         ? (t('plan.consoleTokenLabel') || '控制台 Token')
                                         : (t('plan.apiKeyLabel') || 'API Key')}
                         </label>
+                        {category === 'sensenova_plan' && senseNovaAuthMode === 'account' ? (
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium">
+                                    {t('plan.senseNovaUsernameLabel') || '登录账号'}
+                                </label>
+                                <Input
+                                    placeholder={t('plan.senseNovaUsernamePlaceholder') || 'platform.sensenova.cn 控制台登录账号（手机号/用户名）'}
+                                    value={loginUsername}
+                                    onChange={(e) => setLoginUsername(e.target.value)}
+                                />
+                                <label className="text-sm font-medium">
+                                    {t('plan.senseNovaPasswordLabel') || '登录密码'}
+                                </label>
+                                <Input
+                                    type="password"
+                                    placeholder={t('plan.senseNovaPasswordPlaceholder') || '控制台登录密码'}
+                                    value={loginPassword}
+                                    onChange={(e) => setLoginPassword(e.target.value)}
+                                />
+                                <p className="text-[11px] leading-tight text-emerald-600">
+                                    {t('plan.senseNovaAccountHint') || '系统自动完成登录并续期控制台 Token（约 3 小时有效期），全程无需手动更换。账号密码 AES 加密存储，仅用于自动登录。'}
+                                </p>
+                            </div>
+                        ) : (
                         <Input
                             type="password"
                             placeholder={isMiMoPlan
@@ -875,7 +1150,8 @@ function EditCredentialsDialog({
                             value={apiKey}
                             onChange={(e) => setApiKey(e.target.value)}
                         />
-                        {isConsoleTokenPlan && (
+                        )}
+                        {isConsoleTokenPlan && !(category === 'sensenova_plan' && senseNovaAuthMode === 'account') && (
                             <p className="text-[11px] leading-tight text-amber-500">
                                     {isVolcenginePlan
                                         ? (t('plan.volcengineCredentialHint') || '会话过期后需重新获取 Cookie 和 x-csrf-token。')
@@ -887,6 +1163,28 @@ function EditCredentialsDialog({
                                                     ? (t('plan.sensenovaTokenHint') || 'Token 有效期约 3 小时，过期后需重新获取。')
                                                     : (t('plan.oasisTokenHint') || 'Oasis-Token 有效期约 30 分钟，过期后需重新获取。')}
                             </p>
+                        )}
+                        {isDeepSeek && (
+                            <div className="space-y-2 pt-2 border-t border-border/40">
+                                <label className="text-sm font-medium">
+                                    {t('plan.deepSeekAccountLabel') || '控制台账号（可选，用于官方用量统计）'}
+                                </label>
+                                <Input
+                                    type="text"
+                                    placeholder={t('plan.deepSeekAccountPlaceholder') || 'platform.deepseek.com 登录手机号'}
+                                    value={loginUsername}
+                                    onChange={(e) => setLoginUsername(e.target.value)}
+                                />
+                                <Input
+                                    type="password"
+                                    placeholder={t('plan.deepSeekPasswordPlaceholder') || '控制台登录密码'}
+                                    value={loginPassword}
+                                    onChange={(e) => setLoginPassword(e.target.value)}
+                                />
+                                <p className="text-[11px] leading-tight text-muted-foreground">
+                                    {t('plan.deepSeekAccountHint') || '配置后系统自动登录控制台，把卡片统计切换为官方 token 用量（覆盖账号下所有 API key 的调用，比本地转发统计更准确）。账号密码 AES 加密存储；不填则继续使用本地统计。'}
+                                </p>
+                            </div>
                         )}
                         {isCodexPlan && (
                             <p className="text-[11px] leading-tight text-amber-500">
@@ -938,7 +1236,7 @@ function EditCredentialsDialog({
                     <Button
                         className="w-full rounded-xl"
                         onClick={handleSubmit}
-                        disabled={!apiKey.trim() || updateMutation.isPending}
+                        disabled={(useAccountLogin ? (!loginUsername.trim() || !loginPassword.trim()) : !apiKey.trim()) || updateMutation.isPending}
                     >
                         {updateMutation.isPending ? (
                             <>

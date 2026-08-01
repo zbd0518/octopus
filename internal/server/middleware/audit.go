@@ -48,6 +48,7 @@ var auditedManagementWriteRoutes = map[string]struct{}{
 	"DELETE /api/v1/group/delete/:id":                                                {},
 	"DELETE /api/v1/log/clear":                                                       {},
 	"DELETE /api/v1/log/clear-contents":                                              {},
+	"DELETE /api/v1/error-log/clear":                                                 {},
 	"POST /api/v1/model/create":                                                      {},
 	"POST /api/v1/model/delete":                                                      {},
 	"POST /api/v1/model/update":                                                      {},

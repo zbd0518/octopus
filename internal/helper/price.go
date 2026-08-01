@@ -15,7 +15,9 @@ func LLMPriceAddToDB(modelNames []string, ctx context.Context) error {
 		if modelName == "" {
 			continue
 		}
-		modelPrice := price.GetLLMPrice(modelName)
+		// 仅从同步价格源（外部价格文件 + 托底价格）查找，外部命中用外部价，
+		// 未命中回落托底价，仍未命中写 0（model.LLMPrice 零值）。
+		modelPrice := price.GetLLMPriceFromUpstream(modelName)
 		if modelPrice != nil {
 			newLLMInfos = append(newLLMInfos, model.LLMInfo{
 				Name:     modelName,
@@ -64,8 +66,16 @@ func LLMPriceRefreshExistingModels(ctx context.Context) error {
 
 	updates := make([]model.LLMInfo, 0, len(models))
 	for _, existing := range models {
-		modelPrice := price.GetLLMPrice(existing.Name)
+		// 仅从同步价格源（外部价格文件 + 托底价格）查找，跳过 DB 旧值，
+		// 确保"同步价格"真正生效：外部命中用外部价，未命中回落托底价。
+		modelPrice := price.GetLLMPriceFromUpstream(existing.Name)
 		if modelPrice == nil {
+			// 外部与托底价格均未命中：写 0（已为 0 则跳过，避免无谓更新）。
+			if existing.Input == 0 && existing.Output == 0 &&
+				existing.CacheRead == 0 && existing.CacheWrite == 0 {
+				continue
+			}
+			updates = append(updates, model.LLMInfo{Name: existing.Name})
 			continue
 		}
 		if existing.Input == modelPrice.Input &&

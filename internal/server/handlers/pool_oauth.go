@@ -20,16 +20,17 @@ import (
 	"github.com/lingyuins/octopus/internal/pkg/oauth"
 	"github.com/lingyuins/octopus/internal/pkg/openai"
 	"github.com/lingyuins/octopus/internal/pkg/xai"
+	"github.com/lingyuins/octopus/internal/server/middleware"
 	"github.com/lingyuins/octopus/internal/server/router"
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
 // OAuth 回调端点不挂 Auth middleware：回调阶段用 state/session 校验。
-// initiate 阶段需要登录态（由调用方在前端鉴权后请求），这里仍要求 Auth 以保护 initiate。
+// initiate 阶段需要登录态：前端先通过管理 API（带 JWT）发起，这里挂 Auth 保护。
 func init() {
 	router.NewGroupRouter("/api/v1/pool/oauth").
 		AddRoute(
-			router.NewRoute("/initiate", http.MethodGet).Handle(oauthInitiate),
+			router.NewRoute("/initiate", http.MethodGet).Use(middleware.Auth()).Handle(oauthInitiate),
 		).
 		AddRoute(
 			router.NewRoute("/callback", http.MethodGet).Handle(oauthCallback),
@@ -209,7 +210,7 @@ func oauthCallback(c *gin.Context) {
 	platform := c.Query("platform")
 
 	if code == "" || state == "" {
-		oauthRedirectResult(c, false, "missing code or state")
+		oauthRedirectResult(c, false, 0, "missing code or state")
 		return
 	}
 
@@ -228,17 +229,34 @@ func oauthCallback(c *gin.Context) {
 	case model.PoolPlatformGrok:
 		poolID, credJSON, expiresAt, err = handleGrokCallback(c.Request.Context(), sessionID, state, code)
 	default:
-		oauthRedirectResult(c, false, "unsupported platform: "+platform)
+		oauthRedirectResult(c, false, 0, "unsupported platform: "+platform)
 		return
 	}
 
 	if err != nil {
 		log.Warnf("oauth callback %s failed: %v", platform, err)
-		oauthRedirectResult(c, false, err.Error())
+		oauthRedirectResult(c, false, 0, err.Error())
 		return
 	}
 
-	// 创建号池账号。
+	// 去重：同一平台账号指纹（openai account_id / JWT sub）已存在时复用并更新令牌，
+	// 避免同一账号重复授权在号池里生成重复账号。
+	cred := model.ParsePoolCredential(credJSON)
+	existingID, err := findExistingOAuthAccount(poolID, platform, cred)
+	if err != nil {
+		oauthRedirectResult(c, false, poolID, "dedupe lookup failed: "+err.Error())
+		return
+	}
+	if existingID > 0 {
+		if err := refreshExistingOAuthAccount(poolID, existingID, credJSON, expiresAt); err != nil {
+			oauthRedirectResult(c, false, poolID, "update account failed: "+err.Error())
+			return
+		}
+		oauthRedirectResult(c, true, poolID, strconv.Itoa(existingID))
+		return
+	}
+
+	// 新建号池账号。
 	acct := model.PoolAccount{
 		PoolID:         poolID,
 		Name:           fmt.Sprintf("%s-oauth-%d", platform, time.Now().Unix()),
@@ -250,10 +268,102 @@ func oauthCallback(c *gin.Context) {
 		TokenExpiresAt: expiresAt,
 	}
 	if err := pool.CreateAccount(&acct); err != nil {
-		oauthRedirectResult(c, false, "create account failed: "+err.Error())
+		oauthRedirectResult(c, false, poolID, "create account failed: "+err.Error())
 		return
 	}
-	oauthRedirectResult(c, true, strconv.Itoa(acct.ID))
+	oauthRedirectResult(c, true, poolID, strconv.Itoa(acct.ID))
+}
+
+// oauthAccountKey 计算 OAuth 账号的稳定指纹，用于号池内去重。
+// openai 使用 chatgpt_account_id；anthropic/gemini/grok 优先取 id_token 的 sub，
+// 其次 access_token 的 sub（anthropic 的 access_token 为 JWT）。
+// 无法确定标识时返回空串，调用方据此跳过去重（避免误合并）。
+func oauthAccountKey(platform string, cred model.PoolCredential) string {
+	switch platform {
+	case model.PoolPlatformOpenAI:
+		return cred.AccountID
+	case model.PoolPlatformAnthropic, model.PoolPlatformGemini, model.PoolPlatformGrok:
+		for _, token := range []string{cred.IDToken, cred.AccessToken} {
+			if sub := decodeJWTClaim(token, "sub"); sub != "" {
+				return sub
+			}
+		}
+	}
+	return ""
+}
+
+// findExistingOAuthAccount 在同 pool 内查找与本次授权同平台、同账号指纹的 oauth 账号。
+// 返回账号 ID；无指纹或未找到返回 0。
+func findExistingOAuthAccount(poolID int, platform string, cred model.PoolCredential) (int, error) {
+	key := oauthAccountKey(platform, cred)
+	if key == "" {
+		return 0, nil
+	}
+	accounts, err := pool.ListAccounts(poolID)
+	if err != nil {
+		return 0, err
+	}
+	for i := range accounts {
+		acct := accounts[i]
+		if acct.Platform != platform || acct.Type != model.PoolTypeOAuth {
+			continue
+		}
+		if err := pool.DecryptAccountCredentials(&acct); err != nil {
+			continue
+		}
+		existingCred := model.ParsePoolCredential(acct.Credentials)
+		if oauthAccountKey(platform, existingCred) == key {
+			return acct.ID, nil
+		}
+	}
+	return 0, nil
+}
+
+// refreshExistingOAuthAccount 复用已有账号：更新凭据/过期时间并复位状态，
+// 同时清除刷新失败退避（授权成功视为账号恢复）。
+func refreshExistingOAuthAccount(poolID, accountID int, credJSON string, expiresAt int64) error {
+	updates := map[string]interface{}{
+		"credentials":      pool.EncryptCredentials(credJSON),
+		"token_expires_at": expiresAt,
+		"status":           "active",
+		"schedulable":      true,
+		"error_message":    "",
+	}
+	if acct, err := pool.GetAccount(poolID, accountID); err == nil {
+		var extra model.PoolAccountExtra
+		if json.Unmarshal([]byte(acct.Extra), &extra) == nil &&
+			(extra.RefreshFailureCount != 0 || extra.NextRefreshAllowedAt != 0) {
+			extra.RefreshFailureCount = 0
+			extra.NextRefreshAllowedAt = 0
+			if b, err := json.Marshal(extra); err == nil {
+				updates["extra"] = string(b)
+			}
+		}
+	}
+	return pool.UpdateAccount(poolID, accountID, updates)
+}
+
+// decodeJWTClaim 从 JWT payload 中提取指定 claim（仅支持字符串值）。
+func decodeJWTClaim(token, claim string) string {
+	if token == "" {
+		return ""
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	payload, err := base64URLDecode(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims map[string]interface{}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+	if v, ok := claims[claim].(string); ok {
+		return v
+	}
+	return ""
 }
 
 // handleAnthropicCallback 处理 Anthropic OAuth 回调：校验 session，code exchange。
@@ -453,8 +563,8 @@ func base64URLDecode(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
 }
 
-// oauthRedirectResult 302 回前端 /pool?oauth=success|error。
-func oauthRedirectResult(c *gin.Context, success bool, msg string) {
+// oauthRedirectResult 302 回前端 /pool?oauth=success|error&pool_id=N&msg=...。
+func oauthRedirectResult(c *gin.Context, success bool, poolID int, msg string) {
 	base := strings.TrimRight(strings.TrimSpace(conf.AppConfig.Server.ExternalURL), "/")
 	if base == "" {
 		// 回退到请求 Host。
@@ -468,6 +578,6 @@ func oauthRedirectResult(c *gin.Context, success bool, msg string) {
 	if !success {
 		status = "error"
 	}
-	location := fmt.Sprintf("%s/pool?oauth=%s&msg=%s", base, status, url.QueryEscape(msg))
+	location := fmt.Sprintf("%s/pool?oauth=%s&pool_id=%d&msg=%s", base, status, poolID, url.QueryEscape(msg))
 	c.Redirect(http.StatusFound, location)
 }

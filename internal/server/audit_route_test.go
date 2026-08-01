@@ -25,6 +25,7 @@ var exemptFromAudit = map[string]string{
 	"POST /api/v1/webauthn/login/begin":         "authentication — passkey challenge issuance, no user yet",
 	"POST /api/v1/webauthn/login/finish":        "authentication — passkey assertion, the binding is audited at register/finish",
 	"POST /api/v1/webauthn/register/begin":      "no state change — challenge issuance only; credential binding audited at register/finish",
+	"POST /api/v1/error-log/report":             "frontend crash reporting — high-frequency, low-value writes; auditing every report would flood the log (rate-limited per user)",
 }
 
 // TestAllManagementWriteRoutesAreAudited verifies that every registered

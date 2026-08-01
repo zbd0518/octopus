@@ -47,8 +47,9 @@ const CACHE_TTL_OPTIONS: AnalyticsCacheTtl[] = ['10s', '30s', '1m', 'off'];
 export function Analytics() {
     const t = useTranslations('analytics');
     const opsT = useTranslations('ops');
-    const [activeTab, setActiveTab] = useState<AnalyticsTab>('channel-model');
     const { orderedTabs, visibleTabs } = useSubTabStore((s) => s.analytics);
+    // 默认显示显示顺序中的第一个子标签（用户可在外观设置中拖拽排序/隐藏）
+    const [activeTab, setActiveTab] = useState<AnalyticsTab>(() => (visibleTabs[0] as AnalyticsTab) ?? 'channel-model');
 
     useEffect(() => {
         if (visibleTabs.length > 0 && !visibleTabs.includes(activeTab)) {

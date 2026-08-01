@@ -26,9 +26,6 @@ jobs:
       - name: Ensure static/out exists
         run: mkdir -p static/out && touch static/out/.keep
 
-      - name: Go compile check
-        run: go test -run=TestNoSuchTest ./...
-
       - name: Go test
         run: go test ./...
 

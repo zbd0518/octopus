@@ -11,6 +11,7 @@ import (
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/modelnormalize"
 	"github.com/lingyuins/octopus/internal/op/setting"
+	"golang.org/x/sync/singleflight"
 )
 
 type modelMarketStatsAggregate struct {
@@ -37,6 +38,11 @@ var marketCache struct {
 
 const marketCacheTTL = 5 * time.Second
 
+// marketSingleFlight 合并缓存 miss 时的并发重算：模型广场多个客户端/轮询
+// 同时请求时，只让一个请求真正执行 DB 查询与聚合，其余等待共享结果，
+// 避免在 SQLite 单连接 + 写任务竞争下并发放大延迟（网关 504 的候选成因）。
+var marketSingleFlight singleflight.Group
+
 // ModelMarketInvalidateCache forces the next ModelMarketGet call to recompute.
 func ModelMarketInvalidateCache() {
 	marketCache.mu.Lock()
@@ -54,29 +60,36 @@ func ModelMarketGet(ctx context.Context, lastUpdateTime time.Time) (model.ModelM
 	}
 	marketCache.mu.RUnlock()
 
-	models, err := LLMList(ctx)
+	// 缓存 miss：合并并发重算，避免多请求各自全量执行（DB 查询 + 聚合）。
+	result, err, _ := marketSingleFlight.Do("market", func() (any, error) {
+		models, err := LLMList(ctx)
+		if err != nil {
+			return model.ModelMarketResponse{}, err
+		}
+
+		modelChannels, err := ChannelLLMList(ctx)
+		if err != nil {
+			return model.ModelMarketResponse{}, err
+		}
+
+		items, summary := buildModelMarket(models, modelChannels, channelCache.GetAll(), StatsModelList(), lastUpdateTime)
+		resp := model.ModelMarketResponse{
+			Summary: summary,
+			Items:   items,
+		}
+
+		// Store in cache.
+		marketCache.mu.Lock()
+		marketCache.result = resp
+		marketCache.expiresAt = time.Now().Add(marketCacheTTL)
+		marketCache.mu.Unlock()
+
+		return resp, nil
+	})
 	if err != nil {
 		return model.ModelMarketResponse{}, err
 	}
-
-	modelChannels, err := ChannelLLMList(ctx)
-	if err != nil {
-		return model.ModelMarketResponse{}, err
-	}
-
-	items, summary := buildModelMarket(models, modelChannels, channelCache.GetAll(), StatsModelList(), lastUpdateTime)
-	resp := model.ModelMarketResponse{
-		Summary: summary,
-		Items:   items,
-	}
-
-	// Store in cache.
-	marketCache.mu.Lock()
-	marketCache.result = resp
-	marketCache.expiresAt = time.Now().Add(marketCacheTTL)
-	marketCache.mu.Unlock()
-
-	return resp, nil
+	return result.(model.ModelMarketResponse), nil
 }
 
 func buildModelMarket(

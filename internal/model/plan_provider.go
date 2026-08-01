@@ -59,7 +59,7 @@ var PlanProviderCategories = []PlanProviderCategoryInfo{
 		Name:        "DeepSeek",
 		Type:        PlanProviderTypeBalance,
 		BaseURL:     "https://api.deepseek.com/v1",
-		Models:      "deepseek-chat,deepseek-reasoner",
+		Models:      "deepseek-v4-flash,deepseek-v4-pro",
 		Description: "DeepSeek 官方 API 余额查询",
 		HelpURL:     "https://platform.deepseek.com/api_keys",
 	},
@@ -239,8 +239,14 @@ type PlanProvider struct {
 	// 请求头 bigmodel-organization / bigmodel-project，与 API Key 三者配对。
 	TeamOrganizationID string `json:"team_organization_id" gorm:"default:''"`
 	TeamProjectID      string `json:"team_project_id" gorm:"default:''"`
-	BaseURL            string `json:"base_url" gorm:"not null"`
-	ChannelID          int    `json:"channel_id" gorm:"not null;default:0;index"`
+	// LoginUsername / LoginPasswordEnc 仅 sensenova_plan 使用（可选）：
+	// 配置商汤控制台账号密码后，系统自动完成 OIDC 登录并续期控制台 Bearer Token，
+	// 无需每 3 小时手动更换 Token（APIKey 字段保存当前有效的 access_token）。
+	LoginUsername    string `json:"login_username" gorm:"default:''"`
+	LoginPasswordEnc string `json:"-" gorm:"default:''"` // AES 加密的登录密码，不回传前端
+	RefreshTokenEnc  string `json:"-" gorm:"default:''"` // AES 加密的 OIDC refresh_token，不回传前端
+	BaseURL          string `json:"base_url" gorm:"not null"`
+	ChannelID        int    `json:"channel_id" gorm:"not null;default:0;index"`
 	// 代理配置：目前仅 Codex 类厂商（chatgpt.com 国内不可直连）使用，
 	// 与 Channel/Site 的代理模型一致；其他厂商默认 direct。
 	ProxyMode     ProxyUsageMode `json:"proxy_mode" gorm:"type:varchar(16);not null;default:'direct'"`
@@ -258,10 +264,31 @@ type PlanProvider struct {
 	FiveHourTotal   float64    `json:"five_hour_total" gorm:"default:0"`
 	FiveHourUsed    float64    `json:"five_hour_used" gorm:"default:0"`
 	FiveHourResetAt *time.Time `json:"five_hour_reset_at"`
-	Status          string     `json:"status" gorm:"type:varchar(32);not null;default:'active'"`
-	LastRefresh     *time.Time `json:"last_refresh"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	// RefreshIntervalMin 自动刷新间隔（分钟），0 表示跟随全局默认设置
+	// SettingKeyPlanProviderRefreshInterval。
+	RefreshIntervalMin int `json:"refresh_interval_min" gorm:"not null;default:0"`
+	// LastBalance / LastQuotaUsed 上次刷新时的快照，用于计算本次与上次检测之间的消费增量
+	// （balance 类用 LastBalance，tokenplan 类用 LastQuotaUsed）。
+	LastBalance   float64 `json:"last_balance" gorm:"default:0"`
+	LastQuotaUsed float64 `json:"last_quota_used" gorm:"default:0"`
+	// TotalUsed 累计已用额度（balance 类）：从启用记账起，每次检测的消费增量
+	// （max(0, 上次余额 − 本次余额)）逐次累加。DeepSeek 等接口不提供已用量的厂商
+	// 用它补足"已用额度"展示；充值导致的负增量不累加。
+	TotalUsed   float64    `json:"total_used" gorm:"default:0"`
+	Status      string     `json:"status" gorm:"type:varchar(32);not null;default:'active'"`
+	LastRefresh *time.Time `json:"last_refresh"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+// PlanChannelStats 额度监控渠道的系统内调用统计（来自 relay stats）
+type PlanChannelStats struct {
+	TotalRequests int64 `json:"total_requests"` // 累计调用量（成功+失败）
+	TotalTokens   int64 `json:"total_tokens"`   // 累计 token 使用量（输入+输出）
+	TodayRequests int64 `json:"today_requests"` // 今日调用量
+	TodayTokens   int64 `json:"today_tokens"`   // 今日 token 使用量
+	// Source 数据来源：official（DeepSeek 控制台官方 usage）| local（本地 relay stats）
+	Source string `json:"source,omitempty"`
 }
 
 // PlanProviderListItem 列表响应
@@ -270,4 +297,12 @@ type PlanProviderListItem struct {
 	Models         string `json:"models"`       // 从 Channel 继承的模型
 	ChannelName    string `json:"channel_name"` // 关联渠道名称
 	ChannelEnabled bool   `json:"channel_enabled"`
+	// LoginConfigured 是否已配置账号密码自动登录（sensenova_plan 等支持账号登录的厂商）
+	LoginConfigured bool `json:"login_configured"`
+	// BalanceDelta 上次刷新到本次刷新之间的余额减少额（balance 类，充值导致的负值按 0）
+	BalanceDelta float64 `json:"balance_delta"`
+	// QuotaUsedDelta 上次刷新到本次刷新之间已用额度的增量（tokenplan 类，周期重置导致的负值按 0）
+	QuotaUsedDelta float64 `json:"quota_used_delta"`
+	// ChannelStats 关联渠道的系统内调用统计（nil 表示无关联渠道）
+	ChannelStats *PlanChannelStats `json:"channel_stats,omitempty"`
 }

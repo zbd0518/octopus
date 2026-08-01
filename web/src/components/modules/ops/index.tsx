@@ -24,7 +24,8 @@ const TAB_LABEL_KEY: Record<OpsTab, string> = {
 export function Ops() {
     const t = useTranslations('ops');
     const { orderedTabs, visibleTabs } = useSubTabStore((s) => s.ops);
-    const [activeTab, setActiveTab] = useState<OpsTab>('telemetry');
+    // 默认显示显示顺序中的第一个子标签（用户可在外观设置中拖拽排序/隐藏）
+    const [activeTab, setActiveTab] = useState<OpsTab>(() => (visibleTabs[0] as OpsTab) ?? 'telemetry');
 
     // 当可见列表变化且当前 tab 被隐藏时，回退到第一个可见 tab
     useEffect(() => {

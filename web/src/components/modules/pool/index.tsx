@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
 import { Layers, Plus, Trash2, ChevronLeft, Pencil, FlaskConical, RefreshCw, KeyRound, Upload, Download, RotateCcw as RecoverIcon, Clock as TempUnschedIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -60,6 +60,21 @@ function PoolList({ onSelect }: { onSelect: (pool: AccountPool) => void }) {
     const deletePool = useDeletePool();
     const [dialogOpen, setDialogOpen] = useState(false);
     const [form, setForm] = useState({ name: '', description: '', strategy: 'ewma', default_concurrency: 1, cooldown_base_sec: 300 });
+
+    // OAuth 授权回跳：URL 带 pool_id 时自动选中对应池子（后端 302 到 /pool?oauth=...&pool_id=N）。
+    // 等待池子列表加载完成后处理一次并清理参数。
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const params = new URLSearchParams(window.location.search);
+        const poolIdStr = params.get('pool_id');
+        if (!poolIdStr) return;
+        if (!pools) return; // 列表未加载，等数据到达后再处理
+        const url = new URL(window.location.href);
+        url.searchParams.delete('pool_id');
+        window.history.replaceState({}, '', url.toString());
+        const target = pools.find((p) => p.id === Number(poolIdStr));
+        if (target) onSelect(target);
+    }, [pools, onSelect]);
 
     if (isLoading) return <LoadingState />;
     if (error) return <ErrorState message={String(error)} />;

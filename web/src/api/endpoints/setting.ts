@@ -43,6 +43,7 @@ export const SettingKey = {
     PoolHealthCheckFailThreshold: 'pool_health_check_fail_threshold',
     PoolTokenRefreshInterval: 'pool_token_refresh_interval',
     PoolQuotaSyncInterval: 'pool_quota_sync_interval',
+    PlanProviderRefreshInterval: 'plan_provider_refresh_interval',
     RelayMaxTotalAttempts: 'relay_max_total_attempts',
     RetryEmptyOutput: 'retry_empty_output',
     RateLimitHoldEnabled: 'rate_limit_hold_enabled',

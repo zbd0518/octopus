@@ -360,6 +360,42 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 		updates.Proxy = tmp.Proxy
 		updates.ChannelProxy = tmp.ChannelProxy
 	}
+	if req.AutoSync != nil {
+		selectFields = append(selectFields, "auto_sync")
+		updates.AutoSync = *req.AutoSync
+	}
+	if req.SkipModelTest != nil {
+		selectFields = append(selectFields, "skip_model_test")
+		updates.SkipModelTest = *req.SkipModelTest
+	}
+	if req.Disposable != nil {
+		selectFields = append(selectFields, "disposable")
+		updates.Disposable = *req.Disposable
+	}
+	if req.ExpireAt != nil {
+		selectFields = append(selectFields, "expire_at")
+		updates.ExpireAt = req.ExpireAt
+	}
+	if req.NotifChannelID != nil {
+		selectFields = append(selectFields, "notif_channel_id")
+		updates.NotifChannelID = req.NotifChannelID
+	}
+	if req.KeySelectionStrategy != nil {
+		selectFields = append(selectFields, "key_selection_strategy")
+		updates.KeySelectionStrategy = *req.KeySelectionStrategy
+	}
+	if req.AutoGroup != nil {
+		selectFields = append(selectFields, "auto_group")
+		updates.AutoGroup = *req.AutoGroup
+	}
+	if req.CustomHeader != nil {
+		selectFields = append(selectFields, "custom_header")
+		updates.CustomHeader = *req.CustomHeader
+	}
+	if req.PoolID != nil {
+		selectFields = append(selectFields, "pool_id")
+		updates.PoolID = *req.PoolID
+	}
 	if req.ParamOverride != nil {
 		selectFields = append(selectFields, "param_override")
 		updates.ParamOverride = req.ParamOverride

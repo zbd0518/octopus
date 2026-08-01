@@ -70,6 +70,7 @@ func TestViewerRoleDowngradeInvalidatesWriteAccessAcrossHandlers(t *testing.T) {
 		{name: "group test", method: http.MethodPost, target: "/api/v1/group/test", body: `{}`, contentType: "application/json"},
 		{name: "log clear", method: http.MethodDelete, target: "/api/v1/log/clear"},
 		{name: "log clear contents", method: http.MethodDelete, target: "/api/v1/log/clear-contents"},
+		{name: "error log clear", method: http.MethodDelete, target: "/api/v1/error-log/clear"},
 		{name: "model price update", method: http.MethodPost, target: "/api/v1/model/update-price", body: `{}`, contentType: "application/json"},
 		{name: "ai route generate", method: http.MethodPost, target: "/api/v1/route/ai-generate", body: `{}`, contentType: "application/json"},
 		{name: "core update", method: http.MethodPost, target: "/api/v1/update"},

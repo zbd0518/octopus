@@ -50,6 +50,9 @@ issue:
     question: "lingyuins"
 
   # label → 自动回复模板（参考 xuexb replyNeedDemo）
+  # 注意：workflow 仅监听 issue opened（创建时触发一次），不再监听 labeled，
+  # 因此此映射当前不生效。如需启用，需在 issue-bot.yml 的 issues.types 恢复
+  # "labeled"（会同时导致 bot 自打标签时重复触发，请权衡）。
   label_to_reply:
     # need-demo: "hi @{author}，请提供一个最小可复现示例。"
     # need-update: "hi @{author}，请更新并补充更多信息。"

@@ -679,29 +679,6 @@ def on_issue_opened(payload):
                 assign_issue(number, assignee)
 
 
-def on_issue_labeled(payload):
-    """Issue 被打标签时触发（参考 xuexb replyNeedDemo + autoAssign）"""
-    issue = payload["issue"]
-    number = issue["number"]
-    author = issue["user"]["login"]
-    label = payload["label"]["name"]
-
-    issue_cfg = CFG.get("issue", {})
-
-    # label → 自动回复（参考 xuexb replyNeedDemo）
-    reply_map = issue_cfg.get("label_to_reply", {})
-    comment_tpl = reply_map.get(label)
-    if comment_tpl:
-        comment = comment_tpl.format(author=author)
-        comment_issue(number, comment)
-
-    # label → assignee（参考 xuexb autoAssign）
-    assign_map = issue_cfg.get("label_to_assignee", {})
-    assignee = assign_map.get(label)
-    if assignee:
-        assign_issue(number, assignee)
-
-
 # ============================================================
 # Pull Request 模块（参考 xuexb src/modules/pull_request/）
 # ============================================================
@@ -871,12 +848,10 @@ def main():
 
     print(f"🎬 Event: {event_name}" + (f" / {action}" if action else ""))
 
-    # Issue 事件
+    # Issue 事件（仅 opened：workflow 不再监听 labeled，避免 bot 自触发重复执行）
     if event_name == "issues":
         if action == "opened":
             on_issue_opened(event)
-        elif action == "labeled":
-            on_issue_labeled(event)
 
     # PR 事件
     elif event_name in ("pull_request", "pull_request_target"):

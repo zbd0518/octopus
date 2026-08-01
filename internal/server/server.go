@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lingyuins/octopus/internal/conf"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/op/errorlog"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	_ "github.com/lingyuins/octopus/internal/server/handlers"
 	"github.com/lingyuins/octopus/internal/server/middleware"
@@ -40,6 +42,26 @@ func Start() error {
 	// 否则日志/限流/白名单看到的都是网关地址（如 Docker 的 172.17.0.1）。
 	_ = setTrustedProxies(r)
 	r.Use(gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
+		// 记录崩溃详情（值 + 完整堆栈 + 请求信息）到错误日志与系统日志，
+		// 便于排障"后端突然崩溃"。recovered 可能是 error / string / 任意值。
+		stack := string(debug.Stack())
+		message := truncateRunes(fmt.Sprint(recovered), 8192)
+		stack = truncateRunes(stack, 65536)
+		entry := model.ErrorLog{
+			Source:        "backend",
+			Level:         "panic",
+			Message:       message,
+			Stack:         stack,
+			RequestMethod: c.Request.Method,
+			RequestPath:   c.Request.URL.Path,
+			ClientIP:      c.ClientIP(),
+			UserAgent:     c.Request.UserAgent(),
+			Version:       conf.Version,
+		}
+		if err := errorlog.Add(c.Request.Context(), entry); err != nil {
+			log.Errorf("failed to record panic error log: %v", err)
+		}
+		log.Errorf("panic recovered: %v\n%s", recovered, stack)
 		resp.Error(c, http.StatusInternalServerError, resp.ErrInternalServer)
 		c.Abort()
 	}))
@@ -72,7 +94,7 @@ func Start() error {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Errorf("http server panic recovered: %v", r)
+				log.Errorf("http server panic recovered: %v\n%s", r, string(debug.Stack()))
 			}
 		}()
 		if err := httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -138,6 +160,18 @@ func ListenSignal() {
 	if err := Close(); err != nil {
 		log.Errorf("shutdown error: %v", err)
 	}
+}
+
+// truncateRunes 按 rune 截断字符串，避免按字节截断切坏 UTF-8 多字节字符。
+func truncateRunes(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) > max {
+		runes = runes[:max]
+	}
+	return string(runes)
 }
 
 func resolveLocalStaticDir() (string, bool) {

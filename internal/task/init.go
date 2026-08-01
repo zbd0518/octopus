@@ -7,6 +7,7 @@ import (
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/backup"
+	"github.com/lingyuins/octopus/internal/op/errorlog"
 	porop "github.com/lingyuins/octopus/internal/op/pool"
 	"github.com/lingyuins/octopus/internal/op/ratelimitstore"
 	"github.com/lingyuins/octopus/internal/op/relaylog"
@@ -36,6 +37,7 @@ const (
 	TaskUsageHistorySync  = "hub_usage_history_sync"
 	TaskWebDAVBackup      = "webdav_backup"
 	TaskReportGenerate    = "report_generate"
+	TaskErrorLogCleanup   = "error_log_cleanup"
 )
 
 func Init() {
@@ -90,6 +92,12 @@ func Init() {
 			Register(TaskRuntimeState, statsSaveInterval, false, balancer.RuntimeStateSaveDBTask)
 		}
 	}
+
+	Register(TaskErrorLogCleanup, 6*time.Hour, false, func() {
+		if err := errorlog.Cleanup(context.Background()); err != nil {
+			log.Warnf("failed to cleanup error logs: %v", err)
+		}
+	})
 
 	Register(TaskRelayLogSave, 2*time.Minute, false, func() {
 		// 清理过期的 SSE 流 token（issue #149 内存优化补充）
@@ -237,4 +245,7 @@ func Init() {
 		poolHealthCheckMin = 30
 	}
 	Register(string(model.SettingKeyPoolHealthCheckInterval), time.Duration(poolHealthCheckMin)*time.Minute, false, poolhealthcheck.Run)
+
+	// 额度监控自动刷新：tick 固定 1 分钟，任务内部按单个覆盖/全局默认间隔到点刷新。
+	Register(TaskPlanProviderAutoRefresh, 1*time.Minute, false, PlanProviderAutoRefreshTask)
 }

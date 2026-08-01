@@ -58,6 +58,5 @@ func migratePoolAccountColumns(db *gorm.DB) error {
 		Update("type", model.PoolTypeAPIKey).Error; err != nil {
 		return fmt.Errorf("backfill type: %w", err)
 	}
-
 	return nil
 }

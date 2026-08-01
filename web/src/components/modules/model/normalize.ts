@@ -60,6 +60,11 @@ let runtimeRouterPrefixes: string[] | null = null;
 let runtimeFunctionalSuffixes: string[] | null = null;
 // variant(小写) → canonical。空表示未配置显式映射。
 let runtimeExplicitMappings: Map<string, string> | null = null;
+// 显式映射预处理：dotDashKey(normalizeToBase(variant)) → canonical（同 key 取第一条）。
+// setNormalizeRules 时构建一次，避免每个模型名重建（自动消解双向/冲突映射）。
+let runtimeExplicitByKey: Map<string, string> | null = null;
+// 正则后缀编译缓存（pattern → RegExp）。
+const suffixRegexCache = new Map<string, RegExp>();
 
 // 规则版本号：每次 setNormalizeRules 改变规则时自增，供订阅者判断是否需要重算。
 let rulesVersion = 0;
@@ -112,7 +117,31 @@ export function setNormalizeRules(rules?: {
     runtimeRouterPrefixes = nextRouterPrefixes;
     runtimeFunctionalSuffixes = nextFunctionalSuffixes;
     runtimeExplicitMappings = nextExplicitMappings;
+    // 预处理显式映射：dotDashKey(normalizeToBase(variant)) → canonical，同 key 取第一条。
+    runtimeExplicitByKey = nextExplicitMappings
+        ? buildExplicitByKey([...nextExplicitMappings.entries()].map(([variant, canonical]) => ({ variant, canonical })))
+        : null;
     notifyRulesChange();
+}
+
+// buildExplicitByKey 预处理显式映射：key = dotDashKey(normalizeToBase(variant))，
+// value = canonical（小写）。同一 key 只保留第一条，自动消解双向/冲突映射。
+function buildExplicitByKey(mappings: ExplicitMapping[]): Map<string, string> {
+    const m = new Map<string, string>();
+    for (const mapping of mappings) {
+        const key = dotDashKey(normalizeToBase(mapping.variant));
+        const canonical = mapping.canonical.toLowerCase().trim();
+        if (!key || !canonical) continue;
+        if (!m.has(key)) m.set(key, canonical);
+    }
+    return m;
+}
+
+// dotDashKey 把 - 和 . 统一为 . 并小写，用于显式映射的等价匹配与冲突检测。
+// claude-opus-4-6 与 claude-opus-4.6 得到相同 key（同一模型两种命名），
+// 而 gemini-2-5-pro 与 gemini-25-pro 得到不同 key（不同模型，不误并）。
+export function dotDashKey(s: string): string {
+    return s.toLowerCase().trim().replaceAll('-', '.');
 }
 
 function subscribeRulesVersion(callback: () => void): () => void {
@@ -179,22 +208,36 @@ export function normalizeModelName(name: string): string {
     if (!name) return '';
     const trimmed = name.trim();
 
-    // 0. 显式映射优先：AI 离线分析产出的点对点映射（变体→基准名），
-    //    命中即直接返回（小写）。匹配对原始名大小写不敏感。
-    const explicit = getActiveExplicitMappings();
-    if (explicit.length > 0) {
-        const lowerTrimmed = trimmed.toLowerCase();
-        for (const m of explicit) {
-            if (m.variant.toLowerCase() === lowerTrimmed) {
-                return m.canonical.toLowerCase();
-            }
-        }
+    // 0. 显式映射：输入先完整规范化（剥路径+前缀+后缀）为基础名，再按
+    //    dotDashKey（-/. 统一、小写）查映射。同一 key 多条映射只取第一条，
+    //    自动消解用户的双向/冲突映射（如 claude-opus-4-6 ↔ claude-opus-4.6），
+    //    使同一模型不同命名归一到同一个 canonical。映射带任意渠道前缀/路径
+    //    均与裸名变体互相命中。
+    if (runtimeExplicitByKey && runtimeExplicitByKey.size > 0) {
+        const base = normalizeToBase(trimmed);
+        const canonical = runtimeExplicitByKey.get(dotDashKey(base));
+        if (canonical) return canonical;
     }
 
-    let result = trimmed;
+    let result = stripPathAndRouterPrefix(trimmed);
+    result = stripFunctionalSuffixes(result);
 
-    const routerPrefixes = getActiveRouterPrefixes();
-    const functionalSuffixes = getActiveFunctionalSuffixes();
+    // 4. 规范化为小写，便于聚合。
+    return result.toLowerCase();
+}
+
+// normalizeToBase 完整规范化：剥路径 + 路由前缀 + 功能性后缀，返回小写基础名。
+export function normalizeToBase(name: string): string {
+    let result = stripPathAndRouterPrefix(name);
+    result = stripFunctionalSuffixes(result);
+    return result.toLowerCase();
+}
+
+// stripPathAndRouterPrefix 剥离路径前缀（最后一个 / 之后）与路由前缀，返回中间名。
+// 前缀匹配支持「去尾 - 变体」：用户常把 [官B]- 写成带连字符，但渠道模型名是
+// [官B]claude-opus-4-6（[官B] 后无连字符），原样匹配不上；去尾 - 变体覆盖该写法差异。
+function stripPathAndRouterPrefix(name: string): string {
+    let result = name;
 
     // 1. 剥离路径前缀：取最后一个 `/` 之后的部分。
     const slashIndex = result.lastIndexOf('/');
@@ -204,28 +247,109 @@ export function normalizeModelName(name: string): string {
 
     // 2. 剥离已知的路由商前缀（大小写不敏感）。
     const lower = result.toLowerCase();
-    for (const prefix of routerPrefixes) {
-        if (lower.startsWith(prefix.toLowerCase())) {
-            result = result.slice(prefix.length);
+    for (const prefix of getActiveRouterPrefixes()) {
+        const p = prefix.trim();
+        if (!p) continue;
+        // 原样匹配（dmxapi-kimi-k2.5 → dmxapi-）。
+        if (lower.startsWith(p.toLowerCase())) {
+            result = result.slice(p.length);
             break;
         }
+        // 去尾 - 变体（[官B]- → [官B] 匹配 [官B]claude-opus-4-6）。
+        if (p.endsWith('-')) {
+            const base = p.slice(0, -1);
+            if (base && lower.startsWith(base.toLowerCase())) {
+                result = result.slice(base.length);
+                // 若原名字带 -（dmxapi-kimi → 剥 dmxapi 剩 -kimi），去掉。
+                result = result.replace(/^-+/, '');
+                break;
+            }
+        }
     }
+    return result;
+}
 
-    // 3. 剥离已知的功能性后缀（大小写不敏感，循环处理叠加后缀）。
+// stripFunctionalSuffixes 循环剥离功能性后缀。
+// 每个后缀的匹配候选：
+//  1. 字面原样（如 -cc 匹配结尾 -cc）；
+//  2. -: 开头 → : 形式（-:free 匹配结尾 :free）；
+//  3. -( 开头 → ( 形式（-(free) 匹配结尾 (free)）；
+//  4. 含正则元字符（\d \w { } * + ? |）→ 编译为正则并锚定结尾
+//     （-\d{8} 匹配 -20250514 这类日期后缀）。
+function stripFunctionalSuffixes(name: string): string {
+    let result = name;
     let changed = true;
     while (changed) {
         changed = false;
-        const currentLower = result.toLowerCase();
-        for (const suffix of functionalSuffixes) {
-            const s = suffix.toLowerCase();
-            if (currentLower.endsWith(s) && result.length > s.length) {
-                result = result.slice(0, -s.length);
+        const lower = result.toLowerCase();
+        for (const suffix of getActiveFunctionalSuffixes()) {
+            const s = suffix.trim();
+            if (!s) continue;
+            const n = matchSuffixCandidate(lower, s);
+            if (n > 0 && result.length > n) {
+                result = result.slice(0, -n);
                 changed = true;
                 break;
             }
         }
     }
+    return result;
+}
 
-    // 4. 规范化为小写，便于聚合。
-    return result.toLowerCase();
+// matchSuffixCandidate 尝试字面变体与正则变体，返回匹配的字符数。
+function matchSuffixCandidate(lower: string, suffix: string): number {
+    // 字面候选：原样、-: → :、-( → (。
+    for (const cand of literalSuffixCandidates(suffix)) {
+        if (lower.endsWith(cand) && lower.length > cand.length) {
+            return cand.length;
+        }
+    }
+    // 正则候选：仅当含正则元字符，避免把 (free) 这类字面当作分组。
+    if (isRegexSuffix(suffix)) {
+        for (const cand of regexSuffixCandidates(suffix)) {
+            const re = getSuffixRegex(cand);
+            if (!re) continue;
+            const loc = re.exec(lower);
+            if (loc && loc.index !== undefined) {
+                return lower.length - loc.index;
+            }
+        }
+    }
+    return 0;
+}
+
+// literalSuffixCandidates 生成字面后缀候选：原样、-: 前缀 → :、-( 前缀 → (。
+function literalSuffixCandidates(suffix: string): string[] {
+    const cands = [suffix];
+    if (suffix.startsWith('-:')) cands.push(':' + suffix.slice(2));
+    if (suffix.startsWith('-(')) cands.push('(' + suffix.slice(2));
+    return cands;
+}
+
+// regexSuffixCandidates 生成正则后缀候选：原样、-@ 开头 → @ 变体
+// （-@\w+ → @\w+，覆盖 claude-3-haiku@20240307 这类无连字符 @ 变体）。
+// 其余正则（如 -\d{8}）只按原样匹配，避免变体 \d{8} 误剥 @20240307 这类无 - 前缀的日期。
+function regexSuffixCandidates(suffix: string): string[] {
+    const cands = [suffix];
+    if (suffix.startsWith('-@')) cands.push(suffix.slice(1));
+    return cands;
+}
+
+// getSuffixRegex 返回锚定结尾的正则（带编译缓存）。
+function getSuffixRegex(pattern: string): RegExp | null {
+    const cached = suffixRegexCache.get(pattern);
+    if (cached) return cached;
+    try {
+        const re = new RegExp(pattern + '$');
+        suffixRegexCache.set(pattern, re);
+        return re;
+    } catch {
+        return null;
+    }
+}
+
+// isRegexSuffix 判断后缀是否为「显式正则」：含 \d \w { } * + ? | 之一。
+// 排除 ( ) [ ] - 等常见字面字符，避免 -(free) 被误当分组。
+function isRegexSuffix(suffix: string): boolean {
+    return /[\\dw{}*+?|]/.test(suffix);
 }

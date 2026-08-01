@@ -122,6 +122,27 @@ func GetLLMPrice(modelName string) *model.LLMPrice {
 	return nil
 }
 
+// GetLLMPriceFromUpstream 仅从同步价格源（外部价格文件 + presets.go +
+// presets_manual.go 托底价格）中查找价格，不查询数据库。
+//
+// 用于"同步价格"刷新已有模型价格的场景：外部同步文件优先，未命中时回落到
+// 内置/手工托底价格（presets_manual.go），仍未命中返回 nil（调用方决定写 0）。
+// 与 GetLLMPrice 的区别在于跳过 DB 查询层，避免 DB 中的旧值挡住新同步的价格。
+func GetLLMPriceFromUpstream(modelName string) *model.LLMPrice {
+	modelName = strings.ToLower(modelName)
+	llmPriceLock.RLock()
+	defer llmPriceLock.RUnlock()
+	price, ok := llmPrice[modelName]
+	if ok {
+		return &price
+	}
+	// Fallback: try matching by base model name
+	if fallback := matchFallbackPrice(modelName); fallback != nil {
+		return fallback
+	}
+	return nil
+}
+
 // matchFallbackPrice attempts to find a price for modelName using two heuristics:
 //  1. Strip "provider/" prefix (e.g. "openai/gpt-4o" -> "gpt-4o")
 //  2. Find the longest known model name that appears as a whole-word substring

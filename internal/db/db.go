@@ -314,6 +314,7 @@ func Migrate(conn *gorm.DB) error {
 		&model.StatsSiteModelHourly{},
 		&model.RelayLog{},
 		&model.RelayLogAttempt{},
+		&model.ErrorLog{},
 		&model.AutoStrategyState{},
 		&model.CircuitBreakerState{},
 		&model.AlertRule{},

@@ -70,12 +70,19 @@ type addPlanProviderRequest struct {
 	APIKey        string                     `json:"api_key"`
 	ForwardAPIKey string                     `json:"forward_api_key,omitempty"`
 	Name          string                     `json:"name"`
+	// RefreshIntervalMin 自动刷新间隔（分钟），0 = 跟随全局默认。
+	RefreshIntervalMin int `json:"refresh_interval_min,omitempty"`
 	// 代理配置：目前仅 Codex 类生效（chatgpt.com 国内不可直连）。
 	ProxyMode     model.ProxyUsageMode `json:"proxy_mode,omitempty"`
 	ProxyConfigID *int                 `json:"proxy_config_id,omitempty"`
 	// 智谱团队版（zhipu_team）专用：组织 ID / 项目 ID，其他厂商忽略。
 	TeamOrganizationID string `json:"team_organization_id,omitempty"`
 	TeamProjectID      string `json:"team_project_id,omitempty"`
+	// 账号密码自动登录（sensenova_plan / deepseek 专用，可选）：
+	// sensenova 配置后系统自动登录并续期控制台 Bearer Token（api_key 可留空）；
+	// deepseek 配置后用于查询官方 usage（api_key 仍必填，用于余额查询）。
+	LoginUsername string `json:"login_username,omitempty"`
+	LoginPassword string `json:"login_password,omitempty"`
 }
 
 func addPlanProvider(c *gin.Context) {
@@ -85,7 +92,7 @@ func addPlanProvider(c *gin.Context) {
 		return
 	}
 
-	provider, err := planprovider.AddProvider(c.Request.Context(), req.Category, req.APIKey, req.ForwardAPIKey, req.Name, req.ProxyMode, req.ProxyConfigID, req.TeamOrganizationID, req.TeamProjectID)
+	provider, err := planprovider.AddProvider(c.Request.Context(), req.Category, req.APIKey, req.ForwardAPIKey, req.Name, req.RefreshIntervalMin, req.ProxyMode, req.ProxyConfigID, req.TeamOrganizationID, req.TeamProjectID, req.LoginUsername, req.LoginPassword)
 	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -109,11 +116,17 @@ func refreshPlanProvider(c *gin.Context) {
 }
 
 type updatePlanProviderCredentialsRequest struct {
-	APIKey        string `json:"api_key" binding:"required"`
+	// APIKey 与 LoginUsername 至少填一个（sensenova_plan 支持账号密码模式，
+	// 填了账号密码后系统自动登录拿 access_token）。
+	APIKey        string `json:"api_key"`
 	ForwardAPIKey string `json:"forward_api_key,omitempty"`
 	// 智谱团队版（zhipu_team）专用：组织 ID / 项目 ID，留空则清空。
 	TeamOrganizationID string `json:"team_organization_id,omitempty"`
 	TeamProjectID      string `json:"team_project_id,omitempty"`
+	// 账号密码自动登录（sensenova_plan 专用，可选）：填了保存账号密码并自动登录；
+	// 不填则清除账号密码模式（切回纯 Bearer Token）。
+	LoginUsername string `json:"login_username,omitempty"`
+	LoginPassword string `json:"login_password,omitempty"`
 }
 
 func updatePlanProviderCredentials(c *gin.Context) {
@@ -129,7 +142,7 @@ func updatePlanProviderCredentials(c *gin.Context) {
 		return
 	}
 
-	provider, err := planprovider.UpdateProviderCredentials(c.Request.Context(), id, req.APIKey, req.ForwardAPIKey, req.TeamOrganizationID, req.TeamProjectID)
+	provider, err := planprovider.UpdateProviderCredentials(c.Request.Context(), id, req.APIKey, req.ForwardAPIKey, req.TeamOrganizationID, req.TeamProjectID, req.LoginUsername, req.LoginPassword)
 	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
