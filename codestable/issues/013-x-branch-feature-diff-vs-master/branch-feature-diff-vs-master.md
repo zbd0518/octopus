@@ -1,3 +1,12 @@
+---
+kind: issue
+title: "分支 fix/site-model-case-pk-conflict vs master 功能差异清单与合并评估"
+type: explore
+status: closed
+created: 2026-08-02
+migrated_from: codestable/compound/branch-feature-diff-vs-master.md
+---
+
 # 分支 `fix/site-model-case-pk-conflict` vs `master` 功能差异清单
 
 > 生成日期：2026-08-02
