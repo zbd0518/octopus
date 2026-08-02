@@ -23,9 +23,9 @@ lane_b_reason: "ocr review returned 0 comments"
 - Gate results: none
 - DoD results: none
 - Implementation evidence:
-  - `.codestable/issues/2026-07-24-openai-chat-metadata-400/openai-chat-metadata-400-report.md`
-  - `.codestable/issues/2026-07-24-openai-chat-metadata-400/approval-report.md#issue-fast-path`（approved）
-  - `.codestable/issues/2026-07-24-openai-chat-metadata-400/openai-chat-metadata-400-fix-note.md`
+  - `codestable/issues/003-x-2026-07-24-openai-chat-metadata-400/openai-chat-metadata-400-report.md`
+  - `codestable/issues/003-x-2026-07-24-openai-chat-metadata-400/approval-report.md#issue-fast-path`（approved）
+  - `codestable/issues/003-x-2026-07-24-openai-chat-metadata-400/openai-chat-metadata-400-fix-note.md`
   - 验证：`go test ./internal/transformer/outbound/openai/ -count=1` 通过
 - Diff basis: 仅本 issue 归因文件
   - `internal/transformer/outbound/openai/chat.go`（`SanitizeRequestForOpenAICompat` 末尾 `request.Metadata = nil` + 注释）
@@ -55,7 +55,7 @@ lane_b_reason: "ocr review returned 0 comments"
   - `internal/transformer/outbound/openai/chat.go`
   - `internal/transformer/outbound/openai/chat_test.go`
 - 删除：none
-- 未跟踪 / staged：issue 产物目录 `.codestable/issues/2026-07-24-openai-chat-metadata-400/`
+- 未跟踪 / staged：issue 产物目录 `codestable/issues/003-x-2026-07-24-openai-chat-metadata-400/`
 - 风险热点：none（定点兼容性修复，与 Responses 既有行为对齐）
 
 ## 3. Adversarial Pass

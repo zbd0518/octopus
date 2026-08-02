@@ -1,6 +1,6 @@
 ---
 doc_type: approval-report
-unit: issues/2026-07-24-group-editor-no-key-blocks-site-channel
+unit: issues/002-x-2026-07-24-group-editor-no-key-blocks-site-channel
 status: approved
 ---
 

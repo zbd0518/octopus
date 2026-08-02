@@ -96,4 +96,4 @@
 - 改中继链路（渠道选择/重试/协议） → `internal/relay/` + `internal/transformer/`
 - 加管理 API → `internal/server/handlers/` + `internal/server/router/router.go` 注册模式
 - 改前端页面 → `web/src/components/modules/` + `web/src/route/config.tsx`
-- 历史 issue 与功能记录 → `../issues/`、`../features/`
+- 历史 issue 与功能记录 → `../issues/`（已对齐编号 `001-x-`…`006-x-`）、`../features/`（旧版命名）

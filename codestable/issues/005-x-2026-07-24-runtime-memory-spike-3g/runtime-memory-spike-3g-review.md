@@ -47,7 +47,7 @@ lane_b_reason: "ocr review workspace succeeded; earlier ocr scan hung and was st
   - `internal/transformer/inbound/openai/chat_format_test.go`
   - `internal/transformer/inbound/anthropic/messages_test.go`
 - 删除：none
-- 未跟踪 / staged：issue 产物目录 `.codestable/issues/2026-07-24-runtime-memory-spike-3g/`
+- 未跟踪 / staged：issue 产物目录 `codestable/issues/005-x-2026-07-24-runtime-memory-spike-3g/`
 - 风险热点：流式聚合语义 / 内存峰值；无权限/数据迁移
 
 ## 3. Adversarial Pass

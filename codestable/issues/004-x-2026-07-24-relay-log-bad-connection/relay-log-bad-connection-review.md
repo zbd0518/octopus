@@ -17,7 +17,7 @@ lane_b_reason: "skipped-scope-ambiguous: workspace has unrelated dirty files; lo
 
 ## 1. Scope And Inputs
 
-- Design: `.codestable/issues/2026-07-24-relay-log-bad-connection/relay-log-bad-connection-analysis.md`（方案 A 已批准）
+- Design: `codestable/issues/004-x-2026-07-24-relay-log-bad-connection/relay-log-bad-connection-analysis.md`（方案 A 已批准）
 - Checklist: none（issue 流程）
 - Evidence pack: none
 - Gate results: none
@@ -41,7 +41,7 @@ lane_b_reason: "skipped-scope-ambiguous: workspace has unrelated dirty files; lo
 - 新增：none
 - 修改：`internal/db/db.go`（`configureConnectionPool` 非 SQLite 分支）
 - 删除：none
-- 未跟踪：`.codestable/issues/2026-07-24-relay-log-bad-connection/`（issue 产物）
+- 未跟踪：`codestable/issues/004-x-2026-07-24-relay-log-bad-connection/`（issue 产物）
 - 风险热点：连接池配置（跨所有 `GetDB()`/`GetLogDB()` 调用方）；无权限/数据迁移/API 契约变更
 
 实际 diff：
