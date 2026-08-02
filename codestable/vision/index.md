@@ -46,7 +46,7 @@
   - 轻量 LLM 网关 Benchmark 工具
 - **实现程度与 Epic / Project Spec 链接**：
   - `spec/index.md` — 当前已成立的稳定事实
-  - 历史功能记录 → `features/`（旧版命名）、`issues/`（已对齐编号：`001-x-` … `006-x-`）
+  - 历史功能记录 → `issues/`（已对齐编号：`001-x-` … `012-x-`）
 
 ## 用语与下一步读哪
 

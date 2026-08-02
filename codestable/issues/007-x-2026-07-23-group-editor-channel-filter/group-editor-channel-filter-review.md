@@ -22,7 +22,7 @@ lane_b_reason: "ocr review completed exit=0; scope mixed with unrelated files; f
 - Evidence pack: none
 - Gate results: none
 - DoD results: none
-- Implementation evidence: `.codestable/features/2026-07-23-group-editor-channel-filter/group-editor-channel-filter-ff-note.md`
+- Implementation evidence: `codestable/issues/007-x-2026-07-23-group-editor-channel-filter/group-editor-channel-filter-ff-note.md`
 - Diff basis: 可归因文件见下；忽略 `internal/*`、migrate 038、`.codestable` 基础设施
 - Review mode: initial
 - Baseline dirty files: `internal/conf/version.go`, `internal/model/stats.go`, `internal/price/presets.go`, migrate 038 等（本轮不审）

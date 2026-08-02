@@ -37,7 +37,7 @@ lane_b_reason: "ocr review returned 0 comments"
   - `internal/price/presets.go`
   - `internal/server/handlers/channel.go`
   - `internal/task/channel_expire.go`
-  - `.codestable/features/2026-07-24-channel-delete-purge-group-items/`
+  - `codestable/issues/010-x-2026-07-24-channel-delete-purge-group-items/`
 
 ### Independent Review
 
