@@ -153,17 +153,19 @@ export function CheckinPanel({
   );
   const hasContextBadges = Boolean(searchTerm) || platformFilters.length > 0;
 
+  // 平台筛选 chip 使用全部站点（不限于签到支持），因为平台过滤作用于站点列表本身，
+  // 与签到状态无关。排除签到不支持平台会导致部分平台类型缺少筛选入口。
   const checkinSupportedSites = useMemo(
     () => (sites ?? []).filter((s) => sitePlatformSupportsCheckin(s.platform)),
     [sites],
   );
   const availablePlatforms = useMemo(
-    () => collectSitePlatforms(checkinSupportedSites),
-    [checkinSupportedSites],
+    () => collectSitePlatforms(sites),
+    [sites],
   );
   const platformCounts = useMemo(
-    () => countSitesByPlatform(checkinSupportedSites),
-    [checkinSupportedSites],
+    () => countSitesByPlatform(sites),
+    [sites],
   );
 
   const manualCheckinUrls = useMemo(
@@ -263,7 +265,7 @@ export function CheckinPanel({
                 platformChipTone(platformFilters.length === 0),
               )}
             >
-              <span>{checkinSupportedSites.length}</span>
+              <span>{(sites ?? []).length}</span>
               <span>全部</span>
             </button>
             {availablePlatforms.map((platform) => {

@@ -178,11 +178,11 @@ function buildChartConfig(t: CacheTranslations) {
     return {
         cache_read_tokens: {
             label: t('cache.providerPrompt.metrics.cacheReadTokens'),
-            color: 'hsl(var(--chart-1))',
+            color: 'var(--chart-1)',
         },
         cache_write_tokens: {
             label: t('cache.providerPrompt.metrics.cacheWriteTokens'),
-            color: 'hsl(var(--chart-2))',
+            color: 'var(--chart-2)',
         },
     };
 }
