@@ -102,6 +102,32 @@ func TestTransformRequest_SetsThinkingEnabledForHighEffort(t *testing.T) {
 	}
 }
 
+// TestTransformRequest_SetsThinkingEnabledForExtendedEffort (issue #185 同型回归):
+// 扩展思考档位 xhigh/max 也应启用 thinking，不能落入 default 而缺失 thinking 字段。
+func TestTransformRequest_SetsThinkingEnabledForExtendedEffort(t *testing.T) {
+	for _, effort := range []string{"xhigh", "max", "XHIGH", "MAX"} {
+		o := &ResponseOutbound{}
+		stream := false
+		req := &model.InternalLLMRequest{
+			Model:           "doubao-seed-1-6-251015",
+			ReasoningEffort: effort,
+			Messages:        []model.Message{{Role: "user", Content: model.MessageContent{Content: stringPtr("hi")}}},
+			Stream:          &stream,
+		}
+
+		httpReq, err := o.TransformRequest(context.Background(), req, "https://ark.cn-beijing.volces.com/api/v3", "sk-test")
+		if err != nil {
+			t.Fatalf("TransformRequest error: %v", err)
+		}
+
+		bodyStr := string(readRequestBody(t, httpReq))
+
+		if !strings.Contains(bodyStr, `"thinking":{"type":"enabled"}`) {
+			t.Fatalf("effort=%q: expected thinking.type=enabled, got: %s", effort, bodyStr)
+		}
+	}
+}
+
 // TestResponsesRequest_ThinkingSerialization 直接验证序列化层行为，
 // 覆盖 jsoniter 对 *Thinking + omitempty 的处理：
 //   - nil 时 thinking 字段不出现在 JSON 中（issue #181 核心断言）
