@@ -493,6 +493,96 @@ func TestProjectAccountPreservesManagedKeyUsageForUnchangedTokens(t *testing.T) 
 	}
 }
 
+func TestProjectAccountPreservesManuallyAddedKeyOnResync(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	_, account := createProjectionFixture(t, ctx)
+
+	// 首次投影：生成两个 managed key
+	if _, err := ProjectAccount(ctx, account.ID); err != nil {
+		t.Fatalf("initial ProjectAccount returned error: %v", err)
+	}
+	channelsByGroup := loadProjectedChannelsByGroupKey(t, ctx, account.ID)
+	channel := channelsByGroup[model.SiteDefaultGroupKey]
+	if len(channel.Keys) != 2 {
+		t.Fatalf("expected two projected keys, got %d", len(channel.Keys))
+	}
+	for _, k := range channel.Keys {
+		if !k.Managed {
+			t.Fatalf("expected projected key %q to be managed=true", k.ChannelKey)
+		}
+	}
+
+	// 模拟用户手动添加一个 key（Managed=false，走前端 ChannelUpdate 路径）
+	manualKey := model.ChannelKeyAddRequest{
+		Enabled:    true,
+		ChannelKey: "sk-manual-extra",
+		Priority:   0,
+		Remark:     "manual",
+		Managed:    false,
+	}
+	if _, err := op.ChannelUpdate(&model.ChannelUpdateRequest{
+		ID:        channel.ID,
+		KeysToAdd: []model.ChannelKeyAddRequest{manualKey},
+	}, ctx); err != nil {
+		t.Fatalf("ChannelUpdate add manual key failed: %v", err)
+	}
+
+	// 再次投影：上游 token 列表未变，手动 key 应保留
+	if _, err := ProjectAccount(ctx, account.ID); err != nil {
+		t.Fatalf("second ProjectAccount returned error: %v", err)
+	}
+	reloaded, err := op.ChannelGet(channel.ID, ctx)
+	if err != nil {
+		t.Fatalf("ChannelGet failed: %v", err)
+	}
+	var foundManual bool
+	for _, k := range reloaded.Keys {
+		if k.ChannelKey == "sk-manual-extra" {
+			foundManual = true
+			if k.Managed {
+				t.Fatalf("expected manual key to remain managed=false, got true")
+			}
+		}
+	}
+	if !foundManual {
+		t.Fatalf("expected manual key sk-manual-extra to survive resync, keys=%+v", reloaded.Keys)
+	}
+	if len(reloaded.Keys) != 3 {
+		t.Fatalf("expected 3 keys (2 managed + 1 manual) after resync, got %d", len(reloaded.Keys))
+	}
+
+	// 上游删除一个 token 后再投影：被删的 managed key 应清除，手动 key 仍保留
+	if err := dbpkg.GetDB().WithContext(ctx).Where("token = ?", "key-backup").Delete(&model.SiteToken{}).Error; err != nil {
+		t.Fatalf("delete site token failed: %v", err)
+	}
+	if _, err := ProjectAccount(ctx, account.ID); err != nil {
+		t.Fatalf("third ProjectAccount returned error: %v", err)
+	}
+	reloaded, err = op.ChannelGet(channel.ID, ctx)
+	if err != nil {
+		t.Fatalf("ChannelGet after token removal failed: %v", err)
+	}
+	var foundManual2 bool
+	var foundBackup bool
+	for _, k := range reloaded.Keys {
+		if k.ChannelKey == "sk-manual-extra" {
+			foundManual2 = true
+		}
+		if k.ChannelKey == "sk-key-backup" {
+			foundBackup = true
+		}
+	}
+	if !foundManual2 {
+		t.Fatalf("expected manual key to survive token removal, keys=%+v", reloaded.Keys)
+	}
+	if foundBackup {
+		t.Fatalf("expected removed managed key sk-key-backup to be deleted, keys=%+v", reloaded.Keys)
+	}
+	if len(reloaded.Keys) != 2 {
+		t.Fatalf("expected 2 keys (1 managed + 1 manual) after token removal, got %d", len(reloaded.Keys))
+	}
+}
+
 func TestProjectAccountSyncsProjectedModelPrices(t *testing.T) {
 	ctx := setupProjectTestDB(t)
 	_, account := createProjectionFixture(t, ctx)

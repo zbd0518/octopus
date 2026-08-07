@@ -23,7 +23,7 @@ const (
 func NormalizeEndpointType(endpointType string) string {
 	endpointType = strings.TrimSpace(endpointType)
 	if endpointType == "" {
-		return EndpointTypeAll
+		return EndpointTypeChat
 	}
 	return strings.ToLower(endpointType)
 }

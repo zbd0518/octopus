@@ -493,6 +493,11 @@ func groupMatchesRequestedEndpoint(group model.Group, requestedEndpoint string) 
 //
 // This is the endpoint-aware variant of GroupListModel.
 func GroupListModelByEndpoint(endpointType string, ctx context.Context) ([]string, error) {
+	// 查询侧：空串表示"不限类型"（返回所有 endpoint 的 group），与 group 存储侧
+	// 默认值（NormalizeEndpointType 空串→chat）区分。
+	if strings.TrimSpace(endpointType) == "" {
+		endpointType = model.EndpointTypeAll
+	}
 	endpointType = model.NormalizeEndpointType(endpointType)
 
 	models := []string{}

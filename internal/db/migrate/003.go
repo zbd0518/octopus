@@ -49,7 +49,7 @@ func ensureGroupsEndpointTypeColumn(db *gorm.DB) error {
 
 	if err := db.Exec(
 		"UPDATE groups SET endpoint_type = ? WHERE endpoint_type IS NULL OR TRIM(endpoint_type) = ''",
-		model.EndpointTypeAll,
+		model.EndpointTypeChat,
 	).Error; err != nil {
 		return fmt.Errorf("failed to backfill groups.endpoint_type: %w", err)
 	}

@@ -83,7 +83,7 @@ export function CreateDialogContent() {
                             {
                                 name,
                                 category: category?.trim() ?? '',
-                                endpoint_type: endpoint_type ?? '*',
+                                endpoint_type: endpoint_type ?? 'chat',
                                 endpoint_provider: endpoint_provider ?? '',
                                 outbound_format: outbound_format ?? '',
                                 mode,

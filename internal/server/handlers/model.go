@@ -98,6 +98,10 @@ func getModelList(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, "invalid endpoint")
 		return
 	}
+	// /v1/models 不传 endpoint 时返回所有类型的模型（relay 查询语义，非 group 分类）。
+	if endpoint == "" {
+		endpoint = model.EndpointTypeAll
+	}
 
 	models, err := group.GroupListModelByEndpoint(endpoint, c.Request.Context())
 	if err != nil {

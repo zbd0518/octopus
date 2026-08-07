@@ -411,8 +411,7 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 		return result
 	}
 
-	outAdapter := outbound.Get(channel.Type)
-	if outAdapter == nil {
+	if outbound.Get(channel.Type) == nil {
 		result.Message = fmt.Sprintf("unsupported channel type: %d", channel.Type)
 		recordTestLog(ctx, endpointType, item, result, channel, nil, 0, nil, nil)
 		return result
@@ -424,59 +423,75 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 		return result
 	}
 
-	// 构建探测请求，用于日志记录和实际发送
+	// 构建探测请求，用于日志记录和出站 adapter 回退解析
 	probeRequest, probeErr := buildGroupProbeRequest(endpointType, item.ModelName)
 	var requestJSON []byte
 	if probeErr == nil && probeRequest != nil {
 		requestJSON, _ = json.Marshal(probeRequest)
 	}
 
+	// 解析出站 adapter 回退列表。对 OpenAI 类型渠道，默认先尝试 Chat
+	// Completions (/v1/chat/completions)，失败再回退 Responses API
+	// (/v1/responses)。这与 relay 主流程的 outboundAttemptTypes 一致，
+	// 避免 type=1 渠道在只支持 chat completions 的上游上探测失败（issue #187）。
+	adapterTypes := outbound.ResolveAttemptTypes(channel.Type, probeRequest, "")
+
 	startTime := time.Now()
 	var logAttempts []appmodel.ChannelAttempt
 	var lastInternalResp *transmodel.InternalLLMResponse
 
-	for attempt := 1; attempt <= 3; attempt++ {
-		if attempt > 1 && ctx.Err() != nil {
-			result.Message = ctx.Err().Error()
-			break
-		}
-		attemptStart := time.Now()
-		statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, outAdapter, &channel, usedKey.ChannelKey, endpointType, item.ModelName)
-		attemptDuration := int(time.Since(attemptStart).Milliseconds())
-
-		result.StatusCode = statusCode
-		result.ResponseText = responseText
-		if internalResp != nil {
-			lastInternalResp = internalResp
+	attemptNum := 0
+probeAdapters:
+	for _, adapterType := range adapterTypes {
+		outAdapter := outbound.Get(adapterType)
+		if outAdapter == nil {
+			continue
 		}
 
-		attemptStatus := appmodel.AttemptFailed
-		attemptMsg := result.Message
-		if err == nil {
-			attemptStatus = appmodel.AttemptSuccess
-			attemptMsg = "ok"
-		} else {
-			attemptMsg = err.Error()
-		}
+		for attempt := 1; attempt <= 3; attempt++ {
+			attemptNum++
+			if attemptNum > 1 && ctx.Err() != nil {
+				result.Message = ctx.Err().Error()
+				break probeAdapters
+			}
+			attemptStart := time.Now()
+			statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, outAdapter, &channel, usedKey.ChannelKey, endpointType, item.ModelName)
+			attemptDuration := int(time.Since(attemptStart).Milliseconds())
 
-		logAttempts = append(logAttempts, appmodel.ChannelAttempt{
-			ChannelID:   channel.ID,
-			ChannelName: channel.Name,
-			ModelName:   item.ModelName,
-			AttemptNum:  attempt,
-			Status:      attemptStatus,
-			Duration:    attemptDuration,
-			Msg:         attemptMsg,
-		})
+			result.StatusCode = statusCode
+			result.ResponseText = responseText
+			if internalResp != nil {
+				lastInternalResp = internalResp
+			}
 
-		if err == nil {
-			result.Passed = true
-			result.Attempts = attempt
-			result.Message = "ok"
-			break
+			attemptStatus := appmodel.AttemptFailed
+			attemptMsg := result.Message
+			if err == nil {
+				attemptStatus = appmodel.AttemptSuccess
+				attemptMsg = "ok"
+			} else {
+				attemptMsg = err.Error()
+			}
+
+			logAttempts = append(logAttempts, appmodel.ChannelAttempt{
+				ChannelID:   channel.ID,
+				ChannelName: channel.Name,
+				ModelName:   item.ModelName,
+				AttemptNum:  attemptNum,
+				Status:      attemptStatus,
+				Duration:    attemptDuration,
+				Msg:         attemptMsg,
+			})
+
+			if err == nil {
+				result.Passed = true
+				result.Attempts = attemptNum
+				result.Message = "ok"
+				break probeAdapters
+			}
+			result.Attempts = attemptNum
+			result.Message = err.Error()
 		}
-		result.Attempts = attempt
-		result.Message = err.Error()
 	}
 
 	useTimeMs := int(time.Since(startTime).Milliseconds())
@@ -738,7 +753,8 @@ func buildGroupProbeRequest(endpointType, modelName string) (*transmodel.Interna
 		}, nil
 	case normalizedEndpointType == appmodel.EndpointTypeAll || appmodel.IsConversationEndpointType(normalizedEndpointType):
 		return &transmodel.InternalLLMRequest{
-			Model: modelName,
+			Model:        modelName,
+			RawAPIFormat: transmodel.APIFormatOpenAIChatCompletion,
 			Messages: []transmodel.Message{{
 				Role: "user",
 				Content: transmodel.MessageContent{

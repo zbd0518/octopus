@@ -2546,7 +2546,6 @@
         "label": "Route API Type",
         "hint": "This controls which request category the group matches. It is different from the channel-level provider type.",
         "options": {
-          "all": "All",
           "chat": "Conversation",
           "deepseek": "DeepSeek",
           "mimo": "MiMo",

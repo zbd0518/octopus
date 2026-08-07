@@ -349,7 +349,7 @@ func buildChannelKeys(tokens []model.SiteToken) []model.ChannelKey {
 		if normalized == "" {
 			continue
 		}
-		keys = append(keys, model.ChannelKey{Enabled: token.Enabled, ChannelKey: normalized, Remark: model.NormalizeSiteGroupName(token.GroupKey, token.GroupName)})
+		keys = append(keys, model.ChannelKey{Enabled: token.Enabled, ChannelKey: normalized, Remark: model.NormalizeSiteGroupName(token.GroupKey, token.GroupName), Managed: true})
 	}
 	return keys
 }
@@ -376,6 +376,7 @@ func diffManagedChannelKeys(existingKeys []model.ChannelKey, desiredKeys []model
 				Enabled:    desired.Enabled,
 				ChannelKey: desired.ChannelKey,
 				Remark:     desired.Remark,
+				Managed:    desired.Managed,
 			})
 			continue
 		}
@@ -391,7 +392,11 @@ func diffManagedChannelKeys(existingKeys []model.ChannelKey, desiredKeys []model
 			remark := desired.Remark
 			update.Remark = &remark
 		}
-		if update.Enabled != nil || update.Remark != nil {
+		if existing.Managed != desired.Managed {
+			managed := desired.Managed
+			update.Managed = &managed
+		}
+		if update.Enabled != nil || update.Remark != nil || update.Managed != nil {
 			updates = append(updates, update)
 		}
 	}
@@ -399,6 +404,11 @@ func diffManagedChannelKeys(existingKeys []model.ChannelKey, desiredKeys []model
 	deletes := make([]int, 0)
 	for _, existing := range existingKeys {
 		if _, ok := used[existing.ID]; ok {
+			continue
+		}
+		// 只删除由 site 同步投影生成的 key（Managed=true），
+		// 保留用户手动添加的 key（Managed=false）不被自动同步清除。
+		if !existing.Managed {
 			continue
 		}
 		deletes = append(deletes, existing.ID)

@@ -134,6 +134,10 @@ type ChannelKey struct {
 	TotalCost        float64 `json:"total_cost"`
 	Priority         int     `json:"priority" gorm:"default:0"`
 	Remark           string  `json:"remark"`
+	// Managed 标记该 key 是否由 site 同步投影自动生成。
+	// site 同步 diff 时只删除 Managed=true 的 key，
+	// 保留用户手动添加的（Managed=false）key 不被清除。
+	Managed bool `json:"managed" gorm:"default:false"`
 }
 
 // KeyCooldownFunc 由 balancer 包在启动时注入，用于查询某 (channelID, keyID, modelName)
@@ -196,6 +200,8 @@ type ChannelKeyAddRequest struct {
 	ChannelKey string `json:"channel_key" binding:"required"`
 	Priority   int    `json:"priority"`
 	Remark     string `json:"remark"`
+	// Managed 标记是否由 site 同步投影自动生成，仅投影逻辑透传。
+	Managed bool `json:"managed,omitempty"`
 }
 
 type ChannelKeyUpdateRequest struct {
@@ -204,6 +210,8 @@ type ChannelKeyUpdateRequest struct {
 	ChannelKey *string `json:"channel_key,omitempty"`
 	Priority   *int    `json:"priority,omitempty"`
 	Remark     *string `json:"remark,omitempty"`
+	// Managed 标记是否由 site 同步投影自动生成，仅投影逻辑透传。
+	Managed *bool `json:"managed,omitempty"`
 }
 
 // ChannelBatchGroupRequest 批量设置渠道分组请求

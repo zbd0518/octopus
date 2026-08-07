@@ -236,6 +236,7 @@ func KeySaveDB(ctx context.Context) error {
 			"total_cost",
 			"priority",
 			"remark",
+			"managed",
 		}),
 	}).Create(&keys).Error; err != nil {
 		keyCacheNeedUpdateLock.Lock()
@@ -438,6 +439,9 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 			if ku.Remark != nil {
 				updates["remark"] = *ku.Remark
 			}
+			if ku.Managed != nil {
+				updates["managed"] = *ku.Managed
+			}
 			if len(updates) == 0 {
 				continue
 			}
@@ -459,6 +463,7 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 				ChannelKey: ka.ChannelKey,
 				Priority:   ka.Priority,
 				Remark:     ka.Remark,
+				Managed:    ka.Managed,
 			})
 		}
 		if err := tx.Create(&newKeys).Error; err != nil {

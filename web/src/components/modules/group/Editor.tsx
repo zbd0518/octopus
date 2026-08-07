@@ -529,7 +529,7 @@ export function GroupEditor({
         setRemovingIds(new Set());
     }, []);
 
-    const supportsProviderSelection = endpointType !== '*' && (endpointType === 'music_generation' || endpointType === 'chat' || endpointType === 'video_generation' || endpointType === 'audio_speech');
+    const supportsProviderSelection = endpointType === 'music_generation' || endpointType === 'chat' || endpointType === 'video_generation' || endpointType === 'audio_speech';
     const supportsOutboundFormat = endpointType === 'chat';
     const isValid = groupKey.length > 0 && selectedMembers.length > 0 && !regexError;
 

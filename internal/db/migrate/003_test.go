@@ -54,8 +54,8 @@ func TestEnsureGroupsEndpointTypeColumnAddsMissingColumnAndBackfills(t *testing.
 		Scan(&endpointType).Error; err != nil {
 		t.Fatalf("read endpoint_type: %v", err)
 	}
-	if endpointType != model.EndpointTypeAll {
-		t.Fatalf("expected endpoint_type %q, got %q", model.EndpointTypeAll, endpointType)
+	if endpointType != model.EndpointTypeChat {
+		t.Fatalf("expected endpoint_type %q, got %q", model.EndpointTypeChat, endpointType)
 	}
 
 	var indexName string

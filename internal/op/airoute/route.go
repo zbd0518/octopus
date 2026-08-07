@@ -945,7 +945,7 @@ func normalizeAIRoutePromptEndpointType(endpointType string) string {
 func groupEndpointTypeForAIRouteBucket(promptEndpointType string) string {
 	promptEndpointType = normalizeAIRoutePromptEndpointType(promptEndpointType)
 	if promptEndpointType == model.EndpointTypeChat {
-		return model.EndpointTypeAll
+		return model.EndpointTypeChat
 	}
 	return promptEndpointType
 }
@@ -953,7 +953,7 @@ func groupEndpointTypeForAIRouteBucket(promptEndpointType string) string {
 func normalizeAIRouteGroupEndpointType(endpointType string) string {
 	endpointType = model.NormalizeEndpointType(endpointType)
 	if endpointType == "" {
-		return model.EndpointTypeAll
+		return model.EndpointTypeChat
 	}
 	return endpointType
 }
@@ -1678,7 +1678,7 @@ func ensureAIRouteGroupEndpointType(ctx context.Context, g *model.Group, routeEn
 	current := model.NormalizeEndpointType(g.EndpointType)
 	target := normalizeAIRouteGroupEndpointType(routeEndpointType)
 	if current == "" {
-		current = model.EndpointTypeAll
+		current = model.EndpointTypeChat
 	}
 
 	if target == model.EndpointTypeAll {

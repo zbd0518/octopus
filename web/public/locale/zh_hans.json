@@ -2502,7 +2502,6 @@
         "label": "路由 API 分类",
         "hint": "用于约束该分组匹配哪类请求，与渠道里的“渠道类型”不是同一个配置。",
         "options": {
-          "all": "全部",
           "chat": "对话",
           "deepseek": "DeepSeek",
           "mimo": "MiMo",

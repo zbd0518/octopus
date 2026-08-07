@@ -32,7 +32,7 @@ func StartChannelModelTest(req ChannelModelTestRequest, channel appmodel.Channel
 
 	endpointType := strings.TrimSpace(req.EndpointType)
 	if endpointType == "" {
-		endpointType = appmodel.EndpointTypeAll
+		endpointType = appmodel.EndpointTypeChat
 	}
 
 	items := []GroupModelDraftTestItem{{

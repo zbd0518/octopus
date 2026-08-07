@@ -93,6 +93,10 @@ func createGroup(c *gin.Context) {
 		return
 	}
 	group.EndpointType = model.NormalizeEndpointType(group.EndpointType)
+	if group.EndpointType == model.EndpointTypeAll {
+		resp.Error(c, http.StatusBadRequest, "endpoint_type '*' is no longer supported; use a specific type (e.g. 'chat')")
+		return
+	}
 	group.EndpointProvider = strings.ToLower(strings.TrimSpace(group.EndpointProvider))
 	group.OutboundFormat = strings.ToLower(strings.TrimSpace(group.OutboundFormat))
 	if group.MatchRegex != "" {
@@ -122,6 +126,10 @@ func updateGroup(c *gin.Context) {
 	}
 	if req.EndpointType != nil {
 		normalized := model.NormalizeEndpointType(*req.EndpointType)
+		if normalized == model.EndpointTypeAll {
+			resp.Error(c, http.StatusBadRequest, "endpoint_type '*' is no longer supported; use a specific type (e.g. 'chat')")
+			return
+		}
 		req.EndpointType = &normalized
 	}
 	if req.EndpointProvider != nil {

@@ -252,7 +252,7 @@ export function AIRouteProgressDialog({
                 <div>
                     <div className="text-xs text-muted-foreground">{t('aiRoute.progress.batchCapability')}</div>
                     <div className="mt-1 text-sm font-medium text-foreground">
-                        {batch.endpoint_type ? t(endpointTypeLabelKey(batch.endpoint_type) ?? 'form.endpointType.options.all') : '--'}
+                        {batch.endpoint_type ? t(endpointTypeLabelKey(batch.endpoint_type) ?? 'form.endpointType.options.chat') : '--'}
                     </div>
                 </div>
                 <div>

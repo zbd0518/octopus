@@ -26,7 +26,7 @@ var planFetchModels = func(ctx context.Context, channelType outbound.OutboundTyp
 			{URL: baseURL, Delay: 0},
 		},
 		Keys: []model.ChannelKey{
-			{Enabled: true, ChannelKey: apiKey},
+			{Enabled: true, ChannelKey: apiKey, Managed: true},
 		},
 	}
 	return helper.FetchModelsShortTimeout(ctx, request)
@@ -364,7 +364,7 @@ func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKe
 			addReq := &model.ChannelUpdateRequest{
 				ID: reuseChannelID,
 				KeysToAdd: []model.ChannelKeyAddRequest{
-					{Enabled: true, ChannelKey: channelKey},
+					{Enabled: true, ChannelKey: channelKey, Managed: true},
 				},
 			}
 			if _, err := op.ChannelUpdate(addReq, ctx); err != nil {
@@ -382,7 +382,7 @@ func AddProvider(ctx context.Context, category model.PlanProviderCategory, apiKe
 					{URL: channelBaseURL, Delay: 0},
 				},
 				Keys: []model.ChannelKey{
-					{Enabled: true, ChannelKey: channelKey},
+					{Enabled: true, ChannelKey: channelKey, Managed: true},
 				},
 				Model:     channelModel,
 				AutoSync:  false,
@@ -704,7 +704,7 @@ func updatePlanForwardChannelKey(ctx context.Context, provider *model.PlanProvid
 			Type:      outbound.OutboundTypeOpenAIChat,
 			Enabled:   true,
 			BaseUrls:  []model.BaseUrl{{URL: channelBaseURL, Delay: 0}},
-			Keys:      []model.ChannelKey{{Enabled: true, ChannelKey: newForwardAPIKey}},
+			Keys:      []model.ChannelKey{{Enabled: true, ChannelKey: newForwardAPIKey, Managed: true}},
 			Model:     info.Models,
 			AutoSync:  false,
 			AutoGroup: model.AutoGroupTypeNone,
@@ -747,7 +747,7 @@ func updatePlanForwardChannelKey(ctx context.Context, provider *model.PlanProvid
 			addReq := &model.ChannelUpdateRequest{
 				ID: provider.ChannelID,
 				KeysToAdd: []model.ChannelKeyAddRequest{
-					{Enabled: true, ChannelKey: newForwardAPIKey},
+					{Enabled: true, ChannelKey: newForwardAPIKey, Managed: true},
 				},
 			}
 			if _, err := op.ChannelUpdate(addReq, ctx); err != nil {

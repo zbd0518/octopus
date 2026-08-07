@@ -20,7 +20,6 @@ export const MODE_LABELS: Record<GroupMode, string> = {
 } as const;
 
 export const ENDPOINT_TYPE_OPTIONS = [
-    { labelKey: 'form.endpointType.options.all', value: '*' },
     { labelKey: 'form.endpointType.options.chat', value: 'chat' },
     { labelKey: 'form.endpointType.options.embeddings', value: 'embeddings' },
     { labelKey: 'form.endpointType.options.rerank', value: 'rerank' },
@@ -84,10 +83,10 @@ export function normalizeEndpointType(value?: string | null) {
     if (normalized === 'responses' || normalized === 'messages' || normalized === 'deepseek' || normalized === 'mimo') {
         return 'chat';
     }
-    return normalized || '*';
+    return normalized || 'chat';
 }
 
-const CONVERSATION_ENDPOINT_TYPES = new Set(['chat', 'deepseek', 'mimo', 'responses', 'messages', '*']);
+const CONVERSATION_ENDPOINT_TYPES = new Set(['chat', 'deepseek', 'mimo', 'responses', 'messages']);
 
 export function supportsGroupTest(endpointType?: string | null) {
     return CONVERSATION_ENDPOINT_TYPES.has(normalizeEndpointType(endpointType));

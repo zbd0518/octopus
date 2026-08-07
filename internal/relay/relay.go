@@ -90,62 +90,7 @@ func detectZenPreferredChannelTypes(requestModel string, isEmbeddingRequest bool
 }
 
 func outboundAttemptTypes(channelType outbound.OutboundType, request *model.InternalLLMRequest, outboundFormat string) []outbound.OutboundType {
-	// For LLM requests (both ChatCompletion and Responses API formats), provide
-	// adapter fallback with configurable priority order.
-	// When outboundFormat is "passthrough", send the original inbound JSON body
-	// to the endpoint matching the inbound API format and disable adapter fallback.
-	// When outboundFormat is "chat", prefer Chat Completions first.
-	// When outboundFormat is "responses", prefer Responses API first.
-	// When outboundFormat is "messages", prefer Anthropic Messages first.
-	// When outboundFormat is "chat_only" / "responses_only" / "messages_only",
-	// disable the cross-format fallback entirely — useful for upstreams that
-	// reject the other format (e.g. public-welfare relays returning 400/404 on
-	// Responses, or gateways whose Messages endpoint is on a separate path).
-	// Default (auto): prefer Chat first, then fall back to Responses.
-	// The internal request/response format abstracts over all API formats, so
-	// the inAdapter handles the final output conversion regardless of which
-	// outbound adapter is used.
-	format := strings.ToLower(strings.TrimSpace(outboundFormat))
-	if format == "passthrough" && request != nil {
-		switch request.RawAPIFormat {
-		case model.APIFormatOpenAIChatCompletion, model.APIFormatOpenAIResponse, model.APIFormatAnthropicMessage:
-			return []outbound.OutboundType{outbound.OutboundTypePassthrough}
-		}
-	}
-	// "raw"（原始穿透（信息体））：与 passthrough 一样原样转发请求体，
-	// 但额外保留客户端原始请求路径，仅改写 model 字段，不做格式转换或回退。
-	if format == "raw" && request != nil {
-		switch request.RawAPIFormat {
-		case model.APIFormatOpenAIChatCompletion, model.APIFormatOpenAIResponse, model.APIFormatAnthropicMessage:
-			return []outbound.OutboundType{outbound.OutboundTypeRaw}
-		}
-	}
-	if request != nil && isLLMRequestFormat(request) && (channelType == outbound.OutboundTypeOpenAIChat || channelType == outbound.OutboundTypeOpenAIResponse) {
-		switch format {
-		case "responses":
-			return []outbound.OutboundType{outbound.OutboundTypeOpenAIResponse, outbound.OutboundTypeOpenAIChat}
-		case "messages":
-			return []outbound.OutboundType{outbound.OutboundTypeAnthropic, outbound.OutboundTypeOpenAIChat, outbound.OutboundTypeOpenAIResponse}
-		case "chat_only":
-			return []outbound.OutboundType{outbound.OutboundTypeOpenAIChat}
-		case "responses_only":
-			return []outbound.OutboundType{outbound.OutboundTypeOpenAIResponse}
-		case "messages_only":
-			return []outbound.OutboundType{outbound.OutboundTypeAnthropic}
-		default: // auto / chat
-			return []outbound.OutboundType{outbound.OutboundTypeOpenAIChat, outbound.OutboundTypeOpenAIResponse}
-		}
-	}
-	return []outbound.OutboundType{channelType}
-}
-
-func isLLMRequestFormat(request *model.InternalLLMRequest) bool {
-	switch request.RawAPIFormat {
-	case model.APIFormatOpenAIChatCompletion, model.APIFormatOpenAIResponse, model.APIFormatAnthropicMessage:
-		return true
-	default:
-		return false
-	}
+	return outbound.ResolveAttemptTypes(channelType, request, outboundFormat)
 }
 
 func shouldTryAdapterFallback(result attemptResult, adapterIndex, attemptCount int) bool {

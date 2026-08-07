@@ -669,7 +669,7 @@ export function GroupCard({ group }: { group: Group }) {
                     <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-md border border-primary/10 bg-card px-2 py-0.5 text-[0.6rem] font-semibold text-primary md:gap-2 md:rounded-full md:px-2.5 md:py-1 md:text-[0.64rem]">
                         <Orbit className="size-3 md:size-3.5" />
                         {t('card.endpointType', {
-                            value: t(endpointTypeLabelKey(group.endpoint_type) ?? 'form.endpointType.options.all'),
+                            value: t(endpointTypeLabelKey(group.endpoint_type) ?? 'form.endpointType.options.chat'),
                         })}
                     </div>
                     <Tooltip side="top" sideOffset={10} align="center">

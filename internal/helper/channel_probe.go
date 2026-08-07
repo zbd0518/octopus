@@ -10,6 +10,8 @@ import (
 
 	"github.com/lingyuins/octopus/internal/conf"
 	appmodel "github.com/lingyuins/octopus/internal/model"
+	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
+	"github.com/lingyuins/octopus/internal/transformer/outbound"
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
@@ -100,6 +102,23 @@ func TestChannel(ctx context.Context, request appmodel.Channel) (*ChannelTestSum
 			} else if result.Passed {
 				result.Message = "ok"
 			}
+
+			// 连通性探测失败时，若渠道配置了可用的模型，回退到一次真实模型调用
+			// 做综合判断：部分上游（如某些中转站）的 GET /models 端点行为异常，
+			// 即使 key/网络正常也返回非 200，导致健康渠道误报失败（issue 反馈）。
+			// 真实调用成功则视为渠道可用。
+			if !result.Passed && fallbackModelName(&request) != "" {
+				fallbackStatus, fallbackBody, _, fallbackErr := performChannelModelFallback(ctx, &request, baseURL, key.ChannelKey)
+				if fallbackErr == nil {
+					result.Passed = true
+					result.Message = "ok (via model call)"
+					result.ResponseBody = fallbackBody
+					if fallbackStatus != 0 {
+						result.StatusCode = fallbackStatus
+					}
+				}
+			}
+
 			if result.Passed {
 				summary.Passed = true
 			}
@@ -166,6 +185,71 @@ func doChannelProbeRequest(client *http.Client, req *http.Request) (int, string,
 		bodyText = resp.Status
 	}
 	return resp.StatusCode, bodyText, fmt.Errorf("upstream error: %d", resp.StatusCode)
+}
+
+// fallbackModelName 返回渠道配置中可用的一个模型名，用于连通性探测失败后的
+// 真实模型调用回退。优先使用 Model，其次 CustomModel（二者可能以逗号分隔多个）。
+func fallbackModelName(channel *appmodel.Channel) string {
+	if channel == nil {
+		return ""
+	}
+	for _, candidate := range []string{channel.Model, channel.CustomModel} {
+		for _, part := range strings.Split(candidate, ",") {
+			name := strings.TrimSpace(part)
+			if name != "" {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+// performChannelModelFallback 用渠道配置的模型发起一次真实 chat 探测请求，
+// 用于连通性探测（GET /models）失败时的综合判断。经 outbound adapter 转发，
+// 与分组/模型测试同源。返回 status、响应体与错误。
+func performChannelModelFallback(ctx context.Context, channel *appmodel.Channel, baseURL, apiKey string) (int, string, *transmodel.InternalLLMResponse, error) {
+	if channel == nil {
+		return 0, "", nil, fmt.Errorf("channel is nil")
+	}
+	modelName := fallbackModelName(channel)
+	if modelName == "" {
+		return 0, "", nil, fmt.Errorf("no model configured for channel")
+	}
+
+	if outbound.Get(channel.Type) == nil {
+		return 0, "", nil, fmt.Errorf("unsupported channel type: %d", channel.Type)
+	}
+
+	// 用渠道类型校验是否支持 chat 探测；不支持则跳过回退。
+	if err := validateGroupProbeChannelType(appmodel.EndpointTypeAll, channel.Type); err != nil {
+		return 0, "", nil, err
+	}
+
+	// 临时把 baseURL 替换为当前探测的 baseURL，保证回退请求打到同一地址。
+	cloned := *channel
+	cloned.BaseUrls = []appmodel.BaseUrl{{URL: baseURL}}
+	cloned.Keys = []appmodel.ChannelKey{{ChannelKey: apiKey}}
+
+	// 与 group probe 一致，对 OpenAI 类型渠道走 adapter 回退（issue #187）：
+	// 先尝试 Chat Completions，失败再回退 Responses API。
+	probeReqForResolve, _ := buildGroupProbeRequest(appmodel.EndpointTypeAll, modelName)
+	adapterTypes := outbound.ResolveAttemptTypes(channel.Type, probeReqForResolve, "")
+	var lastErr error
+	for _, adapterType := range adapterTypes {
+		adapter := outbound.Get(adapterType)
+		if adapter == nil {
+			continue
+		}
+		statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, adapter, &cloned, apiKey, appmodel.EndpointTypeAll, modelName)
+		if err == nil {
+			return statusCode, responseText, internalResp, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return 0, "", nil, lastErr
+	}
+	return 0, "", nil, fmt.Errorf("no adapter available for channel type: %d", channel.Type)
 }
 
 func maskSecret(secret string) string {

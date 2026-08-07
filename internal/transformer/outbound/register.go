@@ -1,6 +1,8 @@
 package outbound
 
 import (
+	"strings"
+
 	"github.com/lingyuins/octopus/internal/transformer/model"
 	"github.com/lingyuins/octopus/internal/transformer/outbound/anthropic"
 	"github.com/lingyuins/octopus/internal/transformer/outbound/cloudflare"
@@ -105,4 +107,63 @@ func Get(outboundType OutboundType) model.Outbound {
 		return factory()
 	}
 	return nil
+}
+
+// IsLLMRequestFormat 判断请求是否为 LLM 对话格式（ChatCompletion / Response / Anthropic Message）。
+// 从 relay 包提取以供 helper 包的探测逻辑复用，避免 helper 导入 relay 造成循环依赖。
+func IsLLMRequestFormat(request *model.InternalLLMRequest) bool {
+	if request == nil {
+		return false
+	}
+	switch request.RawAPIFormat {
+	case model.APIFormatOpenAIChatCompletion, model.APIFormatOpenAIResponse, model.APIFormatAnthropicMessage:
+		return true
+	default:
+		return false
+	}
+}
+
+// ResolveAttemptTypes 根据 channel type、请求格式和 group outbound format 决定出站 adapter
+// 尝试顺序。从 relay 包提取以供 helper 探测逻辑复用。
+//
+// 对 OpenAIChat / OpenAIResponse 类型，提供可配置的 adapter 回退优先级：
+//   - "passthrough": 原样转发 inbound JSON body，禁用 adapter 回退。
+//   - "raw": 与 passthrough 相同，但额外保留客户端原始请求路径。
+//   - "chat" / 默认(auto): 优先 Chat Completions，回退 Responses API。
+//   - "responses": 优先 Responses API，回退 Chat Completions。
+//   - "messages": 优先 Anthropic Messages，回退 Chat → Responses。
+//   - "chat_only" / "responses_only" / "messages_only": 禁用跨格式回退。
+//
+// 其它 channel type 直接返回 [channelType]。
+func ResolveAttemptTypes(channelType OutboundType, request *model.InternalLLMRequest, outboundFormat string) []OutboundType {
+	format := strings.ToLower(strings.TrimSpace(outboundFormat))
+	if format == "passthrough" && request != nil {
+		switch request.RawAPIFormat {
+		case model.APIFormatOpenAIChatCompletion, model.APIFormatOpenAIResponse, model.APIFormatAnthropicMessage:
+			return []OutboundType{OutboundTypePassthrough}
+		}
+	}
+	if format == "raw" && request != nil {
+		switch request.RawAPIFormat {
+		case model.APIFormatOpenAIChatCompletion, model.APIFormatOpenAIResponse, model.APIFormatAnthropicMessage:
+			return []OutboundType{OutboundTypeRaw}
+		}
+	}
+	if request != nil && IsLLMRequestFormat(request) && (channelType == OutboundTypeOpenAIChat || channelType == OutboundTypeOpenAIResponse) {
+		switch format {
+		case "responses":
+			return []OutboundType{OutboundTypeOpenAIResponse, OutboundTypeOpenAIChat}
+		case "messages":
+			return []OutboundType{OutboundTypeAnthropic, OutboundTypeOpenAIChat, OutboundTypeOpenAIResponse}
+		case "chat_only":
+			return []OutboundType{OutboundTypeOpenAIChat}
+		case "responses_only":
+			return []OutboundType{OutboundTypeOpenAIResponse}
+		case "messages_only":
+			return []OutboundType{OutboundTypeAnthropic}
+		default: // auto / chat
+			return []OutboundType{OutboundTypeOpenAIChat, OutboundTypeOpenAIResponse}
+		}
+	}
+	return []OutboundType{channelType}
 }
