@@ -9,12 +9,12 @@ import (
 
 func init() {
 	RegisterAfterAutoMigration(Migration{
-		Version: 51,
+		Version: 53,
 		Up:      migrateGroupEndpointTypeAllToChat,
 	})
 }
 
-// 051: 把存量 endpoint_type='*'（"全部"分类）的 group 统一迁移为 'chat'。
+// 053: 兼容旧版本已记录 048/049、但尚未执行 groups.endpoint_type 回填的数据库。
 // 移除前端"全部"分类选项后，group 的 endpoint_type 不再接受 '*'，
 // 存量值为 '*' 的 group 需回填为 'chat'（与 NormalizeEndpointType 空值回退
 // 及前端默认值一致）。幂等：只更新 endpoint_type='*' 的行，重复执行安全。
