@@ -154,7 +154,7 @@ function LogFilterBar({
                 </SelectTrigger>
                 <SelectContent>
                     <SelectItem value="__all__">{t('allTypes')}</SelectItem>
-                    {ENDPOINT_TYPE_OPTIONS.filter((o) => o.value !== '*').map((opt) => (
+                    {ENDPOINT_TYPE_OPTIONS.map((opt) => (
                         <SelectItem key={opt.value} value={opt.value}>
                             {tGroup(opt.labelKey)}
                         </SelectItem>
