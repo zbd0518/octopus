@@ -9,19 +9,19 @@ import (
 
 func init() {
 	RegisterAfterAutoMigration(Migration{
-		Version: 49,
+		Version: 51,
 		Up:      migrateModelNormalizeMarketDedupeDefault,
 	})
 }
 
-// 049: 模型广场归一化去重默认开启。
+// 051: 模型广场归一化去重默认开启。
 // 旧默认 "false"（`model_normalize_market_dedupe_default`）导致模型广场不按
 // 归一化名合并变体（如 dmxapi-kimi-k2.5 与 kimi-k2.5 各自成行）。将存量默认值
 // 翻转为 "true"；条件限定 value='false'，重复执行安全（幂等），不会覆盖用户
 // 后续主动改回的值。
 //
 // 注意：本迁移原在 upstream/master 以 version 47 注册，但本仓库 version 47 已被
-// plan_provider 累计用量迁移占用（见 047.go），故合并时重排到 49。
+// plan_provider 累计用量迁移占用（见 047.go），故合并时重排到 51。
 func migrateModelNormalizeMarketDedupeDefault(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("db is nil")

@@ -9,16 +9,16 @@ import (
 
 func init() {
 	RegisterAfterAutoMigration(Migration{
-		Version: 48,
+		Version: 50,
 		Up:      migratePlanProviderLoginCredentials,
 	})
 }
 
-// 048: 为 plan_providers 表增加商汤日日新账号密码自动登录相关字段。
+// 050: 为 plan_providers 表增加商汤日日新账号密码自动登录相关字段。
 // gorm AutoMigrate 也会加列，这里幂等兜底。
 //
 // 注意：本迁移原在 upstream/master 以 version 46 注册，但本仓库 version 46 已被
-// plan_provider 刷新字段迁移占用（见 046.go），故合并时重排到 48。
+// plan_provider 刷新字段迁移占用（见 046.go），故合并时重排到 50。
 func migratePlanProviderLoginCredentials(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("db is nil")
