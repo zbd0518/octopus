@@ -9,12 +9,12 @@ import (
 
 func init() {
 	RegisterAfterAutoMigration(Migration{
-		Version: 48,
+		Version: 50,
 		Up:      migrateChannelKeyManaged,
 	})
 }
 
-// 048: channel_keys 表增加 managed 列。
+// 050: channel_keys 表增加 managed 列。
 // site 同步投影为区分"自动生成的 key"与"用户手动添加的 key"，给
 // ChannelKey 增加 Managed bool 字段。存量 key 一律置 false（视为手动
 // key），之后的同步会重新写入 Managed=true 的 key；diff 时只删除
