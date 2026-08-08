@@ -16,15 +16,18 @@ import { useTranslations } from 'next-intl';
 import {
     ChannelForm,
     TemplatePickerGrid,
+    TemplatePickerSelect,
     createDefaultRequestRewriteFormData,
     getEffectiveRequestRewriteFormData,
     type ChannelFormData,
 } from './Form';
 import { channelTemplates } from './templates';
 import { DEFAULT_CHANNEL_TYPE } from './type-options';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 export function CreateDialogContent() {
     const { setIsOpen } = useMorphingDialog();
+    const isMobile = useIsMobile();
     const createChannel = useCreateChannel();
     const [showPresetPicker, setShowPresetPicker] = useState(true);
     const [formData, setFormData] = useState<ChannelFormData>({
@@ -156,7 +159,7 @@ export function CreateDialogContent() {
                         </div>
                         <h2 className="text-xl font-semibold tracking-tight text-card-foreground md:text-2xl">{t('dialogTitle')}</h2>
                     </div>
-                    {showPresetPicker ? (
+                    {!isMobile && showPresetPicker ? (
                         <Button
                             type="button"
                             variant="outline"
@@ -184,7 +187,7 @@ export function CreateDialogContent() {
             </MorphingDialogTitle>
             <MorphingDialogDescription disableLayoutAnimation className="relative flex-1 min-h-0 overflow-hidden px-4 py-4 md:px-6 md:py-5">
                 <AnimatePresence mode="wait" initial={false}>
-                {showPresetPicker ? (
+                {!isMobile && showPresetPicker ? (
                     <motion.div
                         key="preset-picker"
                         initial={{ opacity: 0, scale: 0.98, y: 6 }}
@@ -212,7 +215,11 @@ export function CreateDialogContent() {
                                 </div>
                                 <p className="text-xs leading-5 text-muted-foreground">{tForm('template.pickerHint')}</p>
                             </div>
-                            <TemplatePickerGrid onApplyTemplate={handleApplyTemplate} />
+                            {isMobile ? (
+                                <TemplatePickerSelect onApplyTemplate={handleApplyTemplate} />
+                            ) : (
+                                <TemplatePickerGrid onApplyTemplate={handleApplyTemplate} />
+                            )}
                         </div>
                     </motion.div>
                 ) : (
@@ -232,7 +239,7 @@ export function CreateDialogContent() {
                             submitText={t('submit')}
                             pendingText={t('submitting')}
                             idPrefix="new-channel"
-                            showTemplatePicker={false}
+                            showTemplatePicker={isMobile}
                             onShowTemplatePicker={() => setShowPresetPicker(true)}
                         />
                     </motion.div>

@@ -150,15 +150,14 @@ func TestDeepSeekReasoningContentPreserved(t *testing.T) {
 		t.Error("First tool_calls message should have reasoning_content attached from standalone reasoning message")
 	}
 
-	// Verify extra_body does NOT force thinking:disabled when no reasoning_effort is set
-	if extraBody, ok := parsed["extra_body"]; ok {
-		eb, _ := extraBody.(map[string]interface{})
-		if thinking, hasThinking := eb["thinking"]; hasThinking {
-			th, _ := thinking.(map[string]interface{})
-			if thType, ok := th["type"].(string); ok && thType == "disabled" {
-				t.Error("extra_body.thinking.type should NOT be 'disabled' when reasoning_effort is not set. DeepSeek V4 defaults to thinking ON.")
-			}
+	// Verify thinking is not forced disabled when no reasoning_effort is set
+	if thinking, ok := parsed["thinking"].(map[string]interface{}); ok {
+		if thType, ok := thinking["type"].(string); ok && thType == "disabled" {
+			t.Error("thinking.type should NOT be 'disabled' when reasoning_effort is not set. DeepSeek V4 defaults to thinking ON.")
 		}
+	}
+	if _, hasExtra := parsed["extra_body"]; hasExtra {
+		t.Error("nested extra_body must not appear on the wire; thinking keys are top-level")
 	}
 }
 
@@ -203,7 +202,7 @@ func TestDeepSeekReasoningEffortEnablesThinking(t *testing.T) {
 	compatRequest := cloneRequestForOpenAICompat(request)
 	sanitizeRequestForOpenAICompat(compatRequest, "https://api.deepseek.com/v1", false)
 
-	body, err := transformer.Marshal(compatRequest)
+	body, err := marshalOpenAICompatRequest(compatRequest)
 	if err != nil {
 		t.Fatalf("marshal failed: %v", err)
 	}
@@ -216,18 +215,16 @@ func TestDeepSeekReasoningEffortEnablesThinking(t *testing.T) {
 	prettyJSON, _ := transformer.MarshalIndent(parsed, "", "  ")
 	t.Logf("Request JSON:\n%s", string(prettyJSON))
 
-	extraBody, ok := parsed["extra_body"].(map[string]interface{})
+	thinking, ok := parsed["thinking"].(map[string]interface{})
 	if !ok {
-		t.Fatal("extra_body should be present when reasoning_effort is set")
-	}
-
-	thinking, ok := extraBody["thinking"].(map[string]interface{})
-	if !ok {
-		t.Fatal("extra_body.thinking should be present when reasoning_effort is set")
+		t.Fatal("top-level thinking should be present when reasoning_effort is set")
 	}
 
 	if thType, ok := thinking["type"].(string); !ok || thType != "enabled" {
-		t.Errorf("extra_body.thinking.type should be 'enabled' when reasoning_effort is set, got: %v", thinking["type"])
+		t.Errorf("thinking.type should be 'enabled' when reasoning_effort is set, got: %v", thinking["type"])
+	}
+	if _, hasExtra := parsed["extra_body"]; hasExtra {
+		t.Error("nested extra_body must not appear on the wire")
 	}
 }
 
@@ -265,9 +262,12 @@ func TestDeepSeekNoThinkingWhenNotDetected(t *testing.T) {
 		t.Error("reasoning_content should be stripped for non-DeepSeek targets")
 	}
 
-	// extra_body should NOT be present for non-DeepSeek
+	// thinking/extra_body should NOT be present for non-DeepSeek
 	if _, hasExtra := parsed["extra_body"]; hasExtra {
 		t.Error("extra_body should be stripped for non-DeepSeek targets")
+	}
+	if _, hasThinking := parsed["thinking"]; hasThinking {
+		t.Error("thinking should be stripped for non-DeepSeek targets")
 	}
 }
 

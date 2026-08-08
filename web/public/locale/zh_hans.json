@@ -2502,6 +2502,7 @@
         "label": "路由 API 分类",
         "hint": "用于约束该分组匹配哪类请求，与渠道里的“渠道类型”不是同一个配置。",
         "options": {
+          "all": "全部",
           "chat": "对话",
           "deepseek": "DeepSeek",
           "mimo": "MiMo",
@@ -3099,6 +3100,7 @@
         "open": "使用预设",
         "skip": "跳过预设",
         "pickerHint": "可以先选择一个内置供应商快速预填；如果你的上游不在列表里，跳过后手动配置即可。",
+        "selectPlaceholder": "选择内置供应商模板…",
         "options": {
           "openai": {
             "description": "OpenAI Chat 官方接口"

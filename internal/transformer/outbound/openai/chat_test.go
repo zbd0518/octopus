@@ -933,6 +933,8 @@ func TestChatOutboundTransformRequest_MapsDeepSeekThinkingControls(t *testing.T)
 
 	var got struct {
 		ReasoningEffort string         `json:"reasoning_effort,omitempty"`
+		Thinking        map[string]any `json:"thinking,omitempty"`
+		Foo             any            `json:"foo,omitempty"`
 		ExtraBody       map[string]any `json:"extra_body,omitempty"`
 	}
 	if err := transformer.Unmarshal(body, &got); err != nil {
@@ -943,15 +945,14 @@ func TestChatOutboundTransformRequest_MapsDeepSeekThinkingControls(t *testing.T)
 		t.Fatalf("expected deepseek reasoning_effort max, got %q", got.ReasoningEffort)
 	}
 
-	thinking, ok := got.ExtraBody["thinking"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected extra_body.thinking to be preserved, got %#v", got.ExtraBody)
+	if got.Thinking["type"] != "enabled" {
+		t.Fatalf("expected top-level thinking.type enabled, got %#v", got.Thinking)
 	}
-	if thinking["type"] != "enabled" {
-		t.Fatalf("expected extra_body.thinking.type enabled, got %#v", thinking["type"])
+	if got.Foo != "bar" {
+		t.Fatalf("expected extra_body custom fields flattened to top-level, got foo=%#v", got.Foo)
 	}
-	if got.ExtraBody["foo"] != "bar" {
-		t.Fatalf("expected extra_body custom fields to be preserved, got %#v", got.ExtraBody["foo"])
+	if len(got.ExtraBody) != 0 {
+		t.Fatalf("expected nested extra_body to be omitted from wire body, got %#v", got.ExtraBody)
 	}
 }
 
@@ -986,6 +987,8 @@ func TestChatOutboundTransformRequest_MapsMimoThinkingControls(t *testing.T) {
 
 	var got struct {
 		ReasoningEffort string         `json:"reasoning_effort,omitempty"`
+		Thinking        map[string]any `json:"thinking,omitempty"`
+		Foo             any            `json:"foo,omitempty"`
 		ExtraBody       map[string]any `json:"extra_body,omitempty"`
 	}
 	if err := transformer.Unmarshal(body, &got); err != nil {
@@ -996,18 +999,14 @@ func TestChatOutboundTransformRequest_MapsMimoThinkingControls(t *testing.T) {
 		t.Fatalf("expected mimo reasoning_effort max, got %q", got.ReasoningEffort)
 	}
 
-	thinking, ok := got.ExtraBody["thinking"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected extra_body.thinking to be preserved, got %#v", got.ExtraBody)
+	if got.Thinking["type"] != "enabled" {
+		t.Fatalf("expected top-level thinking.type enabled, got %#v", got.Thinking)
 	}
-	if thinking["type"] != "enabled" {
-		t.Fatalf("expected extra_body.thinking.type enabled, got %#v", thinking["type"])
+	if got.Foo != "bar" {
+		t.Fatalf("expected extra_body custom fields flattened to top-level, got foo=%#v", got.Foo)
 	}
-	if got.ExtraBody["foo"] != "bar" {
-		t.Fatalf("expected extra_body custom fields to be preserved, got %#v", got.ExtraBody["foo"])
-	}
-	if got.ReasoningEffort != "max" {
-		t.Fatalf("expected mimo reasoning_effort max, got %q", got.ReasoningEffort)
+	if len(got.ExtraBody) != 0 {
+		t.Fatalf("expected nested extra_body to be omitted from wire body, got %#v", got.ExtraBody)
 	}
 }
 
@@ -1122,11 +1121,10 @@ func TestChatOutboundTransformRequest_DisablesDeepSeekThinkingWhenReasoningEffor
 
 	var got struct {
 		ReasoningEffort *string `json:"reasoning_effort,omitempty"`
-		ExtraBody       struct {
-			Thinking struct {
-				Type string `json:"type"`
-			} `json:"thinking"`
-		} `json:"extra_body,omitempty"`
+		Thinking        struct {
+			Type string `json:"type"`
+		} `json:"thinking,omitempty"`
+		ExtraBody map[string]any `json:"extra_body,omitempty"`
 	}
 	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
@@ -1135,8 +1133,11 @@ func TestChatOutboundTransformRequest_DisablesDeepSeekThinkingWhenReasoningEffor
 	if got.ReasoningEffort != nil {
 		t.Fatalf("expected reasoning_effort to be omitted, got %q", *got.ReasoningEffort)
 	}
-	if got.ExtraBody.Thinking.Type != "disabled" {
-		t.Fatalf("expected deepseek thinking to be disabled, got %q", got.ExtraBody.Thinking.Type)
+	if got.Thinking.Type != "disabled" {
+		t.Fatalf("expected deepseek thinking to be disabled, got %q", got.Thinking.Type)
+	}
+	if len(got.ExtraBody) != 0 {
+		t.Fatalf("expected nested extra_body to be omitted, got %#v", got.ExtraBody)
 	}
 }
 
@@ -1175,11 +1176,10 @@ func TestChatOutboundTransformRequest_DisablesMimoThinkingWhenReasoningEffortNon
 
 	var got struct {
 		ReasoningEffort *string `json:"reasoning_effort,omitempty"`
-		ExtraBody       struct {
-			Thinking struct {
-				Type string `json:"type"`
-			} `json:"thinking"`
-		} `json:"extra_body,omitempty"`
+		Thinking        struct {
+			Type string `json:"type"`
+		} `json:"thinking,omitempty"`
+		ExtraBody map[string]any `json:"extra_body,omitempty"`
 	}
 	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
@@ -1188,8 +1188,11 @@ func TestChatOutboundTransformRequest_DisablesMimoThinkingWhenReasoningEffortNon
 	if got.ReasoningEffort != nil {
 		t.Fatalf("expected reasoning_effort to be omitted, got %q", *got.ReasoningEffort)
 	}
-	if got.ExtraBody.Thinking.Type != "disabled" {
-		t.Fatalf("expected mimo thinking to be disabled, got %q", got.ExtraBody.Thinking.Type)
+	if got.Thinking.Type != "disabled" {
+		t.Fatalf("expected mimo thinking to be disabled, got %q", got.Thinking.Type)
+	}
+	if len(got.ExtraBody) != 0 {
+		t.Fatalf("expected nested extra_body to be omitted, got %#v", got.ExtraBody)
 	}
 }
 
@@ -1224,11 +1227,10 @@ func TestChatOutboundTransformRequest_DeepSeekThinkingDisabledOverridesReasoning
 
 	var got struct {
 		ReasoningEffort *string `json:"reasoning_effort,omitempty"`
-		ExtraBody       struct {
-			Thinking struct {
-				Type string `json:"type"`
-			} `json:"thinking"`
-		} `json:"extra_body,omitempty"`
+		Thinking        struct {
+			Type string `json:"type"`
+		} `json:"thinking,omitempty"`
+		ExtraBody map[string]any `json:"extra_body,omitempty"`
 	}
 	if err := transformer.Unmarshal(body, &got); err != nil {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
@@ -1237,8 +1239,50 @@ func TestChatOutboundTransformRequest_DeepSeekThinkingDisabledOverridesReasoning
 	if got.ReasoningEffort != nil {
 		t.Fatalf("expected reasoning_effort to be omitted when thinking disabled, got %q", *got.ReasoningEffort)
 	}
-	if got.ExtraBody.Thinking.Type != "disabled" {
-		t.Fatalf("expected deepseek thinking type disabled, got %q", got.ExtraBody.Thinking.Type)
+	if got.Thinking.Type != "disabled" {
+		t.Fatalf("expected deepseek thinking type disabled, got %q", got.Thinking.Type)
+	}
+	if len(got.ExtraBody) != 0 {
+		t.Fatalf("expected nested extra_body to be omitted, got %#v", got.ExtraBody)
+	}
+}
+
+func TestChatOutboundTransformRequest_StripsReasoningEffortForDeepSeekAliasOnStrictOpenAIProxy(t *testing.T) {
+	outbound := &ChatOutbound{}
+	request := &model.InternalLLMRequest{
+		Model:           "deepseek-v4-flash",
+		ReasoningEffort: "medium",
+		Messages: []model.Message{{
+			Role: "user",
+			Content: model.MessageContent{
+				Content: loPtr("这是一条测试信息"),
+			},
+		}},
+	}
+
+	// FuturePPO-style host: deepseek model alias, no deepseek in base URL,
+	// no endpoint_type=deepseek metadata — must not inject thinking controls.
+	httpReq, err := outbound.TransformRequest(context.Background(), request, "https://api.futureppo.top/v1", "sk-test")
+	if err != nil {
+		t.Fatalf("TransformRequest() error = %v", err)
+	}
+	body, err := io.ReadAll(httpReq.Body)
+	if err != nil {
+		t.Fatalf("failed to read request body: %v", err)
+	}
+
+	var got map[string]any
+	if err := transformer.Unmarshal(body, &got); err != nil {
+		t.Fatalf("failed to unmarshal outbound body: %v", err)
+	}
+	if _, ok := got["reasoning_effort"]; ok {
+		t.Fatalf("expected reasoning_effort omitted for deepseek alias on strict OpenAI proxy, body=%s", body)
+	}
+	if _, ok := got["extra_body"]; ok {
+		t.Fatalf("expected extra_body omitted, body=%s", body)
+	}
+	if _, ok := got["thinking"]; ok {
+		t.Fatalf("expected thinking omitted, body=%s", body)
 	}
 }
 

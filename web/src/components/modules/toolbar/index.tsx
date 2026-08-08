@@ -635,7 +635,10 @@ export function Toolbar() {
                         </MorphingDialogTrigger>
 
                         <MorphingDialogContainer>
-                            <MorphingDialogContent className={getCreateDialogContentClassName(toolbarItem)}>
+                            <MorphingDialogContent
+                                className={getCreateDialogContentClassName(toolbarItem)}
+                                dismissOnOverlayClick={toolbarItem !== 'channel'}
+                            >
                                 <CreateDialogContent activeItem={toolbarItem} />
                             </MorphingDialogContent>
                         </MorphingDialogContainer>

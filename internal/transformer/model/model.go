@@ -100,7 +100,12 @@ type InternalLLMRequest struct {
 	// or [evals](https://platform.openai.com/docs/guides/evals) products.
 	//
 	// Supports text and image inputs. Note: image inputs over 10MB will be dropped.
-	Store *bool `json:"store,omitzero"`
+	//
+	// Use omitempty (not omitzero): release builds marshal via jsoniter
+	// ConfigCompatibleWithStandardLibrary, which does not honor omitzero and
+	// would emit "store":null for a nil *bool. Strict OpenAI-compat relays
+	// (e.g. new-api / jzgo) reject null with "store 类型错误".
+	Store *bool `json:"store,omitempty"`
 
 	// What sampling temperature to use, between 0 and 2. Higher values like 0.8 will
 	// make the output more random, while lower values like 0.2 will make it more
@@ -111,7 +116,8 @@ type InternalLLMRequest struct {
 	// An integer between 0 and 20 specifying the number of most likely tokens to
 	// return at each token position, each with an associated log probability.
 	// `logprobs` must be set to `true` if this parameter is used.
-	TopLogprobs *int64 `json:"top_logprobs,omitzero"`
+	// omitempty: same jsoniter omitzero gap as Store (see above).
+	TopLogprobs *int64 `json:"top_logprobs,omitempty"`
 
 	// An alternative to sampling with temperature, called nucleus sampling, where the
 	// model considers the results of the tokens with top_p probability mass. So 0.1
@@ -123,14 +129,16 @@ type InternalLLMRequest struct {
 	// Used by OpenAI to cache responses for similar requests to optimize your cache
 	// hit rates. Replaces the `user` field.
 	// [Learn more](https://platform.openai.com/docs/guides/prompt-caching).
-	PromptCacheKey *bool `json:"prompt_cache_key,omitzero"`
+	// omitempty: same jsoniter omitzero gap as Store (see above).
+	PromptCacheKey *bool `json:"prompt_cache_key,omitempty"`
 
 	// A stable identifier used to help detect users of your application that may be
 	// violating OpenAI's usage policies. The IDs should be a string that uniquely
 	// identifies each user. We recommend hashing their username or email address, in
 	// order to avoid sending us any identifying information.
 	// [Learn more](https://platform.openai.com/docs/guides/safety-best-practices#safety-identifiers).
-	SafetyIdentifier *string `json:"safety_identifier,omitzero"`
+	// omitempty: same jsoniter omitzero gap as Store (see above).
+	SafetyIdentifier *string `json:"safety_identifier,omitempty"`
 
 	// This field is being replaced by `safety_identifier` and `prompt_cache_key`. Use
 	// `prompt_cache_key` instead to maintain caching optimizations. A stable

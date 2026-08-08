@@ -461,7 +461,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                             </div>
                             <div className="grid grid-cols-2 md:grid-cols-7 gap-x-4 gap-y-1.5 text-xs tabular-nums text-muted-foreground">
                                 <div className="flex items-center gap-1.5">
-                                    <Clock className="size-3.5 shrink-0" style={{ color: brandColor }} />
+                                    <Clock className="size-3.5 shrink-0" style={{ color: channelBadgeStyle.color }} />
                                     <span>{formatTime(log.time)}</span>
                                 </div>
                                 {vis.apiKeyName && requestAPIKeyName && (
@@ -830,7 +830,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                         <div className="shrink-0 border-t border-border/50 pt-3 text-xs text-muted-foreground">
                             <div className="flex flex-wrap items-center gap-3 md:gap-4">
                             <div className="flex items-center gap-1.5">
-                                <Clock className="size-3.5" style={{ color: brandColor }} />
+                                <Clock className="size-3.5" style={{ color: channelBadgeStyle.color }} />
                                 <span className="tabular-nums">{formatTime(log.time)}</span>
                             </div>
                             {vis.apiKeyName && requestAPIKeyName && (

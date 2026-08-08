@@ -40,7 +40,10 @@ func (o *ChatOutbound) TransformRequest(ctx context.Context, request *model.Inte
 		}
 	}
 
-	body, err := transformer.Marshal(compatRequest)
+	// DeepSeek docs: SDK `extra_body` is a client-side bag; the HTTP body must
+	// carry those keys at the top level (e.g. `thinking`). Nested `extra_body`
+	// is rejected by the official API and by strict OpenAI-compat proxies.
+	body, err := marshalOpenAICompatRequest(compatRequest)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
@@ -99,7 +102,13 @@ func SanitizeRequestForOpenAICompat(request *model.InternalLLMRequest, baseURL s
 	// reasoning-compatible targets. DeepSeek and Mimo already handle effort
 	// mapping in the call above.
 	if !isReasoningCompatRequest(baseURL, request, isMimoChannel) {
-		request.ReasoningEffort = normalizeOpenAICompatReasoningEffort(request.ReasoningEffort)
+		// deepseek-* aliases on strict OpenAI-compat relays (FuturePPO etc.)
+		// reject reasoning_effort even though the model id contains "deepseek".
+		if looksLikeDeepSeekModelName(request.Model) {
+			request.ReasoningEffort = ""
+		} else {
+			request.ReasoningEffort = normalizeOpenAICompatReasoningEffort(request.ReasoningEffort)
+		}
 	}
 
 	preserveDeepSeekReasoning := shouldPreserveDeepSeekReasoning(baseURL, request, isMimoChannel)
@@ -124,6 +133,41 @@ func SanitizeRequestForOpenAICompat(request *model.InternalLLMRequest, baseURL s
 	// Official OpenAI accepts metadata; omitting it is always safe.
 	// Aligns with ResponseOutbound.TransformRequest which already strips it.
 	request.Metadata = nil
+}
+
+// marshalOpenAICompatRequest serializes the OpenAI-compat chat body and flattens
+// ExtraBody into top-level JSON keys. ExtraBody is an SDK-only concept.
+func marshalOpenAICompatRequest(request *model.InternalLLMRequest) ([]byte, error) {
+	if request == nil {
+		return nil, fmt.Errorf("request is nil")
+	}
+
+	extraBody := request.ExtraBody
+	request.ExtraBody = nil
+	body, err := transformer.Marshal(request)
+	request.ExtraBody = extraBody
+	if err != nil {
+		return nil, err
+	}
+	if len(extraBody) == 0 {
+		return body, nil
+	}
+
+	var payload map[string]any
+	if err := transformer.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+
+	var extra map[string]any
+	if err := transformer.Unmarshal(extraBody, &extra); err != nil {
+		return nil, err
+	}
+	for key, value := range extra {
+		payload[key] = value
+	}
+	delete(payload, "extra_body")
+
+	return transformer.Marshal(payload)
 }
 
 func applyReasoningCompatTokenBudget(request *model.InternalLLMRequest, baseURL string, isMimoChannel bool) {

@@ -170,7 +170,7 @@ export function Card({
                 </MorphingDialogTrigger>
 
                 <MorphingDialogContainer>
-                    <MorphingDialogContent className="relative flex max-h-[calc(100dvh-2rem)] min-h-0 w-[min(100vw-1rem,64rem)] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-card px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] text-card-foreground md:px-6 md:py-5">
+                    <MorphingDialogContent className="relative flex max-h-[calc(100dvh-2rem)] min-h-0 w-[min(100vw-1rem,64rem)] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-card px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] text-card-foreground md:px-6 md:py-5" dismissOnOverlayClick={false}>
                         <CardContent channel={channel} stats={stats} />
                     </MorphingDialogContent>
                 </MorphingDialogContainer>
@@ -353,7 +353,7 @@ export function Card({
             </MorphingDialogTrigger>
 
             <MorphingDialogContainer>
-                <MorphingDialogContent className="relative flex max-h-[calc(100dvh-2rem)] min-h-0 w-[min(100vw-1rem,64rem)] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-card px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] text-card-foreground md:px-6 md:py-5">
+                <MorphingDialogContent className="relative flex max-h-[calc(100dvh-2rem)] min-h-0 w-[min(100vw-1rem,64rem)] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-card px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] text-card-foreground md:px-6 md:py-5" dismissOnOverlayClick={false}>
                     <CardContent channel={channel} stats={stats} />
                 </MorphingDialogContent>
             </MorphingDialogContainer>

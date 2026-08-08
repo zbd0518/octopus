@@ -31,6 +31,11 @@ func isProviderReasoningCompatRequest(baseURL string, request *model.InternalLLM
 		return true
 	}
 
+	// DeepSeek/MiMo thinking controls are wire-format features of the *upstream*,
+	// not of the client-facing model alias. Matching only on model name causes
+	// Octopus to inject reasoning_effort / thinking into strict OpenAI-compat
+	// proxies (e.g. FuturePPO) that expose deepseek-* aliases but reject those
+	// fields with HTTP 400.
 	lowerBaseURL := strings.ToLower(strings.TrimSpace(baseURL))
 	if lowerBaseURL != "" && strings.Contains(lowerBaseURL, provider) {
 		return true
@@ -46,16 +51,19 @@ func isProviderReasoningCompatRequest(baseURL string, request *model.InternalLLM
 		return true
 	}
 
-	lowerModelName := strings.ToLower(strings.TrimSpace(request.Model))
-	if strings.Contains(lowerModelName, provider) {
-		return true
-	}
-
+	// MiMo keeps model-name fallback (xiaomi / mimo) because many MiMo gateways
+	// omit "mimo" from the host while still speaking the MiMo thinking schema.
+	// DeepSeek does not: require base URL or explicit endpoint_type=deepseek.
 	if provider == "mimo" {
-		return strings.Contains(lowerModelName, "xiaomi")
+		lowerModelName := strings.ToLower(strings.TrimSpace(request.Model))
+		return strings.Contains(lowerModelName, "mimo") || strings.Contains(lowerModelName, "xiaomi")
 	}
 
 	return false
+}
+
+func looksLikeDeepSeekModelName(modelName string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(modelName)), "deepseek")
 }
 
 func normalizeDeepSeekReasoningCompat(request *model.InternalLLMRequest, baseURL string, isMimoChannel bool) {

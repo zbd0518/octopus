@@ -203,12 +203,15 @@ export type MorphingDialogContentProps = {
   children: React.ReactNode;
   className?: string;
   style?: React.CSSProperties;
+  /** 点击弹窗外部空白区域是否关闭。长表单（创建/编辑）建议传 false 防止误触丢失输入。 */
+  dismissOnOverlayClick?: boolean;
 };
 
 function MorphingDialogContent({
   children,
   className,
   style,
+  dismissOnOverlayClick = true,
 }: MorphingDialogContentProps) {
   const { setIsOpen, isOpen, uniqueId, disableSharedLayout, triggerRef } = useMorphingDialog();
   const containerRef = useRef<HTMLDivElement>(null!);
@@ -268,7 +271,7 @@ function MorphingDialogContent({
   useClickOutside(
     containerRef,
     () => {
-      if (isOpen) {
+      if (dismissOnOverlayClick && isOpen) {
         setIsOpen(false);
       }
     },

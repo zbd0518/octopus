@@ -94,6 +94,8 @@ export function supportsGroupTest(endpointType?: string | null) {
 
 export function endpointTypeLabelKey(value?: string | null) {
     const endpointType = normalizeEndpointType(value);
+    // 存量/测试日志可能带无分组语义的 '*' endpoint_type，映射为 "全部" 标签
+    if (endpointType === '*') return 'form.endpointType.options.all';
     return ENDPOINT_TYPE_OPTIONS.find((option) => option.value === endpointType)?.labelKey;
 }
 

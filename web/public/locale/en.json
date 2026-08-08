@@ -2546,6 +2546,7 @@
         "label": "Route API Type",
         "hint": "This controls which request category the group matches. It is different from the channel-level provider type.",
         "options": {
+          "all": "All",
           "chat": "Conversation",
           "deepseek": "DeepSeek",
           "mimo": "MiMo",
@@ -3143,6 +3144,7 @@
         "open": "Use template",
         "skip": "Skip templates",
         "pickerHint": "Choose a built-in provider to prefill the form. If your upstream is not listed, skip this step and configure it manually.",
+        "selectPlaceholder": "Select a provider template…",
         "options": {
           "openai": {
             "description": "OpenAI Chat official API"

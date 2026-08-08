@@ -122,6 +122,42 @@ const MODEL_ICON_PATTERNS: ModelIconConfig[] = [
 const DEFAULT_CONFIG = { Avatar: OpenAI.Avatar, color: '#10A37F', label: 'Model' };
 
 /**
+ * 计算 hex 颜色的相对亮度（0–1），基于 WCAG 相对亮度公式。
+ * 用于判断品牌色在深色/浅色背景上的可读性。
+ */
+export function colorLuminance(hex: string): number {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+    if (!m) return 0.5; // 非标准格式返回中间值，不触发翻转
+    const n = parseInt(m[1], 16);
+    const toLinear = (c: number) => {
+        const s = c / 255;
+        return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    };
+    const r = toLinear((n >> 16) & 0xff);
+    const g = toLinear((n >> 8) & 0xff);
+    const b = toLinear(n & 0xff);
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/**
+ * 解析在指定主题下可读的品牌色。
+ *
+ * 品牌色直接用作 Badge 文字/背景色时，深色系颜色（如 Grok/Kimi/Replicate 的
+ * 纯黑 #000、MiniMax 的 #1A1A2E）在深色模式下会「黑字+透明黑底」看不清；
+ * 同理浅色模式下 Ollama 的纯白 #FFF 白字也不可见。
+ *
+ * @param color 原始品牌色（hex）
+ * @param isDark 当前是否为深色主题
+ * @returns 可读颜色
+ */
+export function resolveBrandColor(color: string, isDark: boolean): string {
+    const lum = colorLuminance(color);
+    if (isDark && lum < 0.15) return '#E5E7EB';
+    if (!isDark && lum > 0.9) return '#4B5563';
+    return color;
+}
+
+/**
  * Get the Avatar component and color for a given model name
  * @param modelName - The name of the model
  * @returns Object containing Avatar component and brand color

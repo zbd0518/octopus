@@ -51,6 +51,7 @@ import {
 } from '@/components/ui/dialog';
 import { toast } from '@/components/common/Toast';
 import { cn } from '@/lib/utils';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { useTranslations } from 'next-intl';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, X, Plus, FlaskConical, CheckCircle2, AlertTriangle, Trash2, Sparkles, Orbit, Layers3, KeyRound, Cable, Search, Check, ListFilter, ChevronRight, ClipboardPaste } from 'lucide-react';
@@ -571,6 +572,46 @@ export function TemplatePickerGrid({
     );
 }
 
+/**
+ * 移动端高密度版模板选择器：下拉 Select 替代卡片网格，
+ * 选择即应用，触发区显示当前已选模板名。
+ */
+export function TemplatePickerSelect({
+    onApplyTemplate,
+}: {
+    onApplyTemplate: (templateKey: string) => void;
+}) {
+    const t = useTranslations('channel.form');
+    const [selected, setSelected] = useState('');
+
+    return (
+        <Select
+            value={selected}
+            onValueChange={(value) => {
+                setSelected(value);
+                onApplyTemplate(value);
+            }}
+        >
+            <SelectTrigger
+                id="channel-template-select"
+                className="w-full rounded-lg border border-border px-4 py-2 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+                <SelectValue placeholder={t('template.selectPlaceholder')} />
+            </SelectTrigger>
+            <SelectContent className="max-h-80 min-w-0 rounded-lg" style={{ width: 'var(--radix-select-trigger-width)' }}>
+                {channelTemplates.map((template) => (
+                    <SelectItem key={template.key} className="rounded-xl py-2.5" value={template.key}>
+                        <span className="flex min-w-0 items-center gap-2">
+                            <span className="shrink-0 font-medium">{template.name}</span>
+                            <span className="truncate text-xs text-muted-foreground">{t(template.descriptionKey)}</span>
+                        </span>
+                    </SelectItem>
+                ))}
+            </SelectContent>
+        </Select>
+    );
+}
+
 export function ChannelForm({
     formData,
     onFormDataChange,
@@ -585,6 +626,7 @@ export function ChannelForm({
     onShowTemplatePicker,
 }: ChannelFormProps) {
     const t = useTranslations('channel.form');
+    const isMobile = useIsMobile();
     const { data: settings } = useSettingList();
     const { data: channelGroups = [] } = useChannelGroupList();
     const { data: notifChannels = [] } = useAlertNotifChannelList();
@@ -930,9 +972,11 @@ export function ChannelForm({
             {showTemplatePicker ? (
                 <section className={sectionClassName}>
                     <SectionHeader icon={Sparkles} title={t('template.label')} hint={t('template.hint')} />
-                    <TemplatePickerGrid
-                        onApplyTemplate={handleApplyTemplate}
-                    />
+                    {isMobile ? (
+                        <TemplatePickerSelect onApplyTemplate={handleApplyTemplate} />
+                    ) : (
+                        <TemplatePickerGrid onApplyTemplate={handleApplyTemplate} />
+                    )}
                 </section>
             ) : (
                 <div className="flex justify-end">
@@ -1646,9 +1690,7 @@ export function ChannelForm({
                     </AccordionContent>
                 </AccordionItem>
             </Accordion>
-            </div>
-
-            <section className={`${sectionClassName} mt-4 flex shrink-0 flex-col gap-4 border-t border-border/20 pt-4`}>
+            <section className={`${sectionClassName} flex flex-col gap-4`}>
                 <label className="flex items-center gap-2 cursor-pointer">
                     <Switch
                         checked={formData.enabled}
@@ -1739,6 +1781,7 @@ export function ChannelForm({
                     </div>
                 </div>
             </section>
+            </div>
 
             <div className={`shrink-0 flex flex-col gap-3 pt-4 ${onCancel ? 'sm:flex-row' : ''}`}>
                 {onCancel && cancelText && (
