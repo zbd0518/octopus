@@ -303,7 +303,11 @@ build_standard() {
         return 1
     fi
 
-    local output_file="${OUTPUT_DIR}/bin/${APP_NAME}-${os}-${arch}"
+    local output_name="${APP_NAME}-${os}-${arch}"
+    if [ "$os" = "windows" ]; then
+        output_name+=".exe"
+    fi
+    local output_file="${OUTPUT_DIR}/bin/${output_name}"
 
     log_info "Building ${os}/${arch}..."
 
@@ -369,9 +373,10 @@ create_archives() {
     while IFS= read -r -d '' file; do
         local basename_file
         basename_file=$(basename "$file")
+        local archive_basename="${basename_file%.exe}"
         local extension=""
 
-        # Add .exe extension for Windows binaries
+        # Add .exe extension for Windows binaries copied into the archive.
         if [[ "$basename_file" == *"-windows-"* ]]; then
             extension=".exe"
         fi
@@ -381,11 +386,11 @@ create_archives() {
             continue
         fi
 
-        if archive_zip "${archives_dir}" "${basename_file}.zip" "${APP_NAME}${extension}" README.md LICENSE; then
+        if archive_zip "${archives_dir}" "${archive_basename}.zip" "${APP_NAME}${extension}" README.md LICENSE; then
             rm -f "${archives_dir}/${APP_NAME}${extension}"
-            log_success "Archived: archives/${basename_file}.zip"
+            log_success "Archived: archives/${archive_basename}.zip"
         else
-            log_error "Failed to create archive: ${basename_file}.zip"
+            log_error "Failed to create archive: ${archive_basename}.zip"
             rm -f "${archives_dir}/${APP_NAME}${extension}"
         fi
     done < <(find "${OUTPUT_DIR}/bin/" -name "${APP_NAME}-*" -type f -print0 2>/dev/null)
@@ -598,7 +603,11 @@ main() {
         fi
 
         log_step "Build completed"
-        log_success "Binary ready: ${OUTPUT_DIR}/bin/${APP_NAME}-${os}-${arch}"
+        local output_suffix=""
+        if [ "$os" = "windows" ]; then
+            output_suffix=".exe"
+        fi
+        log_success "Binary ready: ${OUTPUT_DIR}/bin/${APP_NAME}-${os}-${arch}${output_suffix}"
         ;;
     "release")
         log_step "Starting release build"
