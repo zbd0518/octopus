@@ -226,7 +226,10 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				}
 
 				var usedKey dbmodel.ChannelKey
-				if keyRound == 1 {
+				// keyRound == 1 但 failedKeyIDs 非空 = 熔断跳过后的重选（跳过分支
+				// keyRound-- 不消耗配额），必须排除已失败 key，否则确定性选 key
+				// 会选回同一个 key 造成死循环（issue #192，与 relay.go 同因）。
+				if keyRound == 1 && len(failedKeyIDs) == 0 {
 					usedKey = channel.GetChannelKeyWithCooldown(resolvedModel, ratelimitCooldown)
 				} else {
 					usedKey = channel.GetChannelKeyExcludingWithCooldown(failedKeyIDs, resolvedModel, ratelimitCooldown)
@@ -390,6 +393,10 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 	ctx, cancel := newRelayPersistenceContext()
 	defer cancel()
 
+	// 与 relay_log 一致地截断 attempts（issue #192 兜底），防止 media 路径同样把
+	// 决策纪录无上限写入日志。
+	attempts, totalAttempts := capAttemptsForLog(attempts)
+
 	relayLog := dbmodel.RelayLog{
 		Time:             time.Now().Add(-duration).Unix(),
 		RequestModelName: requestModel,
@@ -401,7 +408,7 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 		ActualModelName:  resolvedModel,
 		UseTime:          int(duration.Milliseconds()),
 		Attempts:         attempts,
-		TotalAttempts:    len(attempts),
+		TotalAttempts:    totalAttempts,
 	}
 
 	if apiKey, getErr := ak.Get(apiKeyID, ctx); getErr == nil {

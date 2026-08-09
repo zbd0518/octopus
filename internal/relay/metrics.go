@@ -24,6 +24,11 @@ import (
 
 const relayLogTextFieldMaxBytes = 4096
 
+// maxAttemptsLogged 是单条 relay_log 中最多持久化的 attempts 决策记录条数。
+// 作为 issue #192 的最终兜底：即使重试/熔断逻辑出现遗漏，attempts 也不会无上限膨胀，
+// 避免单条日志达到数百 MB 塞爆数据库。只保留前 N 条即可还原完整决策链路。
+const maxAttemptsLogged = 256
+
 const relayLogJSONFieldMaxBytes = 16384
 
 // RelayMetrics 负责最终的日志收集与持久化
@@ -308,11 +313,27 @@ func (m *RelayMetrics) recordDailyChannelModelDimensions(ctx context.Context, re
 	}
 }
 
+// capAttemptsForLog 将 attempts 决策记录截断到 maxAttemptsLogged 条为止，并返回截断后的
+// 切片与截断前的真实总数。作为 issue #192 的最终兜底，防止单条 relay_log 的 attempts
+// 无上限膨胀（实测可达数百 MB）塞爆数据库；保留前 N 条即可还原完整决策链路。
+func capAttemptsForLog(attempts []model.ChannelAttempt) ([]model.ChannelAttempt, int) {
+	total := len(attempts)
+	if total > maxAttemptsLogged {
+		attempts = attempts[:maxAttemptsLogged]
+		log.Warnf("truncating relay_log attempts from %d to %d entries", total, maxAttemptsLogged)
+	}
+	return attempts, total
+}
+
 func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Duration, attempts []model.ChannelAttempt, channelID int, channelName string) {
 	actualModel := m.ActualModel
 	if actualModel == "" {
 		actualModel = m.RequestModel
 	}
+
+	// 截断 attempts 决策记录条数（issue #192 兜底）：见 maxAttemptsLogged。
+	// totalAttempts 记录真实决策总数（截断前的数量），供 relay_log.TotalAttempts 展示。
+	attempts, totalAttempts := capAttemptsForLog(attempts)
 
 	relayLog := model.RelayLog{
 		Time:             m.StartTime.Unix(),
@@ -325,7 +346,7 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 		ActualModelName:  actualModel,
 		UseTime:          int(duration.Milliseconds()),
 		Attempts:         attempts,
-		TotalAttempts:    len(attempts),
+		TotalAttempts:    totalAttempts,
 	}
 
 	if apiKey, getErr := apikey.Get(m.APIKeyID, ctx); getErr == nil {

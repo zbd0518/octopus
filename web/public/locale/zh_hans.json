@@ -1229,7 +1229,11 @@
       "signals": {
         "requests": "今日调用",
         "successRate": "今日成功率",
-        "cost": "今日花费"
+        "cost": "今日花费",
+        "cacheReadTokens": "今日缓存复用",
+        "successRateShort": "成功率",
+        "cacheRate": "今日Token使用",
+        "cacheRateShort": "缓存率"
       },
       "metrics": {
         "avgWait": "平均响应时延",
@@ -1455,7 +1459,7 @@
       },
       "maxTotalAttempts": {
         "label": "最大总尝试次数",
-        "hint": "限制一次请求在所有候选渠道上的总转发次数（不含冷却/熔断跳过），0 表示不限制。",
+        "hint": "限制一次请求在所有候选渠道上的决策纪录总数（含转发、冷却跳过、熔断跳过），避免所有渠道均不可用时 relay_logs 的 attempts 无限膨胀。0 回退到内置默认上限（约 64）。",
         "placeholder": "请输入总尝试次数"
       },
       "rateLimitHold": {

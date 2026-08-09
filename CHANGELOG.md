@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Transformer**: preserve OpenAI `reasoning_effort` values `minimal`/`xhigh`/`max` instead of collapsing them to `high`; Anthropic/Gemini budget mapping now covers `xhigh`/`max`.
 - **Relay**: 429 延时重试的等待改为可被客户端断连中断（`waitRateLimitHold` + `select ctx.Done()`），此前 `executeRelay` 内联裸 `time.Sleep`，客户端在等待窗口内断开仍会睡满整个间隔才醒；同时移除内联逻辑与 `rate_limit_hold.go` 中同语义 helper 的重复实现。
 - **Channel (issue #182)**: 恢复渠道更新接口白名单补丁中 9 个高级设置字段的持久化分支（`auto_sync`/`skip_model_test`/`disposable`/`expire_at`/`notif_channel_id`/`key_selection_strategy`/`auto_group`/`custom_header`/`pool_id`），此前编辑已有渠道时这些字段返回 200 但静默不落库（v2.4.1 起回归，由 #147 代理模式重构误删 8 个分支引入，`pool_id` 为号池提交遗漏）。
+- **Relay/Log (issue #192)**: 修复所有渠道均不可用（key 全冷却/熔断）时 `relay_logs.attempts` 无上限膨胀、单条日志可达数百 MB 的问题。`relay_max_total_attempts` 由「0 = 不限制」改为「0 回退到内置默认上限（约 64）」，且上限改按决策纪录总数（含冷却/熔断跳过）计算而非仅真实转发——此前仅统计转发次数导致该场景下上限形同虚设；新增路由轮次快速失败（某一轮无任何真实转发即停止重试）；持久化前将 attempts 截断到最多 256 条（chat 与 media 路径一致），从根上避免数据库爆炸。
 
 ## [v2.4.0] - 2026-07-15
 

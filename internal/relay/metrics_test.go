@@ -102,6 +102,38 @@ func TestTruncateRelayLogStringPreservesUTF8(t *testing.T) {
 	}
 }
 
+func TestCapAttemptsForLogTruncatesExplodingSlice(t *testing.T) {
+	// issue #192：所有渠道均不可用时 attempts 曾无上限膨胀到数百万条（单行数百 MB）。
+	// capAttemptsForLog 必须把持久化的 attempts 限制到 maxAttemptsLogged 条，同时保留真实总数。
+	mk := func(n int) []model.ChannelAttempt {
+		out := make([]model.ChannelAttempt, n)
+		for i := range out {
+			out[i] = model.ChannelAttempt{ChannelID: i + 1, ChannelName: "c", ModelName: "m"}
+		}
+		return out
+	}
+
+	// 超长：仅保留前 maxAttemptsLogged 条，总数保留真实值。
+	big := mk(maxAttemptsLogged + 1000)
+	capped, total := capAttemptsForLog(big)
+	if total != maxAttemptsLogged+1000 {
+		t.Fatalf("total = %d, want %d", total, maxAttemptsLogged+1000)
+	}
+	if len(capped) != maxAttemptsLogged {
+		t.Fatalf("len(capped) = %d, want %d", len(capped), maxAttemptsLogged)
+	}
+	if capped[0].ChannelID != 1 || capped[len(capped)-1].ChannelID != maxAttemptsLogged {
+		t.Fatalf("capped slice did not keep the first %d entries", maxAttemptsLogged)
+	}
+
+	// 正常长度：原样返回，不掉数据。
+	small := mk(3)
+	capped2, total2 := capAttemptsForLog(small)
+	if total2 != 3 || len(capped2) != 3 {
+		t.Fatalf("small slice mutated: total=%d len=%d, want 3/3", total2, len(capped2))
+	}
+}
+
 func TestFilterRequestForLogTruncatesLargeTextFields(t *testing.T) {
 	longText := strings.Repeat("x", relayLogTextFieldMaxBytes+100)
 	longReasoning := strings.Repeat("r", relayLogTextFieldMaxBytes+100)

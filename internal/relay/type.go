@@ -28,8 +28,11 @@ const (
 	defaultMaxRetryPerCandidate = 3
 	defaultMaxRouteRetries      = 2
 	defaultRatelimitCooldown    = 300
-	defaultMaxTotalAttempts     = 0
-	maxErrorBodyBytes           = 64 << 10 // 64 KiB — upstream error responses should be concise
+	// defaultMaxTotalAttempts 是所有决策（真实转发 + 冷却跳过 + 熔断跳过）的最大纪录上限。
+	// 当 relay_max_total_attempts 未设置或为 0 时回退到此默认值，避免所有渠道都不可用时
+	// （key 全冷却 / 熔断）attempts 无上限膨胀导致 relay_logs 单行爆炸（见 issue #192）。
+	defaultMaxTotalAttempts = 64
+	maxErrorBodyBytes       = 64 << 10 // 64 KiB — upstream error responses should be concise
 )
 
 var errEmptyOutput = errors.New("upstream returned empty output (no visible content)")
@@ -74,7 +77,9 @@ func getRatelimitCooldown() int {
 
 func getMaxTotalAttempts() int {
 	v, err := setting.GetInt(dbmodel.SettingKeyRelayMaxTotalAttempts)
-	if err != nil || v < 0 {
+	// 0 以及读取失败/负数都回退到默认上限（issue #192）：所有渠道不可用时，
+	// 若按「0 = 不限制」处理会无限膨胀 attempts，单条 relay_log 可达数百 MB。
+	if err != nil || v <= 0 {
 		return defaultMaxTotalAttempts
 	}
 	return v

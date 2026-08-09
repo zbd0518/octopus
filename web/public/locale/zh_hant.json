@@ -1229,7 +1229,11 @@
       "signals": {
         "requests": "今日呼叫",
         "successRate": "今日成功率",
-        "cost": "今日花費"
+        "cost": "今日花費",
+        "cacheReadTokens": "今日快取復用",
+        "successRateShort": "成功率",
+        "cacheRate": "今日Token使用",
+        "cacheRateShort": "快取率"
       },
       "metrics": {
         "avgWait": "平均回應時延",
@@ -1455,7 +1459,7 @@
       },
       "maxTotalAttempts": {
         "label": "最大總嘗試次數",
-        "hint": "限制一次請求在所有候選渠道上的總轉發次數（不含冷卻/熔斷跳過），0 表示不限制。",
+        "hint": "限制一次請求在所有候選渠道上的決策紀錄總數（含轉發、冷卻跳過、熔斷跳過），避免所有渠道均不可用時 relay_logs 的 attempts 無限膨脹。0 回退到內置默認上限（約 64）。",
         "placeholder": "請輸入總嘗試次數"
       },
       "rateLimitHold": {

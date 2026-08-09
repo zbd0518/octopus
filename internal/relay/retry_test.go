@@ -498,3 +498,15 @@ func TestGetMaxRetryPerCandidate_AllowsZero(t *testing.T) {
 		t.Fatalf("getMaxRetryPerCandidate() = %d, want default %d", got, defaultMaxRetryPerCandidate)
 	}
 }
+
+func TestGetMaxTotalAttempts_FallsBackToDefaultWhenZero(t *testing.T) {
+	// issue #192：所有渠道均不可用（key 全冷却/熔断）时，若 0 被当作「不限制」会让
+	// attempts 无上限膨胀，单条 relay_log 可达数百 MB。0 现在回退到内置默认上限。
+	got := getMaxTotalAttempts()
+	if got != defaultMaxTotalAttempts {
+		t.Fatalf("getMaxTotalAttempts() = %d, want default %d", got, defaultMaxTotalAttempts)
+	}
+	if got <= 0 {
+		t.Fatalf("getMaxTotalAttempts() = %d, want a positive safety cap", got)
+	}
+}
