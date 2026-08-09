@@ -1,10 +1,10 @@
 ---
 doc_type: issue-review
 issue: 2026-07-24-relay-log-bad-connection
-status: changes-requested
+status: passed
 reviewer: subagent
 reviewed: 2026-07-24
-round: 1
+round: 2
 lane_a_state: completed
 lane_a_ref: a5a99a68ae8fbcfe7
 lane_a_reason: "independent Task agent review completed and locally verified"
@@ -67,10 +67,10 @@ none
 
 ### important
 
-- [ ] REV-001 `internal/db/db_test.go` 缺少非 SQLite 连接池参数回归断言
+- [x] REV-001 `internal/db/db_test.go` 缺少非 SQLite 连接池参数回归断言 → 已处理（round 2，2026-08-09）
   - Evidence: 现有 `TestConfigureConnectionPoolLimitsSQLiteConnections` 只断言 SQLite `MaxOpenConnections==1`；`database/sql.DBStats` 不直接暴露 maxIdleTime/maxLifetime 字段，但可用包内常量 + 调用 `configureConnectionPool` 的可观测意图，或把 30m/3m 提成常量再断言。当前 `go test ./internal/db` 无法防止改回 10m/1h。
   - Impact: 配置回归假绿；本 issue 验收仅靠人工 runtime 观察，CI 无锁。
-  - Expected fix scope: 仅 `internal/db` 测试（或极小常量抽取 + 测试）；不改业务逻辑、不扩到方案 B 重试。
+  - Resolution: `30m/3m` 提为包内常量 `nonSQLiteConnMaxLifetime` / `nonSQLiteConnMaxIdleTime`，新增 `TestConfigureConnectionPoolNonSQLite`（`sql.Open("mysql", ...)` 走非 SQLite 分支，断言 `MaxOpenConnections=100` 与常量值）；`go test ./internal/db -count=1` 通过。
 
 ### nit
 
@@ -116,12 +116,10 @@ none
 
 ## 7. Verdict
 
-**status: changes-requested**
+**status: passed**（round 2 复审，2026-08-09）
 
-- 实现与批准方案 A **一致**，无 blocking 逻辑错误，可合入方向正确
-- 因 **REV-001（缺非 SQLite 池参数回归测试）** 影响验收可信度，本轮要求处理或 owner 明确接受延后并记入 residual risk
-- 环节 A 已完成 → `reviewer: subagent` 满足 gate 锚点（OCR skipped 不阻塞）
+- 实现与批准方案 A **一致**，无 blocking 逻辑错误
+- **REV-001 已按路径 1 处理**：包内常量 + `TestConfigureConnectionPoolNonSQLite` 回归断言，`go test ./internal/db -count=1` 通过；无 remaining important
+- 验收门禁仍以重启后 runtime 观察为准（见 §5 QA Focus / §6 Residual Risk）
 
-下一步：
-1. 处理 REV-001（推荐补最小测试）后 focused closure / 复审；或
-2. owner 明确接受 REV-001 延后 → 移入 residual risk，status 改为 passed
+下一步：关闭 issue 并毕业回写 Project Spec（连接池生命周期已写入 `codestable/spec/index.md`「当前已稳定的能力与保证」）。

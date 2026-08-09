@@ -395,6 +395,14 @@ func disableSQLiteForeignKeysForMigration(conn *gorm.DB) (func() error, error) {
 	}, nil
 }
 
+// nonSQLiteConnMaxLifetime / nonSQLiteConnMaxIdleTime 是非 SQLite（MySQL/MariaDB/
+// Postgres）连接池的闲置生命周期参数。提为包内常量以便回归测试锁定，防止改回
+// 过大的 ConnMaxLifetime=1h / ConnMaxIdleTime=10m。
+const (
+	nonSQLiteConnMaxLifetime = 30 * time.Minute
+	nonSQLiteConnMaxIdleTime = 3 * time.Minute
+)
+
 func configureConnectionPool(sqlDB *sql.DB, dbType string) {
 	if dbType == "sqlite" {
 		// glebarez/sqlite uses a pure-Go SQLite driver. Under concurrent background
@@ -414,8 +422,8 @@ func configureConnectionPool(sqlDB *sql.DB, dbType string) {
 	// evicts them before OS/server-side TCP cleanup leaves stale sockets.
 	// Observed failure: relay log flush hit "driver: bad connection" when
 	// ConnMaxIdleTime was 10m and TCP keepalive was disabled (issue 2026-07-24).
-	sqlDB.SetConnMaxLifetime(30 * time.Minute)
-	sqlDB.SetConnMaxIdleTime(3 * time.Minute)
+	sqlDB.SetConnMaxLifetime(nonSQLiteConnMaxLifetime)
+	sqlDB.SetConnMaxIdleTime(nonSQLiteConnMaxIdleTime)
 }
 
 // sqlitePragmaParams 根据 SQLiteOptions 生成 glebarez/go-sqlite 驱动认识的 DSN

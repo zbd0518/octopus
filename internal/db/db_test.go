@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lingyuins/octopus/internal/model"
 	"gorm.io/gorm"
@@ -25,6 +26,30 @@ func TestConfigureConnectionPoolLimitsSQLiteConnections(t *testing.T) {
 	stats := sqlDB.Stats()
 	if stats.MaxOpenConnections != 1 {
 		t.Fatalf("MaxOpenConnections = %d, want 1", stats.MaxOpenConnections)
+	}
+}
+
+func TestConfigureConnectionPoolNonSQLite(t *testing.T) {
+	sqlDB, err := sql.Open("mysql", "user:test@tcp(127.0.0.1:3306)/octopus")
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	defer sqlDB.Close()
+
+	configureConnectionPool(sqlDB, "mysql")
+
+	stats := sqlDB.Stats()
+	if stats.MaxOpenConnections != 100 {
+		t.Fatalf("MaxOpenConnections = %d, want 100", stats.MaxOpenConnections)
+	}
+	// database/sql.DBStats 不暴露 max lifetime / max idle time，依赖包内常量
+	// 锁定 eviction 参数，防止回归改回 ConnMaxLifetime=1h / ConnMaxIdleTime=10m
+	// （issue 2026-07-24）。
+	if nonSQLiteConnMaxLifetime != 30*time.Minute {
+		t.Fatalf("nonSQLiteConnMaxLifetime = %v, want 30m", nonSQLiteConnMaxLifetime)
+	}
+	if nonSQLiteConnMaxIdleTime != 3*time.Minute {
+		t.Fatalf("nonSQLiteConnMaxIdleTime = %v, want 3m", nonSQLiteConnMaxIdleTime)
 	}
 }
 

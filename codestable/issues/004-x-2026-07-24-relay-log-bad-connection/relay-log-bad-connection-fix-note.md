@@ -1,7 +1,7 @@
 ---
 doc_type: issue-fix-note
 issue: 2026-07-24-relay-log-bad-connection
-status: draft
+status: completed
 chosen_plan: A
 related:
   - relay-log-bad-connection-report.md
@@ -20,16 +20,19 @@ tags: [database, connection-pool, mariadb]
 | 文件 | 改动 |
 |---|---|
 | `internal/db/db.go:409-416` | `configureConnectionPool` 非 SQLite 分支：`ConnMaxLifetime` 1h → **30min**；`ConnMaxIdleTime` 10min → **3min**；补充注释说明动机 |
+| `internal/db/db.go` | `30m/3m` 提为包内常量 `nonSQLiteConnMaxLifetime` / `nonSQLiteConnMaxIdleTime`（REV-001 处理） |
+| `internal/db/db_test.go` | 新增 `TestConfigureConnectionPoolNonSQLite`：`sql.Open("mysql", ...)` 走非 SQLite 分支，断言 `MaxOpenConnections=100` 与常量值（REV-001） |
 
-未改业务逻辑、未引入重试/新抽象；仅调整连接池生命周期参数。
+未改业务逻辑、未引入重试/新抽象；仅调整连接池生命周期参数并补回归断言。
 
 ## 3. 验证
 
-- [x] `go test ./internal/db/ -count=1` 通过
-- [x] 改动范围与 analysis 方案 A 一致（仅 `db/db.go`）
+- [x] `go test ./internal/db/ -count=1` 通过（含新增 `TestConfigureConnectionPoolNonSQLite`）
+- [x] 改动范围与 analysis 方案 A 一致（`db/db.go` + 回归测试 `db_test.go`）
+- [x] REV-001 已处理：包内常量锁定 30m/3m，CI 防回归改回 10m/1h
 - [ ] 运行时验证：需重启 octopus 服务后观察 2 分钟周期日志，确认不再出现 `relay log save db task failed: driver: bad connection`
 
-运行时验证依赖服务重启与持续观察，代码层修复已完成。
+运行时验证依赖服务重启与持续观察，代码层修复与回归测试已完成。
 
 ## 4. 遗留风险
 

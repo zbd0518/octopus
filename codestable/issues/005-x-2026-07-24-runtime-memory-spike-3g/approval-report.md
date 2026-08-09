@@ -1,7 +1,7 @@
 ---
 doc_type: approval-report
 issue: 2026-07-24-runtime-memory-spike-3g
-status: active
+status: approved
 reason: report-confirm
 approvals:
   issue-report-confirm: approved
