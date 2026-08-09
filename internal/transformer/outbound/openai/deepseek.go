@@ -27,6 +27,13 @@ func isProviderReasoningCompatRequest(baseURL string, request *model.InternalLLM
 		return false
 	}
 
+	if request != nil && strings.EqualFold(
+		strings.TrimSpace(request.TransformerMetadata[model.TransformerMetadataGroupEndpointProvider]),
+		provider,
+	) {
+		return true
+	}
+
 	if provider == "mimo" && isMimoChannel {
 		return true
 	}

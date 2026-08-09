@@ -24,7 +24,10 @@ const (
 	APIFormatAiSDKDataStream       APIFormat = "aisdk/datastream"
 )
 
-const TransformerMetadataGroupEndpointType = "group_endpoint_type"
+const (
+	TransformerMetadataGroupEndpointType     = "group_endpoint_type"
+	TransformerMetadataGroupEndpointProvider = "group_endpoint_provider"
+)
 
 // Request is the unified llm request model for AxonHub, to keep compatibility with major app and framework.
 // It choose to base on the OpenAI chat completion request, but add some extra fields to support more features.

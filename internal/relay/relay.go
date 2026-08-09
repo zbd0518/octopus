@@ -576,11 +576,20 @@ func (ra *relayAttempt) forward() (int, error) {
 
 	requestForOutbound := ra.internalRequest
 	effectiveRewrite := (*rewrite.EffectiveConfig)(nil)
+	groupEndpointProvider := ""
+	if ra.group != nil {
+		groupEndpointProvider = ra.group.EndpointProvider
+	}
 	// passthrough / raw（原始穿透）都要求原样转发客户端请求体，
 	// 跳过 param_override 与改写引擎，避免请求体被二次加工。
 	if ra.adapterType != outbound.OutboundTypePassthrough && ra.adapterType != outbound.OutboundTypeRaw {
 		var err error
-		requestForOutbound, effectiveRewrite, err = prepareInternalRequestForOutbound(ra.channel, ra.internalRequest, ra.groupEndpointType)
+		requestForOutbound, effectiveRewrite, err = prepareInternalRequestForOutboundWithProvider(
+			ra.channel,
+			ra.internalRequest,
+			ra.groupEndpointType,
+			groupEndpointProvider,
+		)
 		if err != nil {
 			log.Warnf("failed to prepare outbound request data: %v", err)
 			return 0, fmt.Errorf("failed to prepare outbound request data: %w", err)
@@ -657,13 +666,18 @@ func (ra *relayAttempt) applyPoolCredentialHeaders(req *http.Request) {
 		if ra.poolPlatform == dbmodel.PoolPlatformOpenAI && ra.adapterType != outbound.OutboundTypeCodex {
 			// ChannelKey 对 openai-oauth 是 OAuth JSON（由 EffectiveKeyWithExtra 构造）。
 			var oauth struct {
-				AccessToken string `json:"access_token"`
-				AccountID   string `json:"account_id"`
+				AccessToken      string `json:"access_token"`
+				AccountID        string `json:"account_id"`
+				ChatGPTAccountID string `json:"chatgpt_account_id"`
 			}
 			if json.Unmarshal([]byte(ra.usedKey.ChannelKey), &oauth) == nil && oauth.AccessToken != "" {
 				req.Header.Set("Authorization", "Bearer "+oauth.AccessToken)
-				if oauth.AccountID != "" {
-					req.Header.Set("chatgpt-account-id", oauth.AccountID)
+				accountID := oauth.AccountID
+				if accountID == "" {
+					accountID = oauth.ChatGPTAccountID
+				}
+				if accountID != "" {
+					req.Header.Set("chatgpt-account-id", accountID)
 				}
 			}
 		}

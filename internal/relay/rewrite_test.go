@@ -65,3 +65,31 @@ func TestPrepareInternalRequestForOutbound_IsScopedPerChannelAttempt(t *testing.
 		t.Fatalf("plain transformer metadata = %#v, want chat endpoint type", plain.TransformerMetadata)
 	}
 }
+
+func TestPrepareInternalRequestForOutbound_AttachesEndpointProviderMetadata(t *testing.T) {
+	request := &transmodel.InternalLLMRequest{
+		Model:    "deepseek-v4-flash",
+		Messages: []transmodel.Message{{Role: "user"}},
+	}
+	channel := &appmodel.Channel{Type: outbound.OutboundTypeOpenAIChat}
+
+	got, _, err := prepareInternalRequestForOutboundWithProvider(
+		channel,
+		request,
+		appmodel.EndpointTypeChat,
+		"DeepSeek",
+	)
+	if err != nil {
+		t.Fatalf("prepareInternalRequestForOutboundWithProvider() error = %v", err)
+	}
+
+	if got.TransformerMetadata[transmodel.TransformerMetadataGroupEndpointType] != appmodel.EndpointTypeChat {
+		t.Fatalf("endpoint type metadata = %#v, want chat", got.TransformerMetadata)
+	}
+	if got.TransformerMetadata[transmodel.TransformerMetadataGroupEndpointProvider] != "deepseek" {
+		t.Fatalf("endpoint provider metadata = %#v, want deepseek", got.TransformerMetadata)
+	}
+	if request.TransformerMetadata != nil {
+		t.Fatalf("base request metadata = %#v, want nil", request.TransformerMetadata)
+	}
+}

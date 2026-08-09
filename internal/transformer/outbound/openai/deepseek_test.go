@@ -1,12 +1,56 @@
 package openai
 
 import (
-	"github.com/lingyuins/octopus/internal/transformer"
+	"context"
+	"io"
 	"strings"
 	"testing"
 
+	"github.com/lingyuins/octopus/internal/transformer"
+
 	"github.com/lingyuins/octopus/internal/transformer/model"
 )
+
+func TestDeepSeekProviderMetadataPreservesReasoningContent(t *testing.T) {
+	outbound := &ChatOutbound{}
+	reasoning := "provider metadata identifies DeepSeek"
+	content := "final answer"
+
+	request := &model.InternalLLMRequest{
+		Model: "deepseek-v4-flash",
+		Messages: []model.Message{{
+			Role:             "assistant",
+			Content:          model.MessageContent{Content: &content},
+			ReasoningContent: &reasoning,
+		}},
+		TransformerMetadata: map[string]string{
+			model.TransformerMetadataGroupEndpointType:     "chat",
+			model.TransformerMetadataGroupEndpointProvider: "deepseek",
+		},
+	}
+
+	httpReq, err := outbound.TransformRequest(context.Background(), request, "https://console-go.example.com/v1", "sk-test")
+	if err != nil {
+		t.Fatalf("TransformRequest() error = %v", err)
+	}
+
+	body, err := io.ReadAll(httpReq.Body)
+	if err != nil {
+		t.Fatalf("failed to read request body: %v", err)
+	}
+
+	var got struct {
+		Messages []struct {
+			ReasoningContent *string `json:"reasoning_content,omitempty"`
+		} `json:"messages"`
+	}
+	if err := transformer.Unmarshal(body, &got); err != nil {
+		t.Fatalf("failed to unmarshal outbound body: %v", err)
+	}
+	if len(got.Messages) != 1 || got.Messages[0].ReasoningContent == nil || *got.Messages[0].ReasoningContent != reasoning {
+		t.Fatalf("reasoning_content = %#v, want %q; body=%s", got.Messages, reasoning, body)
+	}
+}
 
 func TestDeepSeekReasoningContentPreserved(t *testing.T) {
 	reasoningContent := "用户想了解AI圈的最新消息。今天是2026年5月4日，我需要搜索最近发生的AI相关新闻。"

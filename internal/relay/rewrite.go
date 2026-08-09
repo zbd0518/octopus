@@ -2,6 +2,7 @@ package relay
 
 import (
 	"fmt"
+	"strings"
 
 	appmodel "github.com/lingyuins/octopus/internal/model"
 	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
@@ -10,6 +11,10 @@ import (
 )
 
 func prepareInternalRequestForOutbound(channel *appmodel.Channel, request *transmodel.InternalLLMRequest, groupEndpointType string) (*transmodel.InternalLLMRequest, *rewrite.EffectiveConfig, error) {
+	return prepareInternalRequestForOutboundWithProvider(channel, request, groupEndpointType, "")
+}
+
+func prepareInternalRequestForOutboundWithProvider(channel *appmodel.Channel, request *transmodel.InternalLLMRequest, groupEndpointType, groupEndpointProvider string) (*transmodel.InternalLLMRequest, *rewrite.EffectiveConfig, error) {
 	if channel == nil {
 		return nil, nil, fmt.Errorf("channel is nil")
 	}
@@ -24,7 +29,7 @@ func prepareInternalRequestForOutbound(channel *appmodel.Channel, request *trans
 
 	var target *transmodel.InternalLLMRequest
 	if !enabled {
-		target = request
+		target = cloneRequestForOutbound(request)
 	} else {
 		rewritten, applyErr := rewrite.Apply(request, effectiveRewrite)
 		if applyErr != nil {
@@ -34,12 +39,34 @@ func prepareInternalRequestForOutbound(channel *appmodel.Channel, request *trans
 	}
 
 	applyParamOverride(channel, target)
-	attachRelayGroupEndpointMetadata(target, groupEndpointType)
+	attachRelayGroupEndpointMetadata(target, groupEndpointType, groupEndpointProvider)
 	return target, effectiveRewrite, nil
 }
 
 // applyParamOverride merges channel-level param_override JSON into the outbound request.
 // Only overrides fields that are not already set by the client request (client takes precedence).
+func cloneRequestForOutbound(request *transmodel.InternalLLMRequest) *transmodel.InternalLLMRequest {
+	if request == nil {
+		return nil
+	}
+
+	cloned := *request
+	if len(request.Messages) > 0 {
+		cloned.Messages = append([]transmodel.Message(nil), request.Messages...)
+	}
+	if request.StreamOptions != nil {
+		streamOptions := *request.StreamOptions
+		cloned.StreamOptions = &streamOptions
+	}
+	if request.TransformerMetadata != nil {
+		cloned.TransformerMetadata = make(map[string]string, len(request.TransformerMetadata))
+		for key, value := range request.TransformerMetadata {
+			cloned.TransformerMetadata[key] = value
+		}
+	}
+	return &cloned
+}
+
 func applyParamOverride(channel *appmodel.Channel, request *transmodel.InternalLLMRequest) {
 	if channel == nil || channel.ParamOverride == nil || *channel.ParamOverride == "" {
 		return
@@ -80,18 +107,24 @@ func applyParamOverride(channel *appmodel.Channel, request *transmodel.InternalL
 	}
 }
 
-func attachRelayGroupEndpointMetadata(request *transmodel.InternalLLMRequest, groupEndpointType string) {
+func attachRelayGroupEndpointMetadata(request *transmodel.InternalLLMRequest, groupEndpointType, groupEndpointProvider string) {
 	if request == nil {
 		return
 	}
 
 	normalizedEndpointType := appmodel.NormalizeEndpointType(groupEndpointType)
-	if normalizedEndpointType == "" {
+	normalizedEndpointProvider := strings.ToLower(strings.TrimSpace(groupEndpointProvider))
+	if normalizedEndpointType == "" && normalizedEndpointProvider == "" {
 		return
 	}
 
 	if request.TransformerMetadata == nil {
 		request.TransformerMetadata = make(map[string]string)
 	}
-	request.TransformerMetadata[transmodel.TransformerMetadataGroupEndpointType] = normalizedEndpointType
+	if normalizedEndpointType != "" {
+		request.TransformerMetadata[transmodel.TransformerMetadataGroupEndpointType] = normalizedEndpointType
+	}
+	if normalizedEndpointProvider != "" && normalizedEndpointProvider != "auto" {
+		request.TransformerMetadata[transmodel.TransformerMetadataGroupEndpointProvider] = normalizedEndpointProvider
+	}
 }
