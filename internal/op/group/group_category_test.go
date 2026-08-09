@@ -57,6 +57,22 @@ func TestGroupCategoryNormalizeCreateUpdateListCache(t *testing.T) {
 	if stored.Category != "budget" {
 		t.Fatalf("stored category = %q, want budget", stored.Category)
 	}
+
+	strategy := "immediate"
+	updated, err = GroupUpdate(&model.GroupUpdateRequest{ID: created.ID, ReasoningBufferStrategy: &strategy}, ctx)
+	if err != nil {
+		t.Fatalf("GroupUpdate() reasoning strategy error = %v", err)
+	}
+	if updated.ReasoningBufferStrategy != strategy {
+		t.Fatalf("updated reasoning strategy = %q, want %q", updated.ReasoningBufferStrategy, strategy)
+	}
+	stored = model.Group{}
+	if err := db.GetDB().WithContext(ctx).First(&stored, created.ID).Error; err != nil {
+		t.Fatalf("reload stored group: %v", err)
+	}
+	if stored.ReasoningBufferStrategy != strategy {
+		t.Fatalf("stored reasoning strategy = %q, want %q", stored.ReasoningBufferStrategy, strategy)
+	}
 }
 
 func initGroupCategoryTestDB(t *testing.T) context.Context {

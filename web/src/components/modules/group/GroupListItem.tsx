@@ -163,6 +163,7 @@ function EditDialogContent({
                             first_token_time_out: group.first_token_time_out ?? 0,
                             attempt_time_out: group.attempt_time_out ?? 0,
                             session_keep_time: group.session_keep_time ?? 0,
+                            reasoning_buffer_strategy: group.reasoning_buffer_strategy ?? '',
                             members: editMembers,
                         }}
                         submitText={t('detail.actions.save')}
@@ -739,6 +740,9 @@ export function GroupListItem({
                 values.attempt_time_out ?? 0;
             const nextSessionKeepTime =
                 values.session_keep_time ?? 0;
+            const nextReasoningBufferStrategy = (
+                values.reasoning_buffer_strategy ?? ''
+            ).trim();
 
             if (nextName && nextName !== group.name)
                 payload.name = nextName;
@@ -779,6 +783,11 @@ export function GroupListItem({
                 (group.session_keep_time ?? 0)
             )
                 payload.session_keep_time = nextSessionKeepTime;
+            if (
+                nextReasoningBufferStrategy !==
+                (group.reasoning_buffer_strategy ?? '').trim()
+            )
+                payload.reasoning_buffer_strategy = nextReasoningBufferStrategy;
             if (items_to_add.length) payload.items_to_add = items_to_add;
             if (items_to_update.length)
                 payload.items_to_update = items_to_update;
@@ -806,6 +815,7 @@ export function GroupListItem({
             group.first_token_time_out,
             group.attempt_time_out,
             group.session_keep_time,
+            group.reasoning_buffer_strategy,
             group.id,
             group.items,
             group.match_regex,
@@ -877,6 +887,7 @@ export function GroupListItem({
             first_token_time_out: group.first_token_time_out ?? 0,
             attempt_time_out: group.attempt_time_out ?? 0,
             session_keep_time: group.session_keep_time ?? 0,
+            reasoning_buffer_strategy: group.reasoning_buffer_strategy ?? '',
             members: nextMembers,
         };
 
@@ -899,6 +910,7 @@ export function GroupListItem({
         group.name,
         group.outbound_format,
         group.session_keep_time,
+        group.reasoning_buffer_strategy,
         handleSubmitEdit,
         members,
         t,
