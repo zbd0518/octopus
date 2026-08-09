@@ -24,6 +24,13 @@ import (
 // 默认 32MB，可通过环境变量 OCTOPUS_RELAY_MAX_SSE_EVENT_SIZE 覆盖。
 var maxSSEEventSize = 32 * 1024 * 1024
 
+// maxReasoningBufferBytes 是 buffer 策略下暂存的 reasoning-only chunk 累计字节软上限。
+// reasoning-only 流（无可见内容到达）下，chunk 持续追加到 reasoningBuffer 且仅在可见
+// 内容到达或响应过滤拦截时 flush，长流会让缓冲无界增长（内存峰值）。达到软上限时
+// 直接丢弃当前 buffer 并重置计数（不向客户端 flush，以保持空输出重试安全性）。
+// 8 MiB 足够正常 reasoning 输出，与 stream session maxBytes（4 MiB）同量级但留余量。
+const maxReasoningBufferBytes = 8 * 1024 * 1024
+
 const (
 	defaultMaxRetryPerCandidate = 3
 	defaultMaxRouteRetries      = 2

@@ -149,47 +149,59 @@ def generate_entry(model_id: str, cost: dict) -> str:
 def main():
     print(f"Fetching price data from {LLM_PRICE_URL}...")
     raw_price = fetch_price_data()
-    
+
     entries = []
     model_count = 0
-    
+    # 记录已写入的 model_id，避免上游数据源出现重复键导致生成的
+    # presets.go 编译失败（Go map literal 不允许 duplicate key）。
+    seen: set[str] = set()
+
+    def add_entry(model_id: str, cost: dict) -> bool:
+        key = model_id.lower()
+        if key in seen:
+            print(f"  duplicate model id '{key}' skipped")
+            return False
+        seen.add(key)
+        entries.append(generate_entry(key, cost))
+        return True
+
     for provider in PROVIDERS:
         if provider not in raw_price:
             print(f"  Provider '{provider}' not found, skipping...")
             continue
-            
+
         models = raw_price[provider].get("models", {})
         provider_count = 0
-        
+
         for model_data in models.values():
             model_id = model_data.get("id", "").lower()
             cost = model_data.get("cost", {})
-            
+
             if not model_id:
                 continue
-            
+
             # 添加原始模型
-            entries.append(generate_entry(model_id, cost))
-            provider_count += 1
-            
+            if add_entry(model_id, cost):
+                provider_count += 1
+
             # 收集所有别名
             aliases = []
-            
+
             # 1. Claude 模型自动生成别名
             aliases.extend(generate_claude_aliases(model_id))
-            
+
             # 2. 静态别名映射
             if model_id in MODEL_ALIASES:
                 aliases.extend(MODEL_ALIASES[model_id])
-            
+
             # 添加别名 (去重)
             for alias in set(aliases):
-                entries.append(generate_entry(alias.lower(), cost))
-                provider_count += 1
-            
+                if add_entry(alias, cost):
+                    provider_count += 1
+
         print(f"  {provider}: {provider_count} models")
         model_count += provider_count
-    
+
     # 生成 Go 文件内容
     update_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     content = PRESETS_GO_TEMPLATE.format(

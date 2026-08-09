@@ -45,6 +45,9 @@ func Init() {
 		db.StartSerialWriter(context.Background())
 	}
 	relaylog.StartFlushWorker(context.Background())
+	// 启动号池 ReportResult DB 写 worker pool（固定 worker + 有界队列，避免每请求
+	// 一 goroutine 在高 QPS + 慢 DB 下无限堆积）。
+	poolscheduler.StartReportWorkerPool(context.Background())
 	// 注入 Key 巡检状态清理函数到 relay 包（打破 relay -> task 循环依赖）。
 	relay.OnChannelDeletedKeyHealthHook = RemoveChannelKeyHealthState
 	priceUpdateIntervalHours, err := setting.GetInt(model.SettingKeyModelInfoUpdateInterval)
@@ -134,6 +137,11 @@ func Init() {
 		stats.PurgeIdleModelStats(balancerIdleThreshold)
 		// 清理长时间未活动的号池调度统计（EWMA、并发槽位）。
 		poolscheduler.PurgeStale(balancerIdleThreshold)
+		// 清理长时间未活动的号池粘性会话条目。globalPoolSticky 的 key 含客户端
+		// 请求携带的 model 名（基数不受控），仅靠 RemovePool/RemoveAccount 和
+		// trySticky 惰性删除无法回收一次性/随机 model 名，会无界增长（见 issue #46
+		// 同类遗漏，balancer.PurgeIdleSessions 已修复，此处补齐号池粘性）。
+		poolscheduler.PurgeStaleSticky(balancerIdleThreshold)
 		// 清理号池账号鉴权错误计数中窗口已过期的条目，防止 globalAuthErrors
 		// 因频繁 ResetAuthError 刷新 windowStart 而长期驻留（见 auth_error_counter.go）。
 		poolscheduler.PurgeStaleAuthErrors()

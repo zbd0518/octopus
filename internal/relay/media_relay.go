@@ -988,6 +988,11 @@ func rewriteAudioSpeechRequestByProvider(group dbmodel.Group, cfg mediaEndpointC
 	return converted, cfg
 }
 
+// maxMimoTTSResponseBytes 是 MiMo TTS 响应体的大小上限（32 MiB）。
+// 采用 max+1 模式：读出长度超过上限即视为异常超大响应，拒绝而非 OOM
+// （参照 relay.go maxErrorBodyBytes 的既有模式）。正常 TTS 音频远小于此。
+const maxMimoTTSResponseBytes = 32 * 1024 * 1024
+
 // mimoTTSChatResponse represents the relevant fields of a MiMo TTS chat completion response.
 type mimoTTSChatResponse struct {
 	Choices []struct {
@@ -1002,9 +1007,14 @@ type mimoTTSChatResponse struct {
 // handleMimoTTSResponse extracts the base64-encoded audio from a MiMo chat
 // completion JSON response and sends it as binary audio to the client.
 func handleMimoTTSResponse(c *gin.Context, response *http.Response, audioFormat string) (int, error) {
-	respBody, err := io.ReadAll(response.Body)
+	// 限制响应体大小，避免异常超大 TTS 响应全量载入导致 OOM（base64 解码还会
+	// 再分配一份等大内存）。采用 max+1 模式区分"恰好上限"与"超过上限"。
+	respBody, err := io.ReadAll(io.LimitReader(response.Body, int64(maxMimoTTSResponseBytes)+1))
 	if err != nil {
 		return 0, fmt.Errorf("failed to read MiMo TTS response: %w", err)
+	}
+	if len(respBody) > maxMimoTTSResponseBytes {
+		return response.StatusCode, fmt.Errorf("MiMo TTS response exceeds %d bytes limit", maxMimoTTSResponseBytes)
 	}
 
 	var mimoResp mimoTTSChatResponse

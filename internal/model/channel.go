@@ -77,7 +77,7 @@ type Channel struct {
 	Name                 string                `json:"name" gorm:"unique;not null"`
 	GroupID              int                   `json:"group_id" gorm:"not null;default:0;index"`
 	Type                 outbound.OutboundType `json:"type"`
-	Enabled              bool                  `json:"enabled" gorm:"default:true"`
+	Enabled              bool                  `json:"enabled"`
 	BaseUrls             []BaseUrl             `json:"base_urls" gorm:"serializer:json"`
 	Keys                 []ChannelKey          `json:"keys" gorm:"foreignKey:ChannelID"`
 	Model                string                `json:"model"`
@@ -127,7 +127,7 @@ type CustomHeader struct {
 type ChannelKey struct {
 	ID               int     `json:"id" gorm:"primaryKey"`
 	ChannelID        int     `json:"channel_id"`
-	Enabled          bool    `json:"enabled" gorm:"default:true"`
+	Enabled          bool    `json:"enabled"`
 	ChannelKey       string  `json:"channel_key"`
 	StatusCode       int     `json:"status_code"`
 	LastUseTimeStamp int64   `json:"last_use_time_stamp"`

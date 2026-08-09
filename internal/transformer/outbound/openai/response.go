@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/lingyuins/octopus/internal/transformer"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -76,9 +75,9 @@ func (o *ResponseOutbound) TransformResponse(ctx context.Context, response *http
 		return nil, fmt.Errorf("response is nil")
 	}
 
-	body, err := io.ReadAll(response.Body)
+	body, err := transformer.ReadResponseBody(response)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+		return nil, err
 	}
 
 	if len(body) == 0 {

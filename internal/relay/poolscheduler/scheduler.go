@@ -1,6 +1,7 @@
 package poolscheduler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -24,7 +25,9 @@ var (
 	globalPoolStats sync.Map
 	// globalPoolSlots key: "poolID:accountID" -> *int64 (atomic current concurrency)
 	globalPoolSlots sync.Map
-	// globalPoolSticky key: "poolID:sessionHash" -> accountID
+	// globalPoolSticky key: "poolID:sessionHash" -> *stickyEntry
+	// sessionHash 含客户端请求携带的 model 名（基数不受控），缺少周期回收会导致
+	// map 无界增长（见 issue #46 同类遗漏）。stickyEntry.LastActivity 用于 PurgeStaleSticky。
 	globalPoolSticky sync.Map
 	// globalRoundRobin key: poolID -> *uint64 (atomic counter)
 	globalRoundRobin sync.Map
@@ -33,13 +36,41 @@ var (
 	// 选号遇到 token 过期的 OAuth 账号时异步触发刷新，不阻塞本次选号。
 	// nil 表示刷新服务未启用（跳过触发）。
 	TriggerRefreshAsync func(poolID, accountID int)
+
+	// poolReportCh 是 ReportResult DB 写入的有界 worker pool。
+	// 之前每个号池请求完成都 go func() 同步执行两次 pool.UpdateAccount（DB 写），
+	// 无信号量/超时，高 QPS + 慢 DB 下 goroutine 会无限堆积（风暴）。改为固定 worker
+	// + 带缓冲队列：入队非阻塞，队列满则丢弃当前 job（best-effort 计数，下次请求会
+	// 再累积，且内存 EWMA 已在 ReportResult 同步更新，丢弃不影响正确性）。
+	poolReportCh = make(chan poolReportJob, 1024)
+	// poolReportWorkers 固定 worker 数，控制并发 DB 写 goroutine 上限。
+	poolReportWorkers = 4
+	// poolReportStartOnce 保证 worker pool 幂等启动（task.Init 可能被多次调用）。
+	poolReportStartOnce sync.Once
+	// poolReportDroppedCount 计数因队列满而丢弃的 ReportResult 上报次数（可观测）。
+	poolReportDroppedCount atomic.Int64
 )
+
+// poolReportJob 是 ReportResult 异步 DB 写任务。
+type poolReportJob struct {
+	poolID       int
+	accountID    int
+	success      bool
+	outputTokens int64
+}
 
 type accountStats struct {
 	mu           sync.Mutex
 	errorRate    float64
 	ttftMs       float64
 	lastActivity time.Time
+}
+
+// stickyEntry 粘性会话条目。LastActivity 用于 PurgeStaleSticky 按空闲时长回收，
+// 与 balancer.SessionEntry 同模式（见 issue #46 内存暴涨防护）。
+type stickyEntry struct {
+	AccountID    int
+	LastActivity time.Time
 }
 
 func statsKey(poolID, accountID int) string {
@@ -89,7 +120,10 @@ func SelectAccount(poolID int, sessionHash string, excludeIDs []int, poolDefault
 	// L5: acquire 槽位 + 绑定粘性
 	acquireSlot(poolID, selected.ID)
 	if sessionHash != "" {
-		globalPoolSticky.Store(stickyKey(poolID, sessionHash), selected.ID)
+		globalPoolSticky.Store(stickyKey(poolID, sessionHash), &stickyEntry{
+			AccountID:    selected.ID,
+			LastActivity: time.Now(),
+		})
 	}
 	return &selected, nil
 }
@@ -120,26 +154,60 @@ func ReportResult(poolID, accountID int, success bool, ttftMs float64, outputTok
 		ResetAuthError(poolID, accountID)
 	}
 
-	// 异步更新 DB 累计（best-effort，不阻塞请求路径）。
-	go func() {
-		updates := map[string]interface{}{
-			"total_requests": gormExpr("total_requests + 1"),
+	// 异步更新 DB 累计（best-effort，不阻塞请求路径）。经有界 worker pool 执行，
+	// 入队非阻塞，队列满则丢弃当前 job（计数降级，下次请求会再累积）。
+	job := poolReportJob{poolID: poolID, accountID: accountID, success: success, outputTokens: outputTokens}
+	select {
+	case poolReportCh <- job:
+	default:
+		poolReportDroppedCount.Add(1)
+	}
+}
+
+// applyReportToDB 执行 DB 累计写入（由 worker pool 调用）。
+func applyReportToDB(job poolReportJob) {
+	updates := map[string]interface{}{
+		"total_requests": gormExpr("total_requests + 1"),
+	}
+	if !job.success {
+		updates["total_errors"] = gormExpr("total_errors + 1")
+	}
+	if job.outputTokens > 0 {
+		updates["total_tokens"] = gormExpr("total_tokens + ?", job.outputTokens)
+	}
+	_ = pool.UpdateAccount(job.poolID, job.accountID, updates)
+	if job.success {
+		// 同步清零 auth_error_count 窗口数据库列，供恢复面板与统计查看。
+		_ = pool.UpdateAccount(job.poolID, job.accountID, map[string]interface{}{
+			"auth_error_count":        0,
+			"auth_error_window_start": int64(0),
+		})
+	}
+}
+
+// StartReportWorkerPool 启动固定数量的 worker 消费 ReportResult 的 DB 写任务。
+// 幂等：多次调用只启动一次 worker。ctx 取消后停止派发并丢弃残留 job。
+// 应在 task.Init 时调用。
+func StartReportWorkerPool(ctx context.Context) {
+	poolReportStartOnce.Do(func() {
+		for i := 0; i < poolReportWorkers; i++ {
+			go func() {
+				for {
+					select {
+					case job := <-poolReportCh:
+						applyReportToDB(job)
+					case <-ctx.Done():
+						return
+					}
+				}
+			}()
 		}
-		if !success {
-			updates["total_errors"] = gormExpr("total_errors + 1")
-		}
-		if outputTokens > 0 {
-			updates["total_tokens"] = gormExpr("total_tokens + ?", outputTokens)
-		}
-		_ = pool.UpdateAccount(poolID, accountID, updates)
-		if success {
-			// 同步清零 auth_error_count 窗口数据库列，供恢复面板与统计查看。
-			_ = pool.UpdateAccount(poolID, accountID, map[string]interface{}{
-				"auth_error_count":        0,
-				"auth_error_window_start": int64(0),
-			})
-		}
-	}()
+	})
+}
+
+// DroppedReportCount 返回因队列满而被丢弃的 ReportResult 上报次数（可观测性）。
+func DroppedReportCount() int64 {
+	return poolReportDroppedCount.Load()
 }
 
 // SetRateLimitCooldown 设置 429 冷却。
@@ -239,7 +307,7 @@ func RemoveAccount(poolID, accountID int) {
 	// 清理指向该账号的粘性条目。
 	globalPoolSticky.Range(func(k, v interface{}) bool {
 		if s := k.(string); len(s) > 0 && parsePoolID(s) == poolID {
-			if v.(int) == accountID {
+			if entry, ok := v.(*stickyEntry); ok && entry.AccountID == accountID {
 				globalPoolSticky.Delete(k)
 			}
 		}
@@ -263,12 +331,44 @@ func PurgeStale(idleThreshold time.Duration) {
 	})
 }
 
+// PurgeStaleSticky 清理长时间无活动的粘性会话条目（后台任务调用）。globalPoolSticky
+// 的 key 含客户端请求携带的 model 名（基数不受控），仅靠 RemovePool/RemoveAccount
+// 和 trySticky 惰性删除无法回收一次性/随机 model 名的条目，会无界增长（见 issue #46
+// 同类遗漏，balancer.PurgeIdleSessions 已修复，此处补齐）。返回删除的条目数。
+func PurgeStaleSticky(idleThreshold time.Duration) int {
+	if idleThreshold <= 0 {
+		return 0
+	}
+	now := time.Now()
+	removed := 0
+	globalPoolSticky.Range(func(key, value any) bool {
+		entry, ok := value.(*stickyEntry)
+		if !ok {
+			globalPoolSticky.Delete(key)
+			removed++
+			return true
+		}
+		if now.Sub(entry.LastActivity) >= idleThreshold {
+			globalPoolSticky.Delete(key)
+			removed++
+		}
+		return true
+	})
+	return removed
+}
+
 func trySticky(poolID int, sessionHash string, excludeIDs []int, poolDefaultConcurrency int, modelName string) (*model.PoolAccount, bool) {
-	val, ok := globalPoolSticky.Load(stickyKey(poolID, sessionHash))
+	key := stickyKey(poolID, sessionHash)
+	val, ok := globalPoolSticky.Load(key)
 	if !ok {
 		return nil, false
 	}
-	accountID := val.(int)
+	entry, ok := val.(*stickyEntry)
+	if !ok {
+		globalPoolSticky.Delete(key)
+		return nil, false
+	}
+	accountID := entry.AccountID
 	for _, id := range excludeIDs {
 		if id == accountID {
 			return nil, false
@@ -276,7 +376,7 @@ func trySticky(poolID int, sessionHash string, excludeIDs []int, poolDefaultConc
 	}
 	acct, err := pool.GetAccount(poolID, accountID)
 	if err != nil || !acct.IsSchedulable() {
-		globalPoolSticky.Delete(stickyKey(poolID, sessionHash))
+		globalPoolSticky.Delete(key)
 		return nil, false
 	}
 	if !model.ModelMatches(acct.Models, modelName) {
@@ -289,6 +389,8 @@ func trySticky(poolID int, sessionHash string, excludeIDs []int, poolDefaultConc
 	if !tryAcquireSlot(poolID, accountID, limit) {
 		return nil, false
 	}
+	// 粘性命中，刷新 LastActivity（活跃会话续期，与 balancer.SetSticky 一致）。
+	entry.LastActivity = time.Now()
 	return acct, true
 }
 

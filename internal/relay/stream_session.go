@@ -19,15 +19,25 @@ import (
 	dbmodel "github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/server/resp"
+	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
 var (
 	errRelayConversationBusy    = errors.New("conversation already has an active generation")
 	errRelayReplayWindowExpired = errors.New("relay stream replay window expired")
 
-	overrideStreamSessionTTL       *time.Duration
-	overrideStreamSessionMaxEvents *int
-	overrideStreamSessionMaxBytes  *int
+	// errRelayStreamSessionEvicted 表示会话因为会话总数超过硬上限而被强制驱逐。
+	// 只会发生在内存保护兜底路径上（见 enforceSessionLimitLocked）。
+	errRelayStreamSessionEvicted = errors.New("relay stream session evicted: too many concurrent sessions")
+
+	// errRelayStreamClientGone 表示客户端断连后上游在宽限期内仍未结束，会话被
+	// 强制结束以释放缓冲（见 relayStreamClientGoneGrace）。
+	errRelayStreamClientGone = errors.New("relay stream session closed: client gone and upstream exceeded grace period")
+
+	overrideStreamSessionTTL         *time.Duration
+	overrideStreamSessionMaxEvents   *int
+	overrideStreamSessionMaxBytes    *int
+	overrideStreamSessionMaxSessions *int
 )
 
 const (
@@ -39,10 +49,50 @@ const (
 	// 压缩一个数量级，同时保留断线重连重放语义。
 	relayStreamDoneRetention = 2 * time.Minute
 
-	// relayStreamMaxSessions 是全局会话 map 的硬上限。超过时主动驱逐最旧的已完成
-	// 会话，防止 map 在会话获取频率低、清理迟滞时无界增长。
-	relayStreamMaxSessions = 4096
+	// relayStreamMaxSessions 是全局会话 map 的默认硬上限，可由设置
+	// stream_session_max_sessions 覆盖。超过时优先驱逐最旧的已完成会话；仍然
+	// 超限时按最旧优先驱逐活跃会话（见 relayStreamActiveEvictFactor）。
+	//
+	// 默认值从 4096 下调到 512：4096 × 单会话 4MB 缓冲的理论上限是 16GB，对
+	// 自建部署（常见 8~16GB 内存）来说等于没有上限。512 × 4MB = 2GB，仍然远
+	// 大于正常并发所需，同时把最坏情况压到可控范围（见 issue #196 的 OOM）。
+	relayStreamMaxSessions = 512
+
+	// relayStreamActiveEvictFactor 是活跃会话开始被驱逐的宽限倍数：会话总数超过
+	// maxSessions × factor 时，最旧的活跃会话也会被驱逐。
+	//
+	// 之前只驱逐 done 会话，活跃会话「永不驱逐」——注释写的是「活跃会话的 buffer
+	// 受单会话上限约束，且会在 Finish 后释放」，但客户端中途断连时会话会一直保持
+	// 活跃直到上游结束，于是 map 可以无界增长到把内存吃光（issue #196：16GB 主机
+	// 上 RSS 涨到 13.8GB 被内核 OOM killer 杀掉两次）。留一倍宽限是为了尽量不打断
+	// 正在进行的生成，只在确实要 OOM 的方向上才动活跃会话。
+	relayStreamActiveEvictFactor = 2
+
+	// relayStreamClientGoneGrace 是客户端断连后允许上游继续生成的宽限时长。
+	// 到期仍未结束则强制 Finish 该会话并停止读取上游，把「断连会话」占用的
+	// 缓冲内存窗口限制在这个量级内，而不是跟随上游的完整生成时长。
+	//
+	// 保留一段宽限而不是立刻结束，是为了不破坏断线重连重放语义：客户端网络抖动后
+	// 重连仍能拿到这段时间内继续生成的内容。
+	relayStreamClientGoneGrace = 30 * time.Second
+
+	// relayStreamClientGoneCheckInterval 是断连宽限期的轮询间隔。取远小于宽限期
+	// 的值，保证宽限期一到就能及时收尾；同时不必太小——它只在有 stream session
+	// 的流式请求上跑一个 ticker。
+	relayStreamClientGoneCheckInterval = 5 * time.Second
 )
+
+// getStreamSessionMaxSessions 返回全局会话 map 的硬上限。
+// 设置为 0 或负数表示不限制（与旧行为一致，仅供明确知晓风险的部署使用）。
+func getStreamSessionMaxSessions() int {
+	if overrideStreamSessionMaxSessions != nil {
+		return *overrideStreamSessionMaxSessions
+	}
+	if v, err := setting.GetInt(dbmodel.SettingKeyStreamSessionMaxSessions); err == nil && v >= 0 {
+		return v
+	}
+	return relayStreamMaxSessions
+}
 
 func getStreamSessionTTL() time.Duration {
 	if overrideStreamSessionTTL != nil {
@@ -91,6 +141,8 @@ type relayStreamSession struct {
 	updatedAt        time.Time
 	done             bool
 	err              error
+	clientGoneAt     time.Time // 客户端断连时刻；零值表示客户端仍在
+	clientGoneActive bool      // 客户端断连后是否已开始强制结束计时（见 MarkClientGone）
 	nextSeq          int64
 	droppedBeforeSeq int64
 	bufferBytes      int
@@ -160,48 +212,102 @@ func acquireRelayStreamSession(conversationID string, apiKeyID int, requestHash 
 	return session, true, nil
 }
 
-// enforceSessionLimitLocked 在会话总数超过 relayStreamMaxSessions 时，驱逐最旧的
-// 已完成会话，防止全局 map 在清理迟滞时无界增长。调用方必须持有 store.mu 写锁。
-// 只驱逐 done 会话，避免中断正在进行的生成；若全是活跃会话则不驱逐（活跃会话的
-// buffer 受单会话上限约束，且会在 Finish 后释放）。
+// enforceSessionLimitLocked 在会话总数超过上限时驱逐旧会话，防止全局 map 无界
+// 增长。调用方必须持有 store.mu 写锁。
+//
+// 驱逐分两级：
+//  1. 优先驱逐最旧的已完成（done）会话——它们只等清理，驱逐没有副作用。
+//  2. 当会话数超过 limit × relayStreamActiveEvictFactor 时，继续按最旧优先驱逐
+//     活跃会话，并 Finish 它们释放缓冲。
+//
+// 第 2 级是这次修复的核心：旧实现「若全是活跃会话则不驱逐」，而客户端中途断连的
+// 会话会一直保持活跃直到上游结束，导致硬上限在最需要它的负载下完全失效，map 可以
+// 涨到吃光整台机器的内存（issue #196）。丢弃活跃会话确实会打断该会话的重放，但相
+// 比整个进程被 OOM killer 杀掉（所有在途请求一起失败）是明显更小的代价。
 func (s *relayStreamSessionStore) enforceSessionLimitLocked() {
-	if relayStreamMaxSessions <= 0 || len(s.byKey) <= relayStreamMaxSessions {
+	limit := getStreamSessionMaxSessions()
+	if limit <= 0 || len(s.byKey) <= limit {
 		return
 	}
 
-	type doneSession struct {
+	type candidate struct {
 		key       string
 		scope     string
+		session   *relayStreamSession
 		updatedAt time.Time
 	}
-	doneList := make([]doneSession, 0, len(s.byKey))
+	doneList := make([]candidate, 0, len(s.byKey))
+	activeList := make([]candidate, 0, len(s.byKey))
 	for key, session := range s.byKey {
 		session.mu.RLock()
 		done := session.done
 		updatedAt := session.updatedAt
 		scope := session.conversationScope
 		session.mu.RUnlock()
+		c := candidate{key: key, scope: scope, session: session, updatedAt: updatedAt}
 		if done {
-			doneList = append(doneList, doneSession{key: key, scope: scope, updatedAt: updatedAt})
+			doneList = append(doneList, c)
+		} else {
+			activeList = append(activeList, c)
 		}
 	}
-	sort.Slice(doneList, func(i, j int) bool {
-		return doneList[i].updatedAt.Before(doneList[j].updatedAt)
-	})
+	byOldestFirst := func(list []candidate) func(i, j int) bool {
+		return func(i, j int) bool { return list[i].updatedAt.Before(list[j].updatedAt) }
+	}
+	sort.Slice(doneList, byOldestFirst(doneList))
+	sort.Slice(activeList, byOldestFirst(activeList))
 
-	excess := len(s.byKey) - relayStreamMaxSessions
-	for i := 0; i < len(doneList) && excess > 0; i++ {
-		d := doneList[i]
-		session, ok := s.byKey[d.key]
+	evict := func(c candidate) bool {
+		session, ok := s.byKey[c.key]
 		if !ok {
+			return false
+		}
+		delete(s.byKey, c.key)
+		if activeKey, ok := s.activeByConversation[c.scope]; ok && activeKey == session.key {
+			delete(s.activeByConversation, c.scope)
+		}
+		return true
+	}
+
+	excess := len(s.byKey) - limit
+	for i := 0; i < len(doneList) && excess > 0; i++ {
+		if evict(doneList[i]) {
+			excess--
+		}
+	}
+
+	// 已完成会话清空后仍然超限：说明积压的全是活跃会话。只有在超出宽限阈值
+	// （limit × factor）时才动它们，避免正常波动打断正在进行的生成。
+	activeLimit := limit
+	if relayStreamActiveEvictFactor > 1 {
+		activeLimit = limit * relayStreamActiveEvictFactor
+	}
+	if len(s.byKey) <= activeLimit {
+		return
+	}
+	activeExcess := len(s.byKey) - activeLimit
+	evicted := make([]*relayStreamSession, 0, activeExcess)
+	for i := 0; i < len(activeList) && activeExcess > 0; i++ {
+		if !evict(activeList[i]) {
 			continue
 		}
-		delete(s.byKey, d.key)
-		if activeKey, ok := s.activeByConversation[d.scope]; ok && activeKey == session.key {
-			delete(s.activeByConversation, d.scope)
-		}
-		excess--
+		evicted = append(evicted, activeList[i].session)
+		activeExcess--
 	}
+	if len(evicted) == 0 {
+		return
+	}
+
+	// Finish 会取 store.mu 写锁，而这里正持有它 —— 必须异步调用避免自死锁。
+	// 会话已从 map 中摘除，异步 Finish 只影响其订阅者与缓冲释放。
+	go func(sessions []*relayStreamSession) {
+		for _, session := range sessions {
+			session.Finish(errRelayStreamSessionEvicted)
+		}
+	}(evicted)
+	log.Warnf("relay stream session store over hard limit (%d), evicted %d active sessions; "+
+		"consider lowering stream_session_max_bytes_mb or raising stream_session_max_sessions",
+		activeLimit, len(evicted))
 }
 
 // doneSessionRetention 返回已完成会话条目在 map 中的保留时长：取
@@ -281,6 +387,45 @@ func (s *relayStreamSession) IsDone() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.done
+}
+
+// MarkClientGone 记录「客户端已断连、但上游仍在生成」的时刻，开始宽限计时。
+// 重复调用只有第一次生效，保证宽限期从第一次断连算起。
+func (s *relayStreamSession) MarkClientGone() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.clientGoneActive || s.done {
+		return
+	}
+	s.clientGoneActive = true
+	s.clientGoneAt = time.Now()
+}
+
+// HasSubscribers 报告当前是否有读取者订阅该会话（即客户端是否已重连回来读）。
+func (s *relayStreamSession) HasSubscribers() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.subscribers) > 0
+}
+
+// ClientGoneGraceExceeded 报告客户端断连后的宽限期是否已耗尽。
+// 调用方据此强制结束会话并停止读取上游，把断连会话的缓冲驻留时间限定在宽限期内。
+func (s *relayStreamSession) ClientGoneGraceExceeded() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.clientGoneActive || s.done {
+		return false
+	}
+	return time.Since(s.clientGoneAt) >= relayStreamClientGoneGrace
 }
 
 func (s *relayStreamSession) AddPayload(payload []byte) []relayStreamEvent {
@@ -389,6 +534,11 @@ func (s *relayStreamSession) Subscribe() (<-chan struct{}, func()) {
 		return ch, func() {}
 	}
 	s.subscribers[ch] = struct{}{}
+	// 有订阅者接入意味着客户端已经重连回来读这个会话，撤销断连宽限计时，
+	// 否则原转发协程仍会在宽限期到点时把这个「有人在读」的会话强行结束
+	// （原请求的 context 早已 Done，无法自行感知重连）。
+	s.clientGoneActive = false
+	s.clientGoneAt = time.Time{}
 	s.mu.Unlock()
 
 	var once sync.Once
@@ -610,9 +760,14 @@ func ActiveSessionCount() int {
 // cleanup does not depend solely on a new session being acquired (lazy
 // cleanupLocked) or on per-session AfterFunc timers. This bounds the global
 // session map under sustained streaming load (see issue #46).
+//
+// 它同时执行会话总数硬上限（enforceSessionLimitLocked）。之前硬上限只在获取新会话
+// 时检查，而 OOM 场景恰恰是会话只增不减、旧会话又都处于活跃状态——把检查放到周期
+// 任务里，保证超限积压总能被收敛，不依赖新请求到达。
 func PurgeExpiredStreamSessions() {
 	store := &relayStreamSessions
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	store.cleanupLocked(time.Now())
+	store.enforceSessionLimitLocked()
 }

@@ -16,6 +16,7 @@ COPY scripts/dockerfiles/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh && \
     chown -R octopus:octopus /app
 
-USER octopus
+# 容器以 root 启动 entrypoint.sh，由其 chown /app/data 修复挂载目录权限后
+# 用 su-exec 降权到 octopus(1000) 运行（issue #198 权限只读循环重启修复）。
 
 CMD ["/entrypoint.sh"]

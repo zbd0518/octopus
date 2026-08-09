@@ -85,6 +85,7 @@ const (
 	SettingKeyStreamSessionTTLMinutes              SettingKey = "stream_session_ttl_minutes"               // 流会话TTL（分钟）
 	SettingKeyStreamSessionMaxEvents               SettingKey = "stream_session_max_events"                // 流会话最大事件数
 	SettingKeyStreamSessionMaxBytesMB              SettingKey = "stream_session_max_bytes_mb"              // 流会话最大字节数（MB）
+	SettingKeyStreamSessionMaxSessions             SettingKey = "stream_session_max_sessions"              // 流会话全局并发上限（超限驱逐最旧会话；内存上限≈本值×最大字节数）
 	SettingKeyNotifyHTTPTimeoutSeconds             SettingKey = "notify_http_timeout_seconds"              // 通知HTTP请求超时（秒）
 	SettingKeyFailureHintTTLUnauthorized           SettingKey = "failure_hint_ttl_unauthorized"            // 认证失败提示缓存TTL（秒）
 	SettingKeyFailureHintTTLRateLimit              SettingKey = "failure_hint_ttl_rate_limit"              // 限流失败提示缓存TTL（秒）
@@ -188,6 +189,7 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyStreamSessionTTLMinutes, Value: "30"},    // 默认30分钟
 		{Key: SettingKeyStreamSessionMaxEvents, Value: "4096"},   // 默认4096条
 		{Key: SettingKeyStreamSessionMaxBytesMB, Value: "4"},     // 默认4MB
+		{Key: SettingKeyStreamSessionMaxSessions, Value: "512"},  // 默认512个并发流会话（512×4MB≈2GB 最坏内存上限）
 		{Key: SettingKeyNotifyHTTPTimeoutSeconds, Value: "10"},   // 默认10秒
 		{Key: SettingKeyFailureHintTTLUnauthorized, Value: "10"}, // 默认10秒
 		{Key: SettingKeyFailureHintTTLRateLimit, Value: "5"},     // 默认5秒
@@ -254,6 +256,7 @@ func (s *Setting) Validate() error {
 		SettingKeyJWTDefaultExpiryMinutes, SettingKeyJWTRememberMeExpiryDays,
 		SettingKeyLoginRateLimitWindow, SettingKeyLoginRateLimitMaxFailed,
 		SettingKeyStreamSessionTTLMinutes, SettingKeyStreamSessionMaxEvents, SettingKeyStreamSessionMaxBytesMB,
+		SettingKeyStreamSessionMaxSessions,
 		SettingKeyNotifyHTTPTimeoutSeconds,
 		SettingKeyFailureHintTTLUnauthorized, SettingKeyFailureHintTTLRateLimit, SettingKeyFailureHintTTLNetwork,
 		SettingKeyPoolTokenRefreshInterval, SettingKeyPoolQuotaSyncInterval, SettingKeyPlanProviderRefreshInterval,
@@ -271,6 +274,10 @@ func (s *Setting) Validate() error {
 		}
 		if (s.Key == SettingKeyRatelimitCooldown || s.Key == SettingKeyRelayMaxTotalAttempts) && v < 0 {
 			return fmt.Errorf("setting value must be greater than or equal to 0")
+		}
+		// 允许设为 0：0 表示不限制流会话总数（不推荐，最坏情况会吃光内存）。
+		if s.Key == SettingKeyStreamSessionMaxSessions && v < 0 {
+			return fmt.Errorf("stream session max sessions must be greater than or equal to 0")
 		}
 		if (s.Key == SettingKeyRateLimitHoldInterval || s.Key == SettingKeyRateLimitHoldMaxWait) && v < 1 {
 			return fmt.Errorf("rate limit hold setting must be greater than 0")

@@ -210,6 +210,10 @@ func (c *importConfig) upsertAll(table string, rows any, count int, conflictColu
 
 // batchInsert 将大批量数据分批插入，避免单次事务过大导致超时或内存溢出。
 // rows 必须是指向切片的指针（如 *[]model.Channel）。
+//
+// 注意：Channel.Enabled / ChannelKey.Enabled 去掉了 gorm:"default:true"
+// tag（issue #199），因此 GORM Create 会把 enabled=false 原样写入 INSERT，
+// 而不再因零值替换 + DB 默认值把禁用渠道恢复成启用状态。
 func (c *importConfig) batchInsert(table string, rows any, count int, conflict clause.OnConflict, mode string) error {
 	if count == 0 {
 		return nil

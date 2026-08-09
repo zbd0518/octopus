@@ -460,3 +460,193 @@ func TestEnforceSessionLimitEvictsOldestDoneSessions(t *testing.T) {
 		t.Fatalf("session count = %d, want <= %d", remaining, relayStreamMaxSessions)
 	}
 }
+
+// 活跃会话在超过宽限阈值（limit × factor）后也必须被驱逐。
+// 旧实现「若全是活跃会话则不驱逐」，客户端中途断连时会话会一直保持活跃，
+// 导致硬上限完全失效、map 无界增长直到进程被 OOM killer 杀掉（issue #196）。
+func TestEnforceSessionLimitEvictsOldestActiveSessionsBeyondGrace(t *testing.T) {
+	relayStreamSessions = relayStreamSessionStore{
+		byKey:                make(map[string]*relayStreamSession),
+		activeByConversation: make(map[string]string),
+	}
+	store := &relayStreamSessions
+
+	limit := 8
+	overrideStreamSessionMaxSessions = &limit
+	t.Cleanup(func() { overrideStreamSessionMaxSessions = nil })
+
+	activeLimit := limit * relayStreamActiveEvictFactor
+	total := activeLimit + 5
+	base := time.Now().Add(-time.Hour)
+	store.mu.Lock()
+	for i := 0; i < total; i++ {
+		key := "active-" + strconv.Itoa(i)
+		store.byKey[key] = &relayStreamSession{
+			store:             store,
+			key:               key,
+			conversationScope: key,
+			done:              false, // 全部为活跃会话
+			updatedAt:         base.Add(time.Duration(i) * time.Millisecond),
+			subscribers:       make(map[chan struct{}]struct{}),
+		}
+		store.activeByConversation[key] = key
+	}
+	store.enforceSessionLimitLocked()
+	remaining := len(store.byKey)
+	_, oldestStillPresent := store.byKey["active-0"]
+	_, newestStillPresent := store.byKey["active-"+strconv.Itoa(total-1)]
+	store.mu.Unlock()
+
+	if remaining > activeLimit {
+		t.Fatalf("session count = %d, want <= %d (active sessions must be evicted past grace)", remaining, activeLimit)
+	}
+	if oldestStillPresent {
+		t.Fatal("oldest active session should have been evicted first")
+	}
+	if !newestStillPresent {
+		t.Fatal("newest active session should be kept")
+	}
+}
+
+// 未超过宽限阈值时不应驱逐活跃会话，避免正常波动打断正在进行的生成。
+func TestEnforceSessionLimitKeepsActiveSessionsWithinGrace(t *testing.T) {
+	relayStreamSessions = relayStreamSessionStore{
+		byKey:                make(map[string]*relayStreamSession),
+		activeByConversation: make(map[string]string),
+	}
+	store := &relayStreamSessions
+
+	limit := 8
+	overrideStreamSessionMaxSessions = &limit
+	t.Cleanup(func() { overrideStreamSessionMaxSessions = nil })
+
+	// 超过 limit 但未超过 limit × factor：活跃会话应全部保留。
+	total := limit + 2
+	base := time.Now().Add(-time.Hour)
+	store.mu.Lock()
+	for i := 0; i < total; i++ {
+		key := "active-" + strconv.Itoa(i)
+		store.byKey[key] = &relayStreamSession{
+			store:             store,
+			key:               key,
+			conversationScope: key,
+			done:              false,
+			updatedAt:         base.Add(time.Duration(i) * time.Millisecond),
+			subscribers:       make(map[chan struct{}]struct{}),
+		}
+	}
+	store.enforceSessionLimitLocked()
+	remaining := len(store.byKey)
+	store.mu.Unlock()
+
+	if remaining != total {
+		t.Fatalf("session count = %d, want %d (active sessions within grace must be kept)", remaining, total)
+	}
+}
+
+func TestClientGoneGraceExceeded(t *testing.T) {
+	relayStreamSessions = relayStreamSessionStore{
+		byKey:                make(map[string]*relayStreamSession),
+		activeByConversation: make(map[string]string),
+	}
+
+	session, created, err := acquireRelayStreamSession("conv-gone", 1, 1)
+	if err != nil || !created || session == nil {
+		t.Fatalf("acquireRelayStreamSession() = (%v, %t, %v)", session, created, err)
+	}
+
+	// 客户端未断连时不应触发。
+	if session.ClientGoneGraceExceeded() {
+		t.Fatal("ClientGoneGraceExceeded() = true before client disconnect")
+	}
+
+	session.MarkClientGone()
+	if session.ClientGoneGraceExceeded() {
+		t.Fatal("ClientGoneGraceExceeded() = true immediately after disconnect, want grace period")
+	}
+
+	// 把断连时刻回拨到宽限期之外，模拟上游长时间未结束。
+	session.mu.Lock()
+	session.clientGoneAt = time.Now().Add(-relayStreamClientGoneGrace - time.Second)
+	session.mu.Unlock()
+
+	if !session.ClientGoneGraceExceeded() {
+		t.Fatal("ClientGoneGraceExceeded() = false after grace period elapsed")
+	}
+
+	// 会话结束后不再触发，避免重复收尾。
+	session.Finish(nil)
+	if session.ClientGoneGraceExceeded() {
+		t.Fatal("ClientGoneGraceExceeded() = true after session finished")
+	}
+}
+
+// 客户端重连（Subscribe）必须撤销断连宽限计时，否则原转发协程会在宽限期到点时
+// 把一个「正有人在读」的会话强行结束——原请求的 context 早已 Done，无法自行感知重连。
+func TestSubscribeCancelsClientGoneGrace(t *testing.T) {
+	relayStreamSessions = relayStreamSessionStore{
+		byKey:                make(map[string]*relayStreamSession),
+		activeByConversation: make(map[string]string),
+	}
+
+	session, _, err := acquireRelayStreamSession("conv-reconnect", 1, 1)
+	if err != nil || session == nil {
+		t.Fatalf("acquireRelayStreamSession() error: %v", err)
+	}
+
+	session.MarkClientGone()
+	// 回拨到宽限期之外：若不撤销计时，此时已满足强制结束条件。
+	session.mu.Lock()
+	session.clientGoneAt = time.Now().Add(-relayStreamClientGoneGrace - time.Second)
+	session.mu.Unlock()
+	if !session.ClientGoneGraceExceeded() {
+		t.Fatal("precondition failed: grace should be exceeded before reconnect")
+	}
+
+	_, unsubscribe := session.Subscribe()
+	if session.ClientGoneGraceExceeded() {
+		t.Fatal("ClientGoneGraceExceeded() = true after client reconnected via Subscribe")
+	}
+	if !session.HasSubscribers() {
+		t.Fatal("HasSubscribers() = false while a subscriber is attached")
+	}
+
+	// 重连的读取者离开后，宽限计时应能重新起表。
+	unsubscribe()
+	if session.HasSubscribers() {
+		t.Fatal("HasSubscribers() = true after unsubscribe")
+	}
+	session.MarkClientGone()
+	if session.ClientGoneGraceExceeded() {
+		t.Fatal("grace should restart from the new disconnect time, not the original one")
+	}
+}
+
+// MarkClientGone 重复调用时宽限期应从第一次断连算起。
+func TestMarkClientGoneIsIdempotent(t *testing.T) {
+	relayStreamSessions = relayStreamSessionStore{
+		byKey:                make(map[string]*relayStreamSession),
+		activeByConversation: make(map[string]string),
+	}
+
+	session, _, err := acquireRelayStreamSession("conv-gone-twice", 1, 1)
+	if err != nil || session == nil {
+		t.Fatalf("acquireRelayStreamSession() error: %v", err)
+	}
+
+	session.MarkClientGone()
+	session.mu.RLock()
+	first := session.clientGoneAt
+	session.mu.RUnlock()
+
+	time.Sleep(5 * time.Millisecond)
+	session.MarkClientGone()
+
+	session.mu.RLock()
+	second := session.clientGoneAt
+	session.mu.RUnlock()
+
+	if !first.Equal(second) {
+		t.Fatalf("clientGoneAt changed on repeated MarkClientGone: %v -> %v", first, second)
+	}
+}

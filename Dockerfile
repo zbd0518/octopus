@@ -83,8 +83,8 @@ LABEL org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.revision="${GIT_COMMIT}" \
       org.opencontainers.image.created="${BUILD_TIME}"
 
-# Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata
+# Install runtime dependencies (su-exec for non-root user switching in entrypoint)
+RUN apk add --no-cache ca-certificates tzdata su-exec
 
 # Set default timezone for the container.
 # Override with -e TZ=... at docker run or environment in compose.
@@ -99,11 +99,16 @@ WORKDIR /app
 # Copy binary
 COPY --from=go-builder /build/octopus .
 
+# Copy entrypoint script (handles chown of mounted data dir + drops to octopus user)
+COPY scripts/dockerfiles/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Create data directory
 RUN mkdir -p /app/data && chown -R octopus:octopus /app
 
-# Switch to non-root user
-USER octopus
+# 容器以 root 启动 entrypoint.sh，由其 chown /app/data 修复挂载目录权限后
+# 用 su-exec 降权到 octopus(1000) 运行主进程（issue #198 权限只读循环重启修复）。
+# 不在此处设置 USER，否则 entrypoint 无法 chown 宿主挂载的只读目录。
 
 # Expose port
 EXPOSE 8080
@@ -115,6 +120,5 @@ ENV OCTOPUS_DATA_DIR=/app/data
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/v1/bootstrap/status || exit 1
 
-# Run the binary
-ENTRYPOINT ["./octopus"]
-CMD ["start"]
+# Run via entrypoint.sh (chowns /app/data, then drops to octopus user via su-exec)
+ENTRYPOINT ["/entrypoint.sh"]

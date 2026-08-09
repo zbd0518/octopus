@@ -91,6 +91,7 @@ export const SettingKey = {
     StreamSessionTTLMinutes: 'stream_session_ttl_minutes',
     StreamSessionMaxEvents: 'stream_session_max_events',
     StreamSessionMaxBytesMB: 'stream_session_max_bytes_mb',
+    StreamSessionMaxSessions: 'stream_session_max_sessions',
     NotifyHTTPTimeoutSeconds: 'notify_http_timeout_seconds',
     FailureHintTTLUnauthorized: 'failure_hint_ttl_unauthorized',
     FailureHintTTLRateLimit: 'failure_hint_ttl_rate_limit',

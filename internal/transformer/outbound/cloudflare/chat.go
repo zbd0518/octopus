@@ -13,7 +13,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/lingyuins/octopus/internal/transformer"
-	"io"
 	"net/http"
 	"strings"
 
@@ -100,9 +99,9 @@ func (o *ChatOutbound) TransformResponse(ctx context.Context, response *http.Res
 	if response == nil {
 		return nil, fmt.Errorf("response is nil")
 	}
-	body, err := io.ReadAll(response.Body)
+	body, err := transformer.ReadResponseBody(response)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+		return nil, err
 	}
 	if len(body) == 0 {
 		return nil, fmt.Errorf("response body is empty")
