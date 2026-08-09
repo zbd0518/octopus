@@ -127,6 +127,34 @@ func UpdateAccount(poolID, accountID int, updates map[string]interface{}) error 
 	return nil
 }
 
+func DeleteAccounts(poolID int, accountIDs []int) (int, error) {
+	if len(accountIDs) == 0 {
+		return 0, nil
+	}
+	result := db.GetDB().Where("pool_id = ? AND id IN ?", poolID, accountIDs).Delete(&model.PoolAccount{})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	for _, accountID := range accountIDs {
+		for _, hook := range OnPoolAccountDeletedHooks {
+			hook(poolID, accountID)
+		}
+	}
+	return int(result.RowsAffected), nil
+}
+
+func ClearAccounts(poolID int) (int, error) {
+	accounts, err := ListAccounts(poolID)
+	if err != nil {
+		return 0, err
+	}
+	ids := make([]int, 0, len(accounts))
+	for _, account := range accounts {
+		ids = append(ids, account.ID)
+	}
+	return DeleteAccounts(poolID, ids)
+}
+
 func DeleteAccount(poolID, accountID int) error {
 	result := db.GetDB().Where("pool_id = ? AND id = ?", poolID, accountID).Delete(&model.PoolAccount{})
 	if result.Error != nil {

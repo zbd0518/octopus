@@ -96,23 +96,26 @@ func MaskAccountExtra(acct *model.PoolAccount) string {
 	if acct.Extra == "" {
 		return ""
 	}
-	var e model.PoolAccountExtra
-	if err := json.Unmarshal([]byte(acct.Extra), &e); err != nil {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(acct.Extra), &raw); err != nil {
 		return "***"
 	}
-	if len(e.HeaderOverrides) > 0 {
-		sanitized := make(map[string]string, len(e.HeaderOverrides))
-		for k, v := range e.HeaderOverrides {
-			lower := strings.ToLower(k)
-			if strings.Contains(lower, "key") || strings.Contains(lower, "token") || strings.Contains(lower, "secret") || strings.Contains(lower, "cookie") {
-				sanitized[k] = "***"
-			} else {
-				sanitized[k] = v
+	if headersRaw, ok := raw["header_overrides"]; ok {
+		var headers map[string]string
+		if err := json.Unmarshal(headersRaw, &headers); err == nil {
+			sanitized := make(map[string]string, len(headers))
+			for k, v := range headers {
+				lower := strings.ToLower(k)
+				if strings.Contains(lower, "key") || strings.Contains(lower, "token") || strings.Contains(lower, "secret") || strings.Contains(lower, "cookie") {
+					sanitized[k] = "***"
+				} else {
+					sanitized[k] = v
+				}
 			}
+			raw["header_overrides"], _ = json.Marshal(sanitized)
 		}
-		e.HeaderOverrides = sanitized
 	}
-	out, err := json.Marshal(e)
+	out, err := json.Marshal(raw)
 	if err != nil {
 		return ""
 	}
@@ -130,7 +133,8 @@ func MaskAccounts(accounts []model.PoolAccount) []model.PoolAccount {
 
 // ParseImportedAccounts 解析批量导入的 JSON 数组为 PoolAccount 列表。
 // 每个元素需至少包含 credentials（JSON 字符串或对象）字段；platform/type 可选，
-// 缺省分别为 custom/apikey。credentials 对象会被加密后存入。
+// 缺省分别为 custom/apikey。credentials 对象会被加密后存入。extra 同时兼容
+// 导出时的 JSON 字符串和兼容实现常见的 JSON 对象形式。
 func ParseImportedAccounts(raw string, poolID int) ([]model.PoolAccount, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -156,19 +160,21 @@ func ParseImportedAccounts(raw string, poolID int) ([]model.PoolAccount, error) 
 		}
 		// 先解析到临时结构以提取 credentials（可能是对象或字符串）。
 		var tmp struct {
-			Name          string          `json:"name"`
-			Platform      string          `json:"platform"`
-			Type          string          `json:"type"`
-			Models        string          `json:"models"`
-			Credentials   json.RawMessage `json:"credentials"`
-			BaseURL       string          `json:"base_url"`
-			Notes         string          `json:"notes"`
-			Priority      *int            `json:"priority"`
-			Concurrency   *int            `json:"concurrency"`
-			Weight        *int            `json:"weight"`
-			LoadFactor    *int            `json:"load_factor"`
-			ProxyConfigID *int            `json:"proxy_config_id"`
-			Extra         string          `json:"extra"`
+			Name               string          `json:"name"`
+			Platform           string          `json:"platform"`
+			Type               string          `json:"type"`
+			Models             string          `json:"models"`
+			Credentials        json.RawMessage `json:"credentials"`
+			BaseURL            string          `json:"base_url"`
+			Notes              string          `json:"notes"`
+			Priority           *int            `json:"priority"`
+			Concurrency        *int            `json:"concurrency"`
+			Weight             *int            `json:"weight"`
+			LoadFactor         *int            `json:"load_factor"`
+			ProxyConfigID      *int            `json:"proxy_config_id"`
+			AutoPauseOnExpired *bool           `json:"auto_pause_on_expired"`
+			ExpiresAt          *int64          `json:"expires_at"`
+			Extra              json.RawMessage `json:"extra"`
 		}
 		if err := json.Unmarshal(item, &tmp); err != nil {
 			return nil, err
@@ -197,7 +203,13 @@ func ParseImportedAccounts(raw string, poolID int) ([]model.PoolAccount, error) 
 		if tmp.LoadFactor != nil {
 			acct.LoadFactor = *tmp.LoadFactor
 		}
-		acct.Extra = tmp.Extra
+		acct.Extra = parseImportedExtra(tmp.Extra)
+		if tmp.AutoPauseOnExpired != nil {
+			acct.AutoPauseOnExpired = *tmp.AutoPauseOnExpired
+		}
+		if tmp.ExpiresAt != nil {
+			acct.ExpiresAt = *tmp.ExpiresAt
+		}
 		if tmp.ProxyConfigID != nil {
 			id := *tmp.ProxyConfigID
 			acct.ProxyConfigID = &id
@@ -214,8 +226,51 @@ func ParseImportedAccounts(raw string, poolID int) ([]model.PoolAccount, error) 
 				credStr = s
 			}
 		}
+		credStr = normalizeImportedCredentials(credStr, acct.Platform, acct.Type)
 		acct.Credentials = EncryptCredentials(credStr)
 		result = append(result, acct)
 	}
 	return result, nil
+}
+
+// normalizeImportedCredentials canonicalizes compatible OAuth field names while
+// preserving all fields from the source credential payload.
+func normalizeImportedCredentials(raw, platform, accountType string) string {
+	if platform != model.PoolPlatformOpenAI || accountType != model.PoolTypeOAuth || raw == "" {
+		return raw
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+		return raw
+	}
+	if _, ok := fields["account_id"]; ok {
+		return raw
+	}
+	accountID, ok := fields["chatgpt_account_id"]
+	if !ok {
+		return raw
+	}
+	fields["account_id"] = accountID
+	b, err := json.Marshal(fields)
+	if err != nil {
+		return raw
+	}
+	return string(b)
+}
+
+// parseImportedExtra accepts both the exported string form and the object form
+// used by compatible account-pool implementations. Extra is stored as a JSON
+// string in PoolAccount, so object values are kept as their JSON representation.
+func parseImportedExtra(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	s := strings.TrimSpace(string(raw))
+	if strings.HasPrefix(s, `"`) {
+		var value string
+		if err := json.Unmarshal(raw, &value); err == nil {
+			return value
+		}
+	}
+	return s
 }

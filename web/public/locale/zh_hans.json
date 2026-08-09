@@ -3614,12 +3614,13 @@
     "tokenExpired": "Token 过期",
     "noAccounts": "此号池暂无账号",
     "credentials": "凭据 (JSON)",
-    "credentialsHint": "或直接填 JSON：",
+    "credentialsHint": "编辑时显示已保存凭据；填写后会更新凭据。",
     "baseUrl": "上游地址",
     "priority": "优先级",
     "inheritPool": "继承池默认",
     "proxyConfig": "代理配置",
     "proxyConfigPlaceholder": "可选：代理池配置 ID",
+    "credentialsVisibleHint": "凭据会在此显示；保存时留空则保持不变。",
     "platform": "平台",
     "type": "凭据类型",
     "typeLabels": {
@@ -3714,9 +3715,15 @@
     "selectedCount": "已选 {{count}} 项",
     "batchRefresh": "批量刷新 Token",
     "batchClearError": "批量清除错误",
+    "batchDelete": "批量删除",
     "batchTest": "批量测试",
     "batchRefreshResult": "Token 刷新：{{ok}} 成功 / {{failed}} 失败",
     "batchClearResult": "错误清除：{{ok}} 成功 / {{failed}} 失败",
+    "batchDeleteConfirm": "确定删除选中的 {{count}} 个账号吗？此操作不可撤销。",
+    "batchDeleteResult": "已删除 {{count}} 个账号",
+    "clearAccounts": "一键清空",
+    "clearAccountsConfirm": "确定清空此账号池中的全部 {{count}} 个账号吗？此操作不可撤销。",
+    "clearAccountsResult": "已清空 {{count}} 个账号",
     "batchTestResult": "连通性：{{ok}}/{{total}} 通过"
   }
 }

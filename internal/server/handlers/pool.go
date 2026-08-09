@@ -95,6 +95,16 @@ func init() {
 				Handle(batchClearErrorPoolAccounts),
 		).
 		AddRoute(
+			router.NewRoute("/:id/account/batch-delete", http.MethodPost).
+				Use(middleware.RequirePermission(auth.PermChannelsWrite)).
+				Handle(batchDeletePoolAccounts),
+		).
+		AddRoute(
+			router.NewRoute("/:id/account/clear", http.MethodPost).
+				Use(middleware.RequirePermission(auth.PermChannelsWrite)).
+				Handle(clearPoolAccounts),
+		).
+		AddRoute(
 			router.NewRoute("/:id/account/batch-test", http.MethodPost).
 				Use(middleware.RequirePermission(auth.PermChannelsWrite)).
 				Handle(batchTestPoolAccounts),
@@ -364,6 +374,9 @@ func updatePoolAccount(c *gin.Context) {
 		updates["extra"] = req.Extra
 	}
 	if req.ProxyConfigIDSet {
+		if req.ProxyConfigID != nil && *req.ProxyConfigID <= 0 {
+			req.ProxyConfigID = nil
+		}
 		updates["proxy_config_id"] = req.ProxyConfigID
 	}
 	if req.Notes != "" {
@@ -377,6 +390,39 @@ func updatePoolAccount(c *gin.Context) {
 		return
 	}
 	resp.Success(c, nil)
+}
+
+func batchDeletePoolAccounts(c *gin.Context) {
+	poolID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, "invalid pool id")
+		return
+	}
+	var req batchAccountIDsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Error(c, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	deleted, err := pool.DeleteAccounts(poolID, req.AccountIDs)
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp.Success(c, gin.H{"deleted": deleted})
+}
+
+func clearPoolAccounts(c *gin.Context) {
+	poolID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, "invalid pool id")
+		return
+	}
+	deleted, err := pool.ClearAccounts(poolID)
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp.Success(c, gin.H{"deleted": deleted})
 }
 
 func deletePoolAccount(c *gin.Context) {
@@ -640,7 +686,7 @@ type PoolAccountExport struct {
 	Weight      int    `json:"weight"`
 	LoadFactor  int    `json:"load_factor"`
 	Notes       string `json:"notes"`
-	Extra       string `json:"extra,omitempty"`
+	Extra       any    `json:"extra,omitempty"`
 	Credentials string `json:"credentials"`
 }
 
@@ -671,11 +717,22 @@ func exportPoolAccounts(c *gin.Context) {
 			Weight:      a.Weight,
 			LoadFactor:  a.LoadFactor,
 			Notes:       a.Notes,
-			Extra:       a.Extra,
+			Extra:       exportPoolAccountExtra(a.Extra),
 			Credentials: a.Credentials,
 		})
 	}
 	resp.Success(c, out)
+}
+
+func exportPoolAccountExtra(raw string) any {
+	if raw == "" {
+		return nil
+	}
+	var value any
+	if err := json.Unmarshal([]byte(raw), &value); err == nil {
+		return value
+	}
+	return raw
 }
 
 func importPoolAccounts(c *gin.Context) {

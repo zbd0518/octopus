@@ -94,6 +94,8 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
     const updateAccount = useUpdatePoolAccount(poolId);
     const [proxyValue, setProxyValue] = useState<{ proxy_mode: ProxyMode; proxy_config_id: number | null }>({ proxy_mode: 'direct', proxy_config_id: null });
     const [form, setForm] = useState<PoolAccountRequest>(emptyForm);
+    const [originalCredentials, setOriginalCredentials] = useState('');
+    const [originalExtra, setOriginalExtra] = useState('');
 
     useEffect(() => {
         if (open) {
@@ -103,7 +105,7 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
                     platform: account.platform || 'custom',
                     type: account.type || 'apikey',
                     models: account.models || '',
-                    credentials: '',
+                    credentials: account.credentials || '',
                     base_url: account.base_url || '',
                     priority: account.priority,
                     concurrency: account.concurrency,
@@ -115,9 +117,13 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
                     notes: account.notes || '',
                     extra: account.extra || '',
                 });
+                setOriginalCredentials(account.credentials || '');
+                setOriginalExtra(account.extra || '');
                 setProxyValue({ proxy_mode: account.proxy_config_id ? 'pool' : 'direct', proxy_config_id: account.proxy_config_id ?? null });
             } else {
                 setForm({ ...emptyForm, base_url: DEFAULT_BASE_URL_BY_PLATFORM.anthropic });
+                setOriginalCredentials('');
+                setOriginalExtra('');
                 setProxyValue({ proxy_mode: 'direct', proxy_config_id: null });
             }
         }
@@ -162,6 +168,14 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
             ...form,
             proxy_config_id: proxyValue.proxy_mode === 'pool' ? proxyValue.proxy_config_id : null,
         };
+        // 编辑时列表返回的是脱敏凭据；未修改时不要把脱敏 JSON 写回数据库。
+        if (account && form.credentials === originalCredentials) {
+            delete payload.credentials;
+        }
+        // Extra 中可能包含被脱敏的 header 值；未修改时不要覆盖原始数据。
+        if (account && form.extra === originalExtra) {
+            delete payload.extra;
+        }
         const onSuccess = () => {
             onOpenChange(false);
             toast.success(account ? t('accountUpdated') : t('accountCreated'));
@@ -247,7 +261,7 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
                                 <Label className="text-xs">{t('oauthManualPaste')}</Label>
                                 <textarea
                                     className="mt-1 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs"
-                                    rows={3}
+                                    rows={5}
                                     value={form.credentials}
                                     onChange={(e) => setForm({ ...form, credentials: e.target.value })}
                                     placeholder='{"access_token":"...","refresh_token":"...","account_id":"..."}'
@@ -259,7 +273,7 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
                             <Label>{t('apiKey')}</Label>
                             <Input
                                 className="mt-1 font-mono"
-                                type="password"
+                                type="text"
                                 value={form.credentials}
                                 onChange={(e) => setForm({ ...form, credentials: e.target.value })}
                                 placeholder="sk-..."
@@ -273,7 +287,7 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
                             <Label>{t('cookie')}</Label>
                             <textarea
                                 className="mt-1 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs"
-                                rows={2}
+                                rows={3}
                                 value={form.credentials}
                                 onChange={(e) => setForm({ ...form, credentials: e.target.value })}
                                 placeholder="sessionKey=... (volcengine: Cookie|||csrf-token)"
@@ -331,6 +345,10 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
                             </div>
                         )}
                     </div>
+
+                    {account && (
+                        <p className="text-xs text-muted-foreground">{t('credentialsVisibleHint')}</p>
+                    )}
 
                     {/* 代理 */}
                     <div>

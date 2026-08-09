@@ -244,6 +244,7 @@ export function useTempUnschedPoolAccount(poolId: number) {
 
 export type BatchItemError = { id: number; error: string };
 export type BatchAccountsResponse = { ok: number; failed: BatchItemError[] };
+export type PoolAccountsDeleteResponse = { deleted: number };
 export type BatchTestItemResult = { id: number; success: boolean; latency_ms: number; error?: string };
 
 export function useBatchPoolAccounts(poolId: number) {
@@ -264,7 +265,20 @@ export function useBatchPoolAccounts(poolId: number) {
             apiClient.post<BatchTestItemResult[]>(`/api/v1/pool/${poolId}/account/batch-test`, { account_ids: accountIds, model }),
         onSuccess: invalidate,
     });
-    return { refresh, clearError, test };
+    const deleteSelected = useMutation({
+        mutationFn: (accountIds: number[]) =>
+            apiClient.post<PoolAccountsDeleteResponse>(`/api/v1/pool/${poolId}/account/batch-delete`, { account_ids: accountIds }),
+        onSuccess: invalidate,
+    });
+    return { refresh, clearError, test, deleteSelected };
+}
+
+export function useClearPoolAccounts(poolId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: () => apiClient.post<PoolAccountsDeleteResponse>(`/api/v1/pool/${poolId}/account/clear`, {}),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pools', poolId, 'accounts'] }),
+    });
 }
 
 export type PoolAccountExport = {
@@ -278,7 +292,7 @@ export type PoolAccountExport = {
     weight: number;
     load_factor: number;
     notes: string;
-    extra?: string;
+    extra?: unknown;
     credentials: string;
 };
 

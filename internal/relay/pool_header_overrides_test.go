@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -92,6 +93,22 @@ func TestApplyHeaderOverrides_DisabledSkipped(t *testing.T) {
 	ra.applyHeaderOverrides(req)
 	if got := req.Header.Get("x-custom"); got != "" {
 		t.Fatalf("disabled flag should skip, got %q", got)
+	}
+}
+
+func TestEffectiveKeyWithExtra_AcceptsSub2APIAccountID(t *testing.T) {
+	cred := dbmodel.PoolCredential{
+		Type:             dbmodel.PoolTypeOAuth,
+		AccessToken:      "access-token",
+		ChatGPTAccountID: "chatgpt-acct-1",
+	}
+	got := cred.EffectiveKeyWithExtra(dbmodel.PoolPlatformOpenAI, dbmodel.PoolAccountExtra{})
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("OAuth JSON error = %v", err)
+	}
+	if parsed["account_id"] != "chatgpt-acct-1" {
+		t.Fatalf("account_id = %q, want chatgpt-acct-1", parsed["account_id"])
 	}
 }
 

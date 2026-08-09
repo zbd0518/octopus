@@ -200,24 +200,26 @@ func (a *PoolAccount) EffectiveConcurrency(poolDefault int) int {
 // PoolCredential 凭据 JSON 结构。按 Type 解析不同字段：
 //   - apikey:   {"type":"apikey","api_key":"sk-..."}
 //   - cookie:   {"type":"cookie","cookie":"sessionKey=..."}
-//   - oauth:    {"type":"oauth","access_token":"...","refresh_token":"...","account_id":"...","id_token":"..."}
+//   - oauth:    {"type":"oauth","access_token":"...","refresh_token":"...","account_id":"..." or "chatgpt_account_id":"...","id_token":"..."}
 //   - upstream: {"type":"upstream","api_key":"...","base_url":"https://..."}
 //
 // 旧格式 {"type":"bearer","token":"..."} 与 {"type":"cookie","token":"..."} 向后兼容：
 // Token 字段保留，bearer 归入 apikey 语义（出站按 Bearer 头发送），cookie.token 归入 cookie。
 type PoolCredential struct {
-	Type         string `json:"type"`
-	Token        string `json:"token,omitempty"`         // 向后兼容：bearer token 或 cookie value
-	APIKey       string `json:"api_key,omitempty"`       // apikey / upstream
-	Cookie       string `json:"cookie,omitempty"`        // cookie
-	AccessToken  string `json:"access_token,omitempty"`  // oauth
-	RefreshToken string `json:"refresh_token,omitempty"` // oauth
-	AccountID    string `json:"account_id,omitempty"`    // oauth (openai/codex)
-	IDToken      string `json:"id_token,omitempty"`      // oauth (openai/grok)
-	BaseURL      string `json:"base_url,omitempty"`      // upstream
+	Type             string `json:"type"`
+	Token            string `json:"token,omitempty"`              // 向后兼容：bearer token 或 cookie value
+	APIKey           string `json:"api_key,omitempty"`            // apikey / upstream
+	Cookie           string `json:"cookie,omitempty"`             // cookie
+	AccessToken      string `json:"access_token,omitempty"`       // oauth
+	RefreshToken     string `json:"refresh_token,omitempty"`      // oauth
+	AccountID        string `json:"account_id,omitempty"`         // oauth (openai/codex)
+	ChatGPTAccountID string `json:"chatgpt_account_id,omitempty"` // sub2api/OpenAI OAuth
+	IDToken          string `json:"id_token,omitempty"`           // oauth (openai/grok)
+	BaseURL          string `json:"base_url,omitempty"`           // upstream
 }
 
 // ParsePoolCredential 解析凭据 JSON。解析失败时返回空 PoolCredential。
+// 同时兼容 sub2api 使用的 chatgpt_account_id 字段。
 func ParsePoolCredential(raw string) PoolCredential {
 	var cred PoolCredential
 	if raw == "" {
@@ -266,11 +268,15 @@ func (c PoolCredential) EffectiveKeyWithExtra(platform string, extra PoolAccount
 		if platform == PoolPlatformOpenAI && extra.AuthMode == "personalAccessToken" {
 			return c.AccessToken
 		}
-		// openai/codex 平台需要完整 OAuth JSON（含 account_id），交给 codex 适配器解析。
+		// openai/codex 平台需要完整 OAuth JSON（含账号 ID），交给 codex 适配器解析。
 		if platform == PoolPlatformOpenAI {
+			accountID := c.AccountID
+			if accountID == "" {
+				accountID = c.ChatGPTAccountID
+			}
 			b, _ := json.Marshal(map[string]string{
 				"access_token":  c.AccessToken,
-				"account_id":    c.AccountID,
+				"account_id":    accountID,
 				"refresh_token": c.RefreshToken,
 				"id_token":      c.IDToken,
 			})

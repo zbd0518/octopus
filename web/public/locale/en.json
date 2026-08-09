@@ -3614,12 +3614,13 @@
     "tokenExpired": "Token expired",
     "noAccounts": "No accounts in this pool",
     "credentials": "Credentials (JSON)",
-    "credentialsHint": "Or paste JSON directly:",
+    "credentialsHint": "Saved credentials are shown when editing; enter a value to replace them.",
     "baseUrl": "Base URL",
     "priority": "Priority",
     "inheritPool": "inherit pool",
     "proxyConfig": "Proxy",
     "proxyConfigPlaceholder": "Optional: proxy pool config ID",
+    "credentialsVisibleHint": "Credentials are shown here; leave unchanged to keep them.",
     "platform": "Platform",
     "type": "Credential Type",
     "typeLabels": {
@@ -3714,9 +3715,15 @@
     "selectedCount": "Selected {{count}}",
     "batchRefresh": "Batch refresh tokens",
     "batchClearError": "Batch clear errors",
+    "batchDelete": "Batch delete",
     "batchTest": "Batch test",
     "batchRefreshResult": "Tokens: {{ok}} ok / {{failed}} failed",
     "batchClearResult": "Clear: {{ok}} ok / {{failed}} failed",
+    "batchDeleteConfirm": "Delete the selected {{count}} accounts? This cannot be undone.",
+    "batchDeleteResult": "Deleted {{count}} accounts",
+    "clearAccounts": "Clear all",
+    "clearAccountsConfirm": "Clear all {{count}} accounts in this pool? This cannot be undone.",
+    "clearAccountsResult": "Cleared {{count}} accounts",
     "batchTestResult": "Test: {{ok}}/{{total}} passed"
   }
 }

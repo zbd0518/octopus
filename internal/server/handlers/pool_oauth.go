@@ -281,7 +281,10 @@ func oauthCallback(c *gin.Context) {
 func oauthAccountKey(platform string, cred model.PoolCredential) string {
 	switch platform {
 	case model.PoolPlatformOpenAI:
-		return cred.AccountID
+		if cred.AccountID != "" {
+			return cred.AccountID
+		}
+		return cred.ChatGPTAccountID
 	case model.PoolPlatformAnthropic, model.PoolPlatformGemini, model.PoolPlatformGrok:
 		for _, token := range []string{cred.IDToken, cred.AccessToken} {
 			if sub := decodeJWTClaim(token, "sub"); sub != "" {

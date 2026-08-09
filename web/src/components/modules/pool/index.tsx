@@ -38,6 +38,7 @@ import {
     useTempUnschedPoolAccount,
     useBatchPoolAccounts,
     useExportPoolAccounts,
+    useClearPoolAccounts,
     type AccountPool,
     type PoolAccount,
 } from '@/api/endpoints/pool';
@@ -217,6 +218,7 @@ function PoolDetail({ pool, onBack }: { pool: AccountPool; onBack: () => void })
     const tempUnsched = useTempUnschedPoolAccount(pool.id);
     const batch = useBatchPoolAccounts(pool.id);
     const exportAccounts = useExportPoolAccounts(pool.id);
+    const clearAccounts = useClearPoolAccounts(pool.id);
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editingAccount, setEditingAccount] = useState<PoolAccount | null>(null);
     const [importOpen, setImportOpen] = useState(false);
@@ -292,6 +294,14 @@ function PoolDetail({ pool, onBack }: { pool: AccountPool; onBack: () => void })
     };
 
     const selected = Array.from(selectedIds);
+    const handleClearAll = () => {
+        if (accounts_.length === 0) return;
+        if (!window.confirm(t('clearAccountsConfirm', { count: accounts_.length }))) return;
+        clearAccounts.mutate(undefined, {
+            onSuccess: (res) => { setSelectedIds(new Set()); toast.success(t('clearAccountsResult', { count: res.deleted })); },
+            onError: (e) => toast.error(String(e)),
+        });
+    };
 
     return (
         <div className="space-y-4 p-4">
@@ -309,6 +319,10 @@ function PoolDetail({ pool, onBack }: { pool: AccountPool; onBack: () => void })
                     <Button variant="outline" size="sm" onClick={handleExport} disabled={exportAccounts.isPending}>
                         <Download className="h-4 w-4 mr-1" />
                         {t('exportAccounts')}
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={handleClearAll} disabled={clearAccounts.isPending || accounts_.length === 0}>
+                        <Trash2 className="h-4 w-4 mr-1" />
+                        {t('clearAccounts')}
                     </Button>
                     <Button onClick={openCreate} size="sm">
                         <Plus className="h-4 w-4 mr-1" />
@@ -339,6 +353,19 @@ function PoolDetail({ pool, onBack }: { pool: AccountPool; onBack: () => void })
                         })}
                     >
                         {t('batchClearError')}
+                    </Button>
+                    <Button
+                        variant="outline" size="sm"
+                        disabled={batch.deleteSelected.isPending}
+                        onClick={() => {
+                            if (!window.confirm(t('batchDeleteConfirm', { count: selectedIds.size }))) return;
+                            batch.deleteSelected.mutate(selected, {
+                                onSuccess: (res) => { setSelectedIds(new Set()); toast.success(t('batchDeleteResult', { count: res.deleted })); },
+                                onError: (e) => toast.error(String(e)),
+                            });
+                        }}
+                    >
+                        {t('batchDelete')}
                     </Button>
                     <Button
                         variant="outline" size="sm"

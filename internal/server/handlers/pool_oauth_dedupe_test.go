@@ -73,9 +73,12 @@ func TestOAuthAccountKey(t *testing.T) {
 	idToken := makeJWT(t, map[string]interface{}{"sub": "user-xyz"})
 	accessToken := makeJWT(t, map[string]interface{}{"sub": "user-anthropic"})
 
-	// openai：使用 account_id。
+	// openai：兼容 account_id 与 sub2api 的 chatgpt_account_id。
 	if got := oauthAccountKey(model.PoolPlatformOpenAI, model.PoolCredential{AccountID: "acct-1"}); got != "acct-1" {
 		t.Fatalf("openai key = %q, want acct-1", got)
+	}
+	if got := oauthAccountKey(model.PoolPlatformOpenAI, model.PoolCredential{ChatGPTAccountID: "chatgpt-acct-1"}); got != "chatgpt-acct-1" {
+		t.Fatalf("openai sub2api key = %q, want chatgpt-acct-1", got)
 	}
 	// anthropic：优先 id_token 的 sub。
 	if got := oauthAccountKey(model.PoolPlatformAnthropic, model.PoolCredential{IDToken: idToken, AccessToken: accessToken}); got != "user-xyz" {
