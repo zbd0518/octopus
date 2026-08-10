@@ -11,6 +11,7 @@ import (
 
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/utils/log"
 	"gorm.io/gorm"
 )
 
@@ -125,7 +126,7 @@ func bootstrapFromEnv() error {
 		return fmt.Errorf("both OCTOPUS_INITIAL_ADMIN_USERNAME and OCTOPUS_INITIAL_ADMIN_PASSWORD must be set together")
 	}
 
-	if err := deleteLegacyAdmin(username); err != nil {
+	if err := DeleteLegacyAdmin(username); err != nil {
 		return err
 	}
 
@@ -139,29 +140,17 @@ func bootstrapFromEnv() error {
 	}
 
 	if err := BootstrapCreate(username, password); err != nil {
+		// On a fully initialized DB (e.g. every container restart after the
+		// first run), an admin already exists and BootstrapCreate returns
+		// ErrBootstrapAlreadySetUp. OCTOPUS_INITIAL_ADMIN_* is a first-run
+		// bootstrap hint, so treat this as a benign no-op instead of a fatal
+		// startup error — otherwise the container loops on restart.
+		if errors.Is(err, ErrBootstrapAlreadySetUp) {
+			log.Infof("initial admin already set up; OCTOPUS_INITIAL_ADMIN_USERNAME=%s ignored (existing account takes precedence)", username)
+			return nil
+		}
 		return fmt.Errorf("bootstrap admin from env: %w", err)
 	}
-	return nil
-}
-
-func deleteLegacyAdmin(targetUsername string) error {
-	if targetUsername == "admin" {
-		return nil
-	}
-
-	result := db.GetDB().Where("username = ?", "admin").Delete(&model.User{})
-	if result.Error != nil {
-		return fmt.Errorf("delete legacy admin user: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return nil
-	}
-
-	adminCacheMu.Lock()
-	if adminCache.Username == "admin" {
-		adminCache = model.User{}
-	}
-	adminCacheMu.Unlock()
 	return nil
 }
 

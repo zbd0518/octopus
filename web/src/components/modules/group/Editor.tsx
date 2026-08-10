@@ -27,7 +27,7 @@ import {
     countMemberRisks,
     healthRiskLevel,
 } from './editor-member-status';
-import { CHAT_ENDPOINT_PROVIDER_OPTIONS, OUTBOUND_FORMAT_OPTIONS, matchesGroupName, memberKey, MODE_LABELS, MUSIC_ENDPOINT_PROVIDER_OPTIONS, VIDEO_ENDPOINT_PROVIDER_OPTIONS, AUDIO_SPEECH_ENDPOINT_PROVIDER_OPTIONS, ENDPOINT_TYPE_OPTIONS, normalizeEndpointProvider, normalizeEndpointType, normalizeOutboundFormat, normalizeKey } from './utils';
+import { CHAT_ENDPOINT_PROVIDER_OPTIONS, OUTBOUND_FORMAT_OPTIONS, matchesGroupName, memberKey, MODE_LABELS, MUSIC_ENDPOINT_PROVIDER_OPTIONS, VIDEO_ENDPOINT_PROVIDER_OPTIONS, IMAGE_ENDPOINT_PROVIDER_OPTIONS, AUDIO_SPEECH_ENDPOINT_PROVIDER_OPTIONS, ENDPOINT_TYPE_OPTIONS, normalizeEndpointProvider, normalizeEndpointType, normalizeOutboundFormat, normalizeKey } from './utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 import { HelpCircle } from 'lucide-react';
 
@@ -529,7 +529,7 @@ export function GroupEditor({
         setRemovingIds(new Set());
     }, []);
 
-    const supportsProviderSelection = endpointType === 'music_generation' || endpointType === 'chat' || endpointType === 'video_generation' || endpointType === 'audio_speech';
+    const supportsProviderSelection = endpointType === 'music_generation' || endpointType === 'chat' || endpointType === 'video_generation' || endpointType === 'audio_speech' || endpointType === 'image_generation';
     const supportsOutboundFormat = endpointType === 'chat';
     const isValid = groupKey.length > 0 && selectedMembers.length > 0 && !regexError;
 
@@ -692,6 +692,26 @@ export function GroupEditor({
                                         </select>
                                         <p className="mt-1 text-xs text-muted-foreground">
                                             {t('form.endpointProvider.videoHint')}
+                                        </p>
+                                    </Field>
+                                ) : null}
+                                {endpointType === 'image_generation' ? (
+                                    <Field>
+                                        <FieldLabel htmlFor="group-endpoint-provider">{t('form.endpointProvider.imageLabel')}</FieldLabel>
+                                        <select
+                                            id="group-endpoint-provider"
+                                            value={endpointProvider}
+                                            onChange={(e) => setEndpointProvider(normalizeEndpointProvider(e.target.value))}
+                                            className="h-10 w-full rounded-lg border border-border/40 bg-card px-3 text-sm shadow-sm transition-[border-color,box-shadow,background-color] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:h-11"
+                                        >
+                                            {IMAGE_ENDPOINT_PROVIDER_OPTIONS.map((option) => (
+                                                <option key={option.value || 'auto'} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <p className="mt-1 text-xs text-muted-foreground">
+                                            {t('form.endpointProvider.imageHint')}
                                         </p>
                                     </Field>
                                 ) : null}

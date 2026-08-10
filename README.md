@@ -372,6 +372,8 @@ All configuration options can be overridden via environment variables using the 
 
 ## 📖 Documentation
 
+> 📚 **Wiki**: This documentation is also available as a structured, navigable [wiki](wiki/Home.md) (English | [简体中文](wiki/Home_zh.md)).
+
 ### 🧭 Management Console Modules
 
 The embedded management UI currently ships with these top-level modules:

@@ -2521,6 +2521,8 @@
         "chatHint": "選擇對話接口類型，保存後由後端自動改寫對話透傳 JSON。",
         "videoLabel": "視頻接口類型",
         "videoHint": "選擇視頻接口類型，保存後由後端自動改寫視頻透傳請求救徑。",
+        "imageLabel": "圖片接口類型",
+        "imageHint": "選擇圖片接口類型，保存後由後端自動改寫圖片透傳 JSON（如 Agnes 會把頂層 response_format 移入 extra_body）。",
         "audioSpeechLabel": "語音合成接口類型",
         "audioSpeechHint": "選擇語音合成接口類型，保存後由後端自動改寫 TTS 請求格式和路徑。"
       },

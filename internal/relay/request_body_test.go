@@ -330,6 +330,88 @@ func TestRewriteVideoRequestByProvider_NonVideoPath(t *testing.T) {
 	}
 }
 
+func TestRewriteImageRequestByProvider_Agnes(t *testing.T) {
+	group := dbmodel.Group{EndpointProvider: "agnes"}
+	body := []byte(`{"model":"agnes-image-2.0-flash","prompt":"丛林","n":1,"response_format":"b64_json"}`)
+	cfg := mediaEndpointConfig{UpstreamPath: "/v1/images/generations"}
+
+	gotBody, gotCfg := rewriteImageRequestByProvider(group, cfg, body)
+	if gotCfg.UpstreamPath != "/v1/images/generations" {
+		t.Fatalf("UpstreamPath = %q, want %q", gotCfg.UpstreamPath, "/v1/images/generations")
+	}
+
+	var raw map[string]any
+	if err := jsonAPI.Unmarshal(gotBody, &raw); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if _, exists := raw["response_format"]; exists {
+		t.Fatalf("top-level response_format should be removed, body = %s", gotBody)
+	}
+	extra, ok := raw["extra_body"].(map[string]any)
+	if !ok {
+		t.Fatalf("extra_body = %#v, want map", raw["extra_body"])
+	}
+	if extra["response_format"] != "b64_json" {
+		t.Fatalf("extra_body.response_format = %v, want b64_json", extra["response_format"])
+	}
+}
+
+func TestRewriteImageRequestByProvider_NonImagePath(t *testing.T) {
+	group := dbmodel.Group{EndpointProvider: "agnes"}
+	body := []byte(`{"model":"agnes","prompt":"x","response_format":"b64_json"}`)
+	cfg := mediaEndpointConfig{UpstreamPath: "/v1/videos/generations"}
+
+	gotBody, _ := rewriteImageRequestByProvider(group, cfg, body)
+	if string(gotBody) != string(body) {
+		t.Fatalf("non-image endpoint body should be unchanged, got = %s", gotBody)
+	}
+}
+
+func TestRewriteImageRequestByProvider_NonAgnes(t *testing.T) {
+	group := dbmodel.Group{EndpointProvider: "openai"}
+	body := []byte(`{"model":"dall-e-3","prompt":"x","response_format":"b64_json"}`)
+	cfg := mediaEndpointConfig{UpstreamPath: "/v1/images/generations"}
+
+	gotBody, _ := rewriteImageRequestByProvider(group, cfg, body)
+	if string(gotBody) != string(body) {
+		t.Fatalf("non-agnes provider body should be unchanged, got = %s", gotBody)
+	}
+}
+
+func TestRewriteImageRequestByProvider_NoResponseFormat(t *testing.T) {
+	group := dbmodel.Group{EndpointProvider: "agnes"}
+	body := []byte(`{"model":"agnes-image-2.0-flash","prompt":"丛林","size":"1024x1024"}`)
+	cfg := mediaEndpointConfig{UpstreamPath: "/v1/images/generations"}
+
+	gotBody, _ := rewriteImageRequestByProvider(group, cfg, body)
+	if string(gotBody) != string(body) {
+		t.Fatalf("body without response_format should be unchanged, got = %s", gotBody)
+	}
+}
+
+func TestRewriteImageRequestByProvider_ExtraBodyPreserved(t *testing.T) {
+	group := dbmodel.Group{EndpointProvider: "agnes"}
+	body := []byte(`{"model":"agnes-image-2.0-flash","prompt":"丛林","response_format":"b64_json","extra_body":{"response_format":"url"}}`)
+	cfg := mediaEndpointConfig{UpstreamPath: "/v1/images/generations"}
+
+	gotBody, _ := rewriteImageRequestByProvider(group, cfg, body)
+
+	var raw map[string]any
+	if err := jsonAPI.Unmarshal(gotBody, &raw); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if _, exists := raw["response_format"]; exists {
+		t.Fatalf("top-level response_format should be removed, body = %s", gotBody)
+	}
+	extra, ok := raw["extra_body"].(map[string]any)
+	if !ok {
+		t.Fatalf("extra_body = %#v, want map", raw["extra_body"])
+	}
+	if extra["response_format"] != "url" {
+		t.Fatalf("extra_body.response_format = %v, want url (client value preserved)", extra["response_format"])
+	}
+}
+
 func TestRewriteAudioSpeechRequestByProvider_MiMo(t *testing.T) {
 	group := dbmodel.Group{EndpointProvider: "mimo"}
 	body := []byte(`{"model":"mimo-v2.5-tts","input":"Hello world","voice":"Chloe","response_format":"wav"}`)

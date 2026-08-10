@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Channel (issue #182)**: 恢复渠道更新接口白名单补丁中 9 个高级设置字段的持久化分支（`auto_sync`/`skip_model_test`/`disposable`/`expire_at`/`notif_channel_id`/`key_selection_strategy`/`auto_group`/`custom_header`/`pool_id`），此前编辑已有渠道时这些字段返回 200 但静默不落库（v2.4.1 起回归，由 #147 代理模式重构误删 8 个分支引入，`pool_id` 为号池提交遗漏）。
 - **Relay/Log (issue #192)**: 修复所有渠道均不可用（key 全冷却/熔断）时 `relay_logs.attempts` 无上限膨胀、单条日志可达数百 MB 的问题。`relay_max_total_attempts` 由「0 = 不限制」改为「0 回退到内置默认上限（约 64）」，且上限改按决策纪录总数（含冷却/熔断跳过）计算而非仅真实转发——此前仅统计转发次数导致该场景下上限形同虚设；新增路由轮次快速失败（某一轮无任何真实转发即停止重试）；持久化前将 attempts 截断到最多 256 条（chat 与 media 路径一致），从根上避免数据库爆炸。
 - **Backup (issue #199)**: 修复导入 JSON 后禁用渠道/Key 被恢复为启用状态——`Channel.Enabled` / `ChannelKey.Enabled` 去掉 `gorm:"default:true"`，避免 GORM `Create` 把零值 `false` 替换成默认值 `true`，导入完整恢复时 `enabled=false` 原样写入 INSERT。
+- **Docker (issue #198)**: 修复容器更新后无限循环重启——`OCTOPUS_INITIAL_ADMIN_USERNAME`/`PASSWORD` 是首次初始化用的 env，但每次容器重启时内存 `adminCache` 为空，`bootstrapFromEnv` 直接调 `BootstrapCreate`，DB 已有管理员即返回 `ErrBootstrapAlreadySetUp`，被 `cmd/start.go` 当致命错误 → 进程退出 → Docker 重启 → 死循环。现在把该错误当幂等 no-op（已有账号优先生效），与 HTTP 首次初始化端点（409 Conflict）行为一致；同时删除重复的 `deleteLegacyAdmin`。
 
 ## [v2.4.0] - 2026-07-15
 

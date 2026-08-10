@@ -564,6 +564,9 @@ func forwardMediaRequestJSON(
 		return 0, fmt.Errorf("failed to replace model in request: %w", err)
 	}
 
+	// Apply provider-specific body rewrite for image generation
+	modifiedBody, cfg = rewriteImageRequestByProvider(group, cfg, modifiedBody)
+
 	// Apply provider-specific path rewrite for video generation
 	cfg = rewriteVideoRequestByProvider(group, cfg)
 
@@ -917,6 +920,47 @@ func rewriteMusicRequestByProvider(group dbmodel.Group, cfg mediaEndpointConfig,
 		return nil, "", err
 	}
 	return converted, "/v1/music_generation", nil
+}
+
+// rewriteImageRequestByProvider adjusts the request body for image generation
+// based on the group's EndpointProvider setting. Agnes requires response_format
+// to be placed inside extra_body rather than at the top level; leaving it at the
+// top level triggers a 400 UnsupportedParamsError from the upstream.
+func rewriteImageRequestByProvider(group dbmodel.Group, cfg mediaEndpointConfig, body []byte) ([]byte, mediaEndpointConfig) {
+	if cfg.UpstreamPath != "/v1/images/generations" {
+		return body, cfg
+	}
+	provider := strings.ToLower(strings.TrimSpace(group.EndpointProvider))
+	if provider != "agnes" {
+		return body, cfg
+	}
+
+	var raw map[string]any
+	if err := jsonAPI.Unmarshal(body, &raw); err != nil {
+		return body, cfg
+	}
+
+	topRF, hasTop := raw["response_format"]
+	if !hasTop || topRF == nil {
+		return body, cfg
+	}
+
+	extra, _ := raw["extra_body"].(map[string]any)
+	if extra == nil {
+		extra = map[string]any{}
+	}
+	// Preserve an explicitly set extra_body.response_format over the top-level one.
+	if _, exists := extra["response_format"]; !exists {
+		extra["response_format"] = topRF
+	}
+	raw["extra_body"] = extra
+	delete(raw, "response_format")
+
+	converted, err := jsonAPI.Marshal(raw)
+	if err != nil {
+		return body, cfg
+	}
+	return converted, cfg
 }
 
 // rewriteVideoRequestByProvider adjusts the upstream path for video generation

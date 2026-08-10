@@ -2572,6 +2572,8 @@
         "chatHint": "Select the backend chat API type. The backend will automatically rewrite the chat passthrough JSON after saving.",
         "videoLabel": "Video API Type",
         "videoHint": "Select the video API type. The backend will automatically rewrite the video passthrough request path after saving.",
+        "imageLabel": "Image API Type",
+        "imageHint": "Select the image API type. The backend will automatically rewrite the image passthrough JSON after saving (e.g. Agnes moves the top-level response_format into extra_body).",
         "audioSpeechLabel": "TTS API Type",
         "audioSpeechHint": "Select the TTS API type. The backend will automatically rewrite the TTS request format and path after saving."
       },

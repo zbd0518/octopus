@@ -44,6 +44,11 @@ export const VIDEO_ENDPOINT_PROVIDER_OPTIONS = [
     { label: 'Agnes', value: 'agnes' },
 ] as const;
 
+export const IMAGE_ENDPOINT_PROVIDER_OPTIONS = [
+    { label: 'Auto', value: '' },
+    { label: 'Agnes', value: 'agnes' },
+] as const;
+
 export const AUDIO_SPEECH_ENDPOINT_PROVIDER_OPTIONS = [
     { label: 'Auto', value: '' },
     { label: 'MiMo', value: 'mimo' },
