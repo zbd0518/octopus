@@ -17,6 +17,7 @@ import type { SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
 import { getChannelGroupDisplayName } from '@/components/modules/channel/GroupManager';
 import {
+    buildPickerChannelList,
     filterMatchedForAutoAdd,
     filterModelChannelsForPicker,
     syncMembersChannelEnabled,
@@ -98,18 +99,7 @@ function ModelPickerSection({
     const normalizedSearch = searchKeyword.trim().toLowerCase();
     const defaultGroupName = tChannel('defaultName');
 
-    const channels = useMemo(() => {
-        const byId = new Map<number, { id: number; name: string; enabled: boolean; models: LLMChannel[] }>();
-        modelChannels.forEach((mc) => {
-            const existing = byId.get(mc.channel_id);
-            if (existing) existing.models.push(mc);
-            else byId.set(mc.channel_id, { id: mc.channel_id, name: mc.channel_name, enabled: mc.enabled, models: [mc] });
-        });
-
-        return Array.from(byId.values())
-            .map((c) => ({ ...c, models: [...c.models].sort((a, b) => a.name.localeCompare(b.name)) }))
-            .sort((a, b) => a.id - b.id);
-    }, [modelChannels]);
+    const channels = useMemo(() => buildPickerChannelList(modelChannels), [modelChannels]);
 
     const filteredChannels = useMemo(() => {
         if (!normalizedSearch) return channels;

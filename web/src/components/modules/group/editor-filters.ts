@@ -121,3 +121,37 @@ export function filterMatchedForAutoAdd(matched: LLMChannel[], showDisabled: boo
 export function countDisabledMembers(members: Array<{ enabled: boolean }>): number {
     return members.reduce((acc, member) => acc + (member.enabled === false ? 1 : 0), 0);
 }
+
+/** 待选择面板按渠道聚合后的结构 */
+export interface PickerChannel {
+    id: number;
+    name: string;
+    enabled: boolean;
+    models: LLMChannel[];
+}
+
+/**
+ * 把 model/channel 行按渠道聚合，供待选择列表展示。
+ * 排序约定：渠道按名称升序（同名按 ID 兜底，与渠道页默认名称排序一致），
+ * 渠道内模型按名称字母序。
+ */
+export function buildPickerChannelList(modelChannels: LLMChannel[]): PickerChannel[] {
+    const byId = new Map<number, PickerChannel>();
+    for (const mc of modelChannels) {
+        const existing = byId.get(mc.channel_id);
+        if (existing) {
+            existing.models.push(mc);
+        } else {
+            byId.set(mc.channel_id, {
+                id: mc.channel_id,
+                name: mc.channel_name,
+                enabled: mc.enabled,
+                models: [mc],
+            });
+        }
+    }
+
+    return Array.from(byId.values())
+        .map((c) => ({ ...c, models: [...c.models].sort((a, b) => a.name.localeCompare(b.name)) }))
+        .sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);
+}

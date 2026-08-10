@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
     buildChannelEnabledMap,
+    buildPickerChannelList,
     countDisabledMembers,
     filterMatchedForAutoAdd,
     filterModelChannelsForPicker,
@@ -71,6 +72,44 @@ test('filterMatchedForAutoAdd skips disabled unless showDisabled', () => {
     ];
     assert.equal(filterMatchedForAutoAdd(matched, false).length, 1);
     assert.equal(filterMatchedForAutoAdd(matched, true).length, 2);
+});
+
+test('buildPickerChannelList sorts channels by name asc, tiebreak by id', () => {
+    const list = [
+        mc({ name: 'gpt-4', channel_id: 30, channel_name: 'Zeta' }),
+        mc({ name: 'claude', channel_id: 10, channel_name: 'Alpha' }),
+        mc({ name: 'gpt-4o', channel_id: 20, channel_name: 'Beta' }),
+        mc({ name: 'gpt-4', channel_id: 30, channel_name: 'Zeta' }),
+        mc({ name: 'gemini', channel_id: 40, channel_name: 'Alpha' }),
+    ];
+    const channels = buildPickerChannelList(list);
+    assert.deepEqual(
+        channels.map((c) => c.name),
+        ['Alpha', 'Alpha', 'Beta', 'Zeta'],
+    );
+    // 同名渠道按 ID 升序兜底
+    assert.deepEqual(
+        channels.filter((c) => c.name === 'Alpha').map((c) => c.id),
+        [10, 40],
+    );
+});
+
+test('buildPickerChannelList groups models under channel and sorts them by name', () => {
+    const list = [
+        mc({ name: 'z-model', channel_id: 1, channel_name: 'A' }),
+        mc({ name: 'a-model', channel_id: 1, channel_name: 'A' }),
+        mc({ name: 'm-model', channel_id: 2, channel_name: 'B' }),
+    ];
+    const channels = buildPickerChannelList(list);
+    assert.equal(channels.length, 2);
+    assert.deepEqual(
+        channels[0].models.map((m) => m.name),
+        ['a-model', 'z-model'],
+    );
+    assert.deepEqual(
+        channels.map((c) => c.models.length),
+        [2, 1],
+    );
 });
 
 test('syncMembersChannelEnabled refreshes enabled from latest channel list', () => {
