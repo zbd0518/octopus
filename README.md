@@ -118,7 +118,7 @@ Download the binary for your platform from [Releases](https://github.com/lingyui
 ### 🛠️ Build from Source
 
 **Requirements:**
-- Go 1.24.4
+- Go 1.25.0
 - Node.js 20+
 - pnpm
 

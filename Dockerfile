@@ -24,7 +24,7 @@ RUN NEXT_PUBLIC_APP_VERSION="${APP_VERSION}" pnpm build
 # =============================================================================
 # Build stage for Go binary
 # =============================================================================
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS go-builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS go-builder
 
 WORKDIR /build
 

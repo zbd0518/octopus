@@ -231,6 +231,7 @@ var hopByHopHeaders = map[string]bool{
 	"true-client-ip":      true,
 	"x-client-ip":         true,
 	"x-cluster-client-ip": true,
+	"cookie":              true,
 }
 
 type relayRequest struct {

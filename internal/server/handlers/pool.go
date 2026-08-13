@@ -111,6 +111,7 @@ func init() {
 		).
 		AddRoute(
 			router.NewRoute("/:id/account/export", http.MethodGet).
+				Use(middleware.RequirePermission(auth.PermChannelsWrite)).
 				Handle(exportPoolAccounts),
 		).
 		AddRoute(

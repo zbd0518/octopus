@@ -60,22 +60,22 @@ export function normalizeSubTabOrder(module: ModuleId, input: Iterable<string> |
     return normalized;
 }
 
-/** 归一化可见列表：只保留在 orderedTabs 中存在的项，去重。 */
+/** 归一化可见列表：只保留在 orderedTabs 中存在的项，并按 orderedTabs 顺序输出，去重。
+ *  顺序必须跟随 orderedTabs，否则「拖到首位后默认显示首位」会失效——默认选中项取
+ *  visibleTabs[0]，若可见列表顺序滞后于排序，渲染首位与默认选中会不一致。 */
 export function normalizeSubTabVisible(module: ModuleId, input: Iterable<string> | null | undefined, orderedTabs: readonly SubTab[]): SubTab[] {
-    const orderedSet = new Set<string>(orderedTabs);
-    const seen = new Set<string>();
-    const normalized: SubTab[] = [];
+    const requested = new Set<string>();
 
     if (input) {
         for (const item of input) {
-            if (typeof item === 'string' && orderedSet.has(item) && !seen.has(item)) {
-                seen.add(item);
-                normalized.push(item as SubTab);
+            if (typeof item === 'string') {
+                requested.add(item);
             }
         }
     }
 
-    // 至少保留第一个有序标签
+    // 按 orderedTabs 顺序过滤，保证可见列表与排序一致（首位即默认显示项）。
+    const normalized = orderedTabs.filter((tab) => requested.has(tab));
     if (normalized.length === 0 && orderedTabs.length > 0) {
         normalized.push(orderedTabs[0]);
     }
