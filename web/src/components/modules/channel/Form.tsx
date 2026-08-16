@@ -1480,14 +1480,6 @@ export function ChannelForm({
                     </AccordionTrigger>
                     <AccordionContent className="pt-4">
                         <div className="space-y-4">
-                        <ProxySelector
-                            value={{ proxy_mode: formData.proxy_mode, proxy_config_id: formData.proxy_config_id }}
-                            onChange={(next) => onFormDataChange({
-                                ...formData,
-                                proxy_mode: next.proxy_mode as ChannelProxyMode,
-                                proxy_config_id: next.proxy_config_id ?? null,
-                            })}
-                        />
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className={fieldGroupClassName}>
                                 <label htmlFor={`${idPrefix}-auto-group`} className={labelClassName}>
@@ -1736,6 +1728,16 @@ export function ChannelForm({
                     />
                     <span className="text-sm font-medium text-card-foreground">{t('enabled')}</span>
                 </label>
+                <div className="border-t border-border/10 pt-4">
+                    <ProxySelector
+                        value={{ proxy_mode: formData.proxy_mode, proxy_config_id: formData.proxy_config_id }}
+                        onChange={(next) => onFormDataChange({
+                            ...formData,
+                            proxy_mode: next.proxy_mode as ChannelProxyMode,
+                            proxy_config_id: next.proxy_config_id ?? null,
+                        })}
+                    />
+                </div>
                 <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-border/10 pt-4">
                     <label className="flex items-center gap-2 cursor-pointer">
                         <Switch
