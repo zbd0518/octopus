@@ -131,14 +131,11 @@ func TestGetErrorWhenNoFallback(t *testing.T) {
 	}
 }
 
-func TestMustGetPanicsOnMissing(t *testing.T) {
+func TestGetReturnsErrorOnMissing(t *testing.T) {
 	withCleanRegistry(t)
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected MustGet to panic when adapter is not registered")
-		}
-	}()
-
-	MustGet("missing-type")
+	_, err := Get("missing-type")
+	if err == nil {
+		t.Fatal("expected Get to return error when adapter is not registered")
+	}
 }

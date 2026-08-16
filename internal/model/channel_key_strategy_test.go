@@ -72,6 +72,23 @@ func setupAvailabilityTest() func() {
 	}
 }
 
+func setupCostTest() func() {
+	oldAvailabilityFunc := KeyAvailabilityScoreFunc
+	oldSpeedFunc := KeySpeedTPSFunc
+	oldStrategy := GlobalKeySelectionStrategyFunc
+	oldCooldownFunc := KeyCooldownFunc
+	KeyAvailabilityScoreFunc = nil
+	KeySpeedTPSFunc = nil
+	GlobalKeySelectionStrategyFunc = func() string { return "cost" }
+	KeyCooldownFunc = nil
+	return func() {
+		KeyAvailabilityScoreFunc = oldAvailabilityFunc
+		KeySpeedTPSFunc = oldSpeedFunc
+		GlobalKeySelectionStrategyFunc = oldStrategy
+		KeyCooldownFunc = oldCooldownFunc
+	}
+}
+
 func makeChannelWithKeys(keys ...ChannelKey) *Channel {
 	return &Channel{
 		ID:   1,
@@ -460,5 +477,99 @@ func TestChannelStrategyOverridesGlobalSpeed(t *testing.T) {
 	key := ch.GetChannelKeyWithCooldown("gpt-4o", 300)
 	if key.ID != 2 {
 		t.Fatalf("expected key 2 (channel overrides to cost), got key %d", key.ID)
+	}
+}
+
+// TestKeySupportedModelsFiltersByModel 验证 key 的 SupportedModels 字段在
+// 选 key 时按模型过滤：只有声明了该模型的 key 才会被选中。
+func TestKeySupportedModelsFiltersByModel(t *testing.T) {
+	cleanup := setupCostTest()
+	defer cleanup()
+
+	keyA := enabledKey(1, 1.0)
+	keyA.SupportedModels = "gpt-4o,claude-3.5-sonnet"
+	keyB := enabledKey(2, 2.0)
+	keyB.SupportedModels = "step-3.7-flash,grok-3"
+	ch := makeChannelWithKeys(keyA, keyB)
+
+	// 请求 step-3.7-flash → 只能选 keyB
+	key := ch.GetChannelKeyWithCooldown("step-3.7-flash", 300)
+	if key.ID != 2 {
+		t.Fatalf("expected key 2 (supports step-3.7-flash), got key %d", key.ID)
+	}
+
+	// 请求 gpt-4o → 只能选 keyA
+	key = ch.GetChannelKeyWithCooldown("gpt-4o", 300)
+	if key.ID != 1 {
+		t.Fatalf("expected key 1 (supports gpt-4o), got key %d", key.ID)
+	}
+}
+
+// TestKeySupportedModelsEmptyMeansNoRestriction 验证空 SupportedModels
+// 表示不限制（兼容存量 key）：任何模型都可选中该 key。
+func TestKeySupportedModelsEmptyMeansNoRestriction(t *testing.T) {
+	cleanup := setupCostTest()
+	defer cleanup()
+
+	keyA := enabledKey(1, 1.0)
+	// keyA 不设 SupportedModels（空=不限）
+	keyB := enabledKey(2, 2.0)
+	keyB.SupportedModels = "step-3.7-flash"
+	ch := makeChannelWithKeys(keyA, keyB)
+
+	// 请求 grok-3：keyB 不支持但 keyA 不限 → 选 cost 最低的 keyA
+	key := ch.GetChannelKeyWithCooldown("grok-3", 300)
+	if key.ID != 1 {
+		t.Fatalf("expected key 1 (empty=unrestricted, lowest cost), got key %d", key.ID)
+	}
+
+	// 请求 step-3.7-flash：两把 key 都可选（keyA 不限、keyB 支持），选 cost 最低 keyA
+	key = ch.GetChannelKeyWithCooldown("step-3.7-flash", 300)
+	if key.ID != 1 {
+		t.Fatalf("expected key 1 (lowest cost among eligible), got key %d", key.ID)
+	}
+}
+
+// TestKeySupportedModelsRetryExcludesUnsupportedKey 验证重试场景：
+// 当某 key 对某模型触发失败被排除后，不会重选到不支持该模型的 key。
+func TestKeySupportedModelsRetryExcludesUnsupportedKey(t *testing.T) {
+	cleanup := setupCostTest()
+	defer cleanup()
+
+	keyA := enabledKey(1, 1.0)
+	keyA.SupportedModels = "gpt-4o"
+	keyB := enabledKey(2, 2.0)
+	keyB.SupportedModels = "step-3.7-flash"
+	ch := makeChannelWithKeys(keyA, keyB)
+
+	// 请求 step-3.7-flash：排除 keyB（模拟已失败），keyA 不支持该模型 → 返回空
+	key := ch.GetChannelKeyExcludingWithCooldown([]int{2}, "step-3.7-flash", 300)
+	if key.ID != 0 {
+		t.Fatalf("expected empty key (no eligible key left), got key %d", key.ID)
+	}
+
+	// 请求 gpt-4o：排除 keyA，keyB 不支持该模型 → 返回空
+	key = ch.GetChannelKeyExcludingWithCooldown([]int{1}, "gpt-4o", 300)
+	if key.ID != 0 {
+		t.Fatalf("expected empty key (no eligible key left), got key %d", key.ID)
+	}
+}
+
+// TestKeySupportedModelsEmptyModelNameSkipsFilter 验证 modelName 为空时
+// 不做模型过滤（后台任务场景）。
+func TestKeySupportedModelsEmptyModelNameSkipsFilter(t *testing.T) {
+	cleanup := setupCostTest()
+	defer cleanup()
+
+	keyA := enabledKey(1, 1.0)
+	keyA.SupportedModels = "gpt-4o"
+	keyB := enabledKey(2, 2.0)
+	keyB.SupportedModels = "step-3.7-flash"
+	ch := makeChannelWithKeys(keyA, keyB)
+
+	// modelName 为空 → 不过滤，选 cost 最低的 keyA
+	key := ch.GetChannelKeyWithCooldown("", 300)
+	if key.ID != 1 {
+		t.Fatalf("expected key 1 (empty model=skip filter, lowest cost), got key %d", key.ID)
 	}
 }

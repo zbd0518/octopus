@@ -30,6 +30,7 @@ import (
 	"github.com/lingyuins/octopus/internal/server/resp"
 	"github.com/lingyuins/octopus/internal/utils/log"
 	"github.com/lingyuins/octopus/internal/utils/telemetry"
+	"github.com/lingyuins/octopus/internal/utils/xurl"
 )
 
 func mediaEndpointTypeToGroupEndpointType(endpointType MediaEndpointType) string {
@@ -598,6 +599,13 @@ func forwardMediaRequestJSON(
 		req.Header.Set("Accept", "application/json")
 	}
 
+	// SSRF 防护（issue #219）
+	safeCtx, err := xurl.AssertSafeRequestWithPin(req)
+	if err != nil {
+		return 0, fmt.Errorf("upstream url is not allowed: %w", err)
+	}
+	req = req.WithContext(safeCtx)
+
 	// Send request
 	httpClient, err := helper.ChannelHttpClient(channel)
 	if err != nil {
@@ -658,6 +666,13 @@ func forwardMediaRequestMultipart(
 	}
 
 	copyMediaForwardHeaders(req, c, channel, key, contentType, streamRequested)
+
+	// SSRF 防护（issue #219）
+	safeCtx, err := xurl.AssertSafeRequestWithPin(req)
+	if err != nil {
+		return 0, fmt.Errorf("upstream url is not allowed: %w", err)
+	}
+	req = req.WithContext(safeCtx)
 
 	// Send request
 	httpClient, err := helper.ChannelHttpClient(channel)

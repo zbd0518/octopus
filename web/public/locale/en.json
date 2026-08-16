@@ -1965,7 +1965,9 @@
         "viewStats": "Stats",
         "edit": "Edit",
         "delete": "Delete",
-        "deleteConfirm": "Delete this key?"
+        "deleteConfirm": "Delete this key?",
+        "legacyHashed": "Plaintext unrecoverable — regenerate this key",
+        "legacyHashedHint": "This key was hashed in a prior version; its plaintext can no longer be recovered. Authentication still works, but you can't copy the value. Please delete and recreate it."
       },
       "actions": {
         "viewStats": "View stats",
@@ -3230,6 +3232,8 @@
       "remark": "Remark",
       "priority": "Priority",
       "priorityHint": "Higher numbers are used first",
+      "supportedModels": "Supported models (optional)",
+      "supportedModelsHint": "Comma-separated. Limits this key to only these models. Leave empty for no restriction.",
       "typeMiMoChat": "MiMo Chat",
       "typeCloudflare": "Cloudflare",
       "keySelectionStrategy": "Key Strategy",

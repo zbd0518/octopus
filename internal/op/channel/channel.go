@@ -498,6 +498,9 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 			if ku.Remark != nil {
 				updates["remark"] = *ku.Remark
 			}
+			if ku.SupportedModels != nil {
+				updates["supported_models"] = *ku.SupportedModels
+			}
 			if ku.Managed != nil {
 				updates["managed"] = *ku.Managed
 			}
@@ -522,12 +525,13 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 				return nil, fmt.Errorf("failed to encrypt new channel key: %w", err)
 			}
 			newKeys = append(newKeys, model.ChannelKey{
-				ChannelID:  req.ID,
-				Enabled:    ka.Enabled,
-				ChannelKey: enc,
-				Priority:   ka.Priority,
-				Remark:     ka.Remark,
-				Managed:    ka.Managed,
+				ChannelID:       req.ID,
+				Enabled:         ka.Enabled,
+				ChannelKey:      enc,
+				Priority:        ka.Priority,
+				Remark:          ka.Remark,
+				SupportedModels: ka.SupportedModels,
+				Managed:         ka.Managed,
 			})
 		}
 		if err := tx.Create(&newKeys).Error; err != nil {

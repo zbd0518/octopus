@@ -114,9 +114,13 @@ func senseNovaOIDCLogin(ctx context.Context, username, password string) (*senseN
 	// 登录页会下发含 CSRF 值的 session cookie，授权码回跳（login_verifier →
 	// consent → code）必须携带它，否则报 "No CSRF value available in the
 	// session cookie"。用 cookie jar 自动保存/按域发送。
+	jar, err := newCookieJar()
+	if err != nil {
+		return nil, fmt.Errorf("sensenova_login: create cookie jar: %w", err)
+	}
 	client := &http.Client{
 		Timeout: requestTimeout,
-		Jar:     mustNewCookieJar(),
+		Jar:     jar,
 	}
 	// 2. 打开授权页（跟随重定向到登录页，解析 login_challenge）
 	authURL := fmt.Sprintf("%s?response_type=code&client_id=%s&code_challenge_method=S256&code_challenge=%s&redirect_uri=%s&scope=%s&state=%s&lang=zh-CN",
@@ -234,13 +238,9 @@ func senseNovaOIDCLogin(ctx context.Context, username, password string) (*senseN
 	return senseNovaExchangeCode(ctx, client, code, codeVerifier, state)
 }
 
-// mustNewCookieJar 创建 cookie jar；失败时 panic（正常环境不会失败）。
-func mustNewCookieJar() http.CookieJar {
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		panic(fmt.Sprintf("sensenova_login: create cookie jar: %v", err))
-	}
-	return jar
+// newCookieJar 创建 cookie jar，失败时返回 error（不再 panic）。
+func newCookieJar() (http.CookieJar, error) {
+	return cookiejar.New(nil)
 }
 
 // senseNovaExchangeCode 用授权码换取 access_token / refresh_token。

@@ -134,6 +134,10 @@ type ChannelKey struct {
 	TotalCost        float64 `json:"total_cost"`
 	Priority         int     `json:"priority" gorm:"default:0"`
 	Remark           string  `json:"remark"`
+	// SupportedModels 逗号分隔的模型列表，限定该 key 只能用于这些模型。
+	// 空表示不限制（兼容存量 key）。key 选择时用 ModelMatches 过滤，
+	// 避免把不支持当前模型的 key 发给上游（如上游中转站某 token 无某模型权限）。
+	SupportedModels string `json:"supported_models,omitempty" gorm:"column:supported_models;type:varchar(512)"`
 	// Managed 标记该 key 是否由 site 同步投影自动生成。
 	// site 同步 diff 时只删除 Managed=true 的 key，
 	// 保留用户手动添加的（Managed=false）key 不被清除。
@@ -200,6 +204,8 @@ type ChannelKeyAddRequest struct {
 	ChannelKey string `json:"channel_key" binding:"required"`
 	Priority   int    `json:"priority"`
 	Remark     string `json:"remark"`
+	// SupportedModels 逗号分隔的模型列表，限定该 key 只能用于这些模型（空=不限）。
+	SupportedModels string `json:"supported_models,omitempty"`
 	// Managed 标记是否由 site 同步投影自动生成，仅投影逻辑透传。
 	Managed bool `json:"managed,omitempty"`
 }
@@ -210,6 +216,8 @@ type ChannelKeyUpdateRequest struct {
 	ChannelKey *string `json:"channel_key,omitempty"`
 	Priority   *int    `json:"priority,omitempty"`
 	Remark     *string `json:"remark,omitempty"`
+	// SupportedModels 逗号分隔的模型列表，限定该 key 只能用于这些模型（空=不限）。
+	SupportedModels *string `json:"supported_models,omitempty"`
 	// Managed 标记是否由 site 同步投影自动生成，仅投影逻辑透传。
 	Managed *bool `json:"managed,omitempty"`
 }
@@ -507,6 +515,12 @@ func (c *Channel) GetChannelKeyExcludingWithCooldown(excludeKeyIDs []int, modelN
 			continue
 		}
 		if _, excluded := excludeSet[k.ID]; excluded {
+			continue
+		}
+		// 按模型过滤：key 的 SupportedModels 非空时，只选支持当前模型的 key。
+		// 空表示不限制（兼容存量 key）。用 ModelMatches 做 trim 后精确比较。
+		// modelName 为空（后台任务）时不跳过。
+		if modelName != "" && !ModelMatches(k.SupportedModels, modelName) {
 			continue
 		}
 		// 按模型粒度冷却：仅当该 (channelID, keyID, modelName) 处于冷却期时跳过。

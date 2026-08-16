@@ -31,6 +31,7 @@ import (
 	"github.com/lingyuins/octopus/internal/transformer/rewrite"
 	"github.com/lingyuins/octopus/internal/utils/log"
 	"github.com/lingyuins/octopus/internal/utils/semantic_cache"
+	"github.com/lingyuins/octopus/internal/utils/xurl"
 	"github.com/tmaxmax/go-sse"
 )
 
@@ -884,21 +885,31 @@ func (ra *relayAttempt) copyHeaders(outboundRequest *http.Request, effectiveRewr
 
 // sendRequest 发送 HTTP 请求
 func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, error) {
+	// SSRF 防护（issue #219）：校验最终出站 URL 并把安全 IP 钉入 context，
+	// 杜绝 DNS rebinding。relay 主链路的渠道/号池 Base URL 在此前未经校验，
+	// editor 可借此打云元数据端点等内网地址。
+	safeCtx, err := xurl.AssertSafeRequestWithPin(req)
+	if err != nil {
+		log.Warnf("ssrf check failed for %s: %v", req.URL.Redacted(), err)
+		return nil, fmt.Errorf("upstream url is not allowed: %w", err)
+	}
+	req = req.WithContext(safeCtx)
+
 	var httpClient *http.Client
-	var err error
+	var err2 error
 	// 号池账号级代理优先；未配置时回退到渠道级代理。
 	if ra.poolProxyConfigID != nil {
-		httpClient, err = helper.PoolAccountHttpClient(ra.poolProxyConfigID)
-		if err != nil {
-			log.Warnf("failed to get pool account http client: %v", err)
-			return nil, err
+		httpClient, err2 = helper.PoolAccountHttpClient(ra.poolProxyConfigID)
+		if err2 != nil {
+			log.Warnf("failed to get pool account http client: %v", err2)
+			return nil, err2
 		}
 	}
 	if httpClient == nil {
-		httpClient, err = helper.ChannelHttpClient(ra.channel)
-		if err != nil {
-			log.Warnf("failed to get http client: %v", err)
-			return nil, err
+		httpClient, err2 = helper.ChannelHttpClient(ra.channel)
+		if err2 != nil {
+			log.Warnf("failed to get http client: %v", err2)
+			return nil, err2
 		}
 	}
 

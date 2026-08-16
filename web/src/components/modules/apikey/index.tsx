@@ -16,6 +16,7 @@ import {
     Check,
     FilterX,
     CircleSlash,
+    AlertTriangle,
 } from 'lucide-react';
 import { PageWrapper } from '@/components/common/PageWrapper';
 import { Input } from '@/components/ui/input';
@@ -31,6 +32,7 @@ import {
     useCreateAPIKey,
     useUpdateAPIKey,
     useDeleteAPIKey,
+    isLegacyHashedAPIKey,
     type APIKey,
 } from '@/api/endpoints/apikey';
 import { useStatsAPIKey, type StatsAPIKeyFormatted } from '@/api/endpoints/stats';
@@ -80,6 +82,7 @@ function APIKeyCard({
 
     const tags = useMemo(() => parseTags(apiKey.tags), [apiKey.tags]);
     const expire = formatExpire(apiKey.expire_at);
+    const isLegacyHashed = isLegacyHashedAPIKey(apiKey.api_key);
 
     const requestTotal = stats
         ? stats.request_success.raw + stats.request_failed.raw
@@ -158,12 +161,23 @@ function APIKeyCard({
                     >
                         <Pencil className="size-4" />
                     </button>
-                    <CopyIconButton
-                        text={apiKey.api_key}
-                        className="grid size-8 place-items-center rounded-lg bg-primary/10 text-primary transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
-                        copyIconClassName="size-4"
-                        checkIconClassName="size-4"
-                    />
+                    {isLegacyHashed ? (
+                        <button
+                            type="button"
+                            disabled
+                            className="grid size-8 place-items-center rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                            title={t('apiKey.page.legacyHashed')}
+                        >
+                            <AlertTriangle className="size-4" />
+                        </button>
+                    ) : (
+                        <CopyIconButton
+                            text={apiKey.api_key}
+                            className="grid size-8 place-items-center rounded-lg bg-primary/10 text-primary transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
+                            copyIconClassName="size-4"
+                            checkIconClassName="size-4"
+                        />
+                    )}
                     <button
                         type="button"
                         onClick={() => setConfirmDelete(true)}
@@ -174,6 +188,12 @@ function APIKeyCard({
                     </button>
                 </div>
             </div>
+            {isLegacyHashed ? (
+                <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="size-3.5 shrink-0" />
+                    <span>{t('apiKey.page.legacyHashedHint')}</span>
+                </div>
+            ) : null}
 
             {tags.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">

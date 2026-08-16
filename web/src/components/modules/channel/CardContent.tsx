@@ -158,6 +158,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                 total_cost: k.total_cost,
                 priority: k.priority ?? 0,
                 remark: k.remark,
+                supported_models: k.supported_models ?? '',
             }))
             : [{ enabled: true, channel_key: '', priority: 0, remark: '' }],
         model: channel.model,
@@ -276,22 +277,23 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
 
         const keys_to_add = nextKeys
             .filter((k) => !k.id)
-            .map((k) => ({ enabled: k.enabled, channel_key: k.channel_key.trim(), priority: Number(k.priority ?? 0), remark: k.remark ?? '' }));
+            .map((k) => ({ enabled: k.enabled, channel_key: k.channel_key.trim(), priority: Number(k.priority ?? 0), remark: k.remark ?? '', supported_models: k.supported_models ?? '' }));
 
         const keys_to_update = nextKeys
             .filter((k) => typeof k.id === 'number' && originalByID.has(k.id as number))
             .map((k) => {
                 const orig = originalByID.get(k.id as number)!;
-                const u: { id: number; enabled?: boolean; channel_key?: string; priority?: number; remark?: string } = { id: k.id as number };
+                const u: { id: number; enabled?: boolean; channel_key?: string; priority?: number; remark?: string; supported_models?: string } = { id: k.id as number };
                 const nextPriority = Number(k.priority ?? 0);
                 const origPriority = Number(orig.priority ?? 0);
                 if (k.enabled !== orig.enabled) u.enabled = k.enabled;
                 if (k.channel_key !== orig.channel_key) u.channel_key = k.channel_key;
                 if (nextPriority !== origPriority) u.priority = nextPriority;
                 if ((k.remark ?? '') !== orig.remark) u.remark = k.remark ?? '';
+                if ((k.supported_models ?? '') !== (orig.supported_models ?? '')) u.supported_models = k.supported_models ?? '';
                 return Object.keys(u).length > 1 ? u : null;
             })
-            .filter((u) => u !== null) as Array<{ id: number; enabled?: boolean; channel_key?: string; priority?: number; remark?: string }>;
+            .filter((u) => u !== null) as Array<{ id: number; enabled?: boolean; channel_key?: string; priority?: number; remark?: string; supported_models?: string }>;
 
         if (keys_to_add.length > 0) req.keys_to_add = keys_to_add;
         if (keys_to_update.length > 0) req.keys_to_update = keys_to_update;

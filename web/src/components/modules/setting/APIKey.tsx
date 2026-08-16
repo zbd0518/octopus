@@ -2,7 +2,7 @@
 
 import { useCallback, useId, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { KeyRound, Plus, Loader, Trash2, Check, X, Info, CalendarDays, Pencil, Maximize2 } from 'lucide-react';
+import { KeyRound, Plus, Loader, Trash2, Check, X, Info, CalendarDays, Pencil, Maximize2, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Input } from '@/components/ui/input';
 import { Calendar } from '@/components/ui/calendar';
@@ -21,6 +21,7 @@ import {
     useCreateAPIKey,
     useUpdateAPIKey,
     useDeleteAPIKey,
+    isLegacyHashedAPIKey,
     type APIKey,
 } from '@/api/endpoints/apikey';
 import { useGroupList } from '@/api/endpoints/group';
@@ -252,10 +253,11 @@ export function APIKeyForm({ apiKey, isPending, submitLabel, tagSuggestions = []
     const isEditing = !!apiKey;
 
     // Strip the fixed prefix so the form only edits the suffix part.
+    // 存量哈希化 key（明文不可逆）不回填哈希值，留空保存即保持不变。
     const apiKeyPrefix = 'sk-octopus-';
     const initialKeySuffix = apiKey?.api_key?.startsWith(apiKeyPrefix)
         ? apiKey.api_key.slice(apiKeyPrefix.length)
-        : (apiKey?.api_key ?? '');
+        : (isLegacyHashedAPIKey(apiKey?.api_key) ? '' : (apiKey?.api_key ?? ''));
 
     const [form, setForm] = useState<Omit<APIKey, 'id'>>(() => ({
         name: apiKey?.name ?? '',
@@ -890,6 +892,7 @@ function APIKeyKeyItem({
 }) {
     const t = useTranslations('setting');
     const [confirmDelete, setConfirmDelete] = useState(false);
+    const isLegacyHashed = isLegacyHashedAPIKey(apiKey.api_key);
 
     return (
         <motion.div
@@ -921,12 +924,23 @@ function APIKeyKeyItem({
                 >
                     <Pencil className="size-4" />
                 </motion.button>
-                <CopyIconButton
-                    text={apiKey.api_key}
-                    className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
-                    copyIconClassName="size-4"
-                    checkIconClassName="size-4"
-                />
+                {isLegacyHashed ? (
+                    <button
+                        type="button"
+                        disabled
+                        title={t('apiKey.page.legacyHashed')}
+                        className="flex size-8 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                    >
+                        <AlertTriangle className="size-4" />
+                    </button>
+                ) : (
+                    <CopyIconButton
+                        text={apiKey.api_key}
+                        className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
+                        copyIconClassName="size-4"
+                        checkIconClassName="size-4"
+                    />
+                )}
 
                 {!confirmDelete && (
                     <motion.button

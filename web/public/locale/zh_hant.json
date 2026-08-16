@@ -1921,7 +1921,9 @@
         "viewStats": "統計",
         "edit": "編輯",
         "delete": "刪除",
-        "deleteConfirm": "確認刪除該金鑰？"
+        "deleteConfirm": "確認刪除該金鑰？",
+        "legacyHashed": "明文不可恢復，請重新產生該金鑰",
+        "legacyHashedHint": "此金鑰在舊版本中被雜湊儲存，明文已無法還原。認證仍可使用，但無法複製值。請刪除後重新建立。"
       },
       "actions": {
         "viewStats": "查看統計",
@@ -3186,6 +3188,8 @@
       "remark": "備註",
       "priority": "優先級",
       "priorityHint": "數字越大越優先",
+      "supportedModels": "支援的模型（可選）",
+      "supportedModelsHint": "逗號分隔，限定此 key 僅用於這些模型。留空表示不限制。",
       "typeMiMoChat": "MiMo Chat",
       "typeCloudflare": "Cloudflare",
       "keySelectionStrategy": "Key 策略",

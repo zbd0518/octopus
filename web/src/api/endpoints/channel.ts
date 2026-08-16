@@ -84,6 +84,7 @@ export type ChannelKey = {
     total_cost: number;
     priority: number;
     remark: string;
+    supported_models?: string;
 };
 
 export type ChannelGroup = {
@@ -150,7 +151,7 @@ export type CreateChannelRequest = {
     type: ChannelType;
     enabled?: boolean;
     base_urls: BaseUrl[];
-    keys: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'priority' | 'remark'>>;
+    keys: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'priority' | 'remark' | 'supported_models'>>;
     model: string;
     custom_model?: string;
     proxy_mode?: ChannelProxyMode;
@@ -200,8 +201,8 @@ export type UpdateChannelRequest = {
     match_regex?: string | null;
     pool_id?: number;
     // keys diff
-    keys_to_add?: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'priority' | 'remark'>>;
-    keys_to_update?: Array<{ id: number; enabled?: boolean; channel_key?: string; priority?: number; remark?: string }>;
+    keys_to_add?: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'priority' | 'remark' | 'supported_models'>>;
+    keys_to_update?: Array<{ id: number; enabled?: boolean; channel_key?: string; priority?: number; remark?: string; supported_models?: string }>;
     keys_to_delete?: number[];
 };
 

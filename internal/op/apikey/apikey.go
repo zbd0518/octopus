@@ -10,13 +10,14 @@ import (
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/utils/cache"
+	"github.com/lingyuins/octopus/internal/utils/crypto"
 )
 
 var keyCache = cache.New[int, model.APIKey](16)
 
 // keyIDMap 以**明文** API Key 为键映射到 ID（仅内存），用于热路径查找。
-// 数据库只存 SHA-256 哈希（见 hashAPIKey），重启后该 map 为空，
-// 由 GetByKey 按哈希回查 DB 惰性重建。
+// 数据库存 AES-GCM 加密密文（enc: 前缀，可逆），重启后由 GetByKey
+// 按确定性哈希列 api_key_hash 回查 DB 并解密重建映射。
 var keyIDMap = cache.New[string, int](16)
 
 // GetCache returns the internal API key cache (for backward compatibility).
@@ -25,25 +26,35 @@ func GetCache() cache.Cache[int, model.APIKey] { return keyCache }
 // GetIDMap returns the internal key ID map (for backward compatibility).
 func GetIDMap() cache.Cache[string, int] { return keyIDMap }
 
-// hashAPIKey 计算 API Key 的 SHA-256 哈希（hex）。数据库只存哈希，
-// 泄露数据库文件时无法还原出可用的网关密钥。
+// hashAPIKey 计算 API Key 的 SHA-256 哈希（hex），用于确定性查找列 api_key_hash。
+// 加密密文因 AES-GCM nonce 随机而不可直接用于 WHERE 查询，故另存确定性哈希列定位。
 func hashAPIKey(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
 }
 
-// isLegacyPlaintextAPIKey 判断列值是否为升级前的明文 Key（以 sk- 前缀开头）。
-// 新写入的哈希值是 64 位 hex，不带前缀。
-func isLegacyPlaintextAPIKey(v string) bool {
-	return strings.HasPrefix(v, "sk-")
+// isLegacyHashedAPIKey 判断列值是否为哈希化时期（commit e6cbcde15）写入的存量哈希。
+// 这些值是 64 位 hex（不带 sk- 前缀、不带 enc: 前缀），明文已不可逆，
+// 认证仍可用（客户端持明文→sha256 匹配），但显示/复制无法恢复明文。
+func isLegacyHashedAPIKey(v string) bool {
+	return v != "" && !strings.HasPrefix(v, "sk-") && !crypto.IsEncrypted(v) && len(v) == 64
 }
 
 func Create(key *model.APIKey, ctx context.Context) error {
-	raw := key.APIKey
-	// 落库前替换为哈希；成功后恢复明文供响应与内存缓存使用。
-	key.APIKey = hashAPIKey(raw)
+	raw := strings.TrimSpace(key.APIKey)
+	if raw == "" {
+		return fmt.Errorf("api key value is empty")
+	}
+	encrypted, err := crypto.Encrypt(raw)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt API key: %w", err)
+	}
+	// 落库存加密密文 + 确定性哈希；成功后恢复明文供响应与内存缓存使用。
+	key.APIKey = encrypted
+	key.APIKeyHash = hashAPIKey(raw)
 	if err := db.GetDB().WithContext(ctx).Create(key).Error; err != nil {
 		key.APIKey = raw
+		key.APIKeyHash = ""
 		return fmt.Errorf("failed to create API key: %w", err)
 	}
 	key.APIKey = raw
@@ -63,10 +74,16 @@ func Update(key *model.APIKey, ctx context.Context) error {
 	keyValueChanged := newKeyValue != "" && newKeyValue != existing.APIKey
 
 	if keyValueChanged {
-		// 哈希后落库；恢复明文供缓存使用。
-		key.APIKey = hashAPIKey(newKeyValue)
+		encrypted, err := crypto.Encrypt(newKeyValue)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt API key: %w", err)
+		}
+		// 加密后落库；恢复明文供缓存使用。
+		key.APIKey = encrypted
+		key.APIKeyHash = hashAPIKey(newKeyValue)
 		if err := db.GetDB().WithContext(ctx).Save(key).Error; err != nil {
 			key.APIKey = newKeyValue
+			key.APIKeyHash = ""
 			return fmt.Errorf("failed to update API key: %w", err)
 		}
 		key.APIKey = newKeyValue
@@ -79,11 +96,12 @@ func Update(key *model.APIKey, ctx context.Context) error {
 		keyIDMap.Set(newKeyValue, key.ID)
 		keyCache.Set(key.ID, *key)
 	} else {
-		// Key value unchanged; omit it from the save to avoid accidental overwrite.
-		if err := db.GetDB().WithContext(ctx).Omit("api_key").Save(key).Error; err != nil {
+		// Key value unchanged; omit key columns from the save to avoid accidental overwrite.
+		key.APIKey = existing.APIKey
+		key.APIKeyHash = existing.APIKeyHash
+		if err := db.GetDB().WithContext(ctx).Omit("api_key", "api_key_hash").Save(key).Error; err != nil {
 			return fmt.Errorf("failed to update API key: %w", err)
 		}
-		key.APIKey = existing.APIKey
 		keyCache.Set(key.ID, *key)
 	}
 	return nil
@@ -108,13 +126,22 @@ func Get(id int, ctx context.Context) (model.APIKey, error) {
 func GetByKey(apiKey string, ctx context.Context) (model.APIKey, error) {
 	id, ok := keyIDMap.Get(apiKey)
 	if !ok {
-		// 明文映射未命中（如重启后）：按哈希回查 DB 并惰性重建映射。
+		// 明文映射未命中（如重启后）：按确定性哈希列回查 DB 并解密重建映射。
 		var key model.APIKey
-		if err := db.GetDB().WithContext(ctx).Where("api_key = ?", hashAPIKey(apiKey)).First(&key).Error; err != nil {
+		hash := hashAPIKey(apiKey)
+		if err := db.GetDB().WithContext(ctx).Where("api_key_hash = ?", hash).First(&key).Error; err != nil {
 			return model.APIKey{}, fmt.Errorf("API key not found")
 		}
+		// 解密恢复明文。存量哈希化 key（明文不可逆）的 api_key 列存的是 64 hex 而非 enc:，
+		// crypto.Decrypt 会原样返回该哈希值——认证不受影响（客户端持明文，hash 列已匹配），
+		// 但显示/复制时该哈希值会被前端标记为「需重生」。
+		plaintext, err := crypto.Decrypt(key.APIKey)
+		if err != nil {
+			return model.APIKey{}, fmt.Errorf("API key not found")
+		}
+		key.APIKey = plaintext
 		keyCache.Set(key.ID, key)
-		keyIDMap.Set(apiKey, key.ID)
+		keyIDMap.Set(plaintext, key.ID)
 		return key, nil
 	}
 	return Get(id, ctx)
@@ -182,15 +209,47 @@ func RefreshCache(ctx context.Context) error {
 	keyCache.Clear()
 	keyIDMap.Clear()
 	for i := range apiKeys {
-		// 升级迁移：存量明文 Key（sk- 前缀）一次性哈希化。
-		if isLegacyPlaintextAPIKey(apiKeys[i].APIKey) {
-			hashed := hashAPIKey(apiKeys[i].APIKey)
-			if err := db.GetDB().WithContext(ctx).Model(&model.APIKey{}).
-				Where("id = ?", apiKeys[i].ID).
-				Update("api_key", hashed).Error; err == nil {
-				apiKeys[i].APIKey = hashed
+		raw := apiKeys[i].APIKey
+		hash := apiKeys[i].APIKeyHash
+
+		if crypto.IsEncrypted(raw) {
+			// 加密密文：解密恢复明文，重建明文→ID 映射。
+			plaintext, err := crypto.Decrypt(raw)
+			if err == nil {
+				apiKeys[i].APIKey = plaintext
+				keyIDMap.Set(plaintext, apiKeys[i].ID)
+			}
+			// 解密失败（密钥变更等）：保留密文，认证仍可用 hash 列；显示需重生。
+		} else if isLegacyHashedAPIKey(raw) {
+			// 哈希化时期存量：明文不可逆。api_key 列保留哈希不动，
+			// 认可用 hash 列匹配（客户端持明文）；显示/复制标记需重生。
+			// 若 hash 列为空（存量哈希迁移未补 hash 列），用哈希值本身补齐。
+			if hash == "" {
+				hash = raw
+				_ = db.GetDB().WithContext(ctx).Model(&model.APIKey{}).
+					Where("id = ?", apiKeys[i].ID).
+					Update("api_key_hash", hash).Error
+				apiKeys[i].APIKeyHash = hash
+			}
+		} else if strings.HasPrefix(raw, "sk-") {
+			// 哈希化前的存量明文：加密化落库 + 补 hash 列。
+			encrypted, err := crypto.Encrypt(raw)
+			if err == nil {
+				if hash == "" {
+					hash = hashAPIKey(raw)
+				}
+				_ = db.GetDB().WithContext(ctx).Model(&model.APIKey{}).
+					Where("id = ?", apiKeys[i].ID).
+					Updates(map[string]any{
+						"api_key":      encrypted,
+						"api_key_hash": hash,
+					}).Error
+				apiKeys[i].APIKey = raw
+				apiKeys[i].APIKeyHash = hash
+				keyIDMap.Set(raw, apiKeys[i].ID)
 			}
 		}
+
 		keyCache.Set(apiKeys[i].ID, apiKeys[i])
 	}
 	return nil

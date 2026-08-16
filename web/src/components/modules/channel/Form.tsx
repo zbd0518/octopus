@@ -69,6 +69,7 @@ export interface ChannelKeyFormItem {
     last_use_time_stamp?: number;
     total_cost?: number;
     remark?: string;
+    supported_models?: string;
 }
 
 export interface ChannelFormData {
@@ -1248,8 +1249,9 @@ export function ChannelForm({
                 </Dialog>
                 <div className="space-y-2">
                     {(formData.keys ?? []).map((k, idx) => (
-                        <div key={k.id ?? `new-${idx}`} className={cn(
-                            "grid gap-2 rounded-lg border border-border/25 bg-card p-2 lg:items-center",
+                        <div key={k.id ?? `new-${idx}`} className="rounded-lg border border-border/25 bg-card p-2 space-y-2">
+                        <div className={cn(
+                            "grid gap-2 lg:items-center",
                             showPriorityInput ? "lg:grid-cols-[minmax(0,1fr)_7rem_10rem_auto_auto]" : "lg:grid-cols-[minmax(0,1fr)_10rem_auto_auto]"
                         )}>
                             <Input
@@ -1295,6 +1297,15 @@ export function ChannelForm({
                             >
                                 <X className="h-4 w-4" />
                             </Button>
+                        </div>
+                        <Input
+                            type="text"
+                            value={k.supported_models ?? ''}
+                            onChange={(e) => handleUpdateKey(idx, { supported_models: e.target.value })}
+                            placeholder={t('supportedModels')}
+                            title={t('supportedModelsHint')}
+                            className="rounded-lg text-xs text-muted-foreground"
+                        />
                         </div>
                     ))}
                 </div>

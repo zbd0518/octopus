@@ -16,6 +16,7 @@ import (
 	"github.com/lingyuins/octopus/internal/conf"
 	dbmodel "github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/transformer/inbound"
+	"github.com/lingyuins/octopus/internal/utils/xurl"
 )
 
 func TestParseRequestRejectsOversizeBody(t *testing.T) {
@@ -93,6 +94,10 @@ func TestExtractModelFromMultipartRejectsOversizeBody(t *testing.T) {
 
 func TestForwardMediaRequestMultipartRewritesModelAndStreamsFiles(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	// httptest.NewServer 监听 127.0.0.1，SSRF 校验会拦 loopback；
+	// 测试专用放行开关在测试期间临时允许私有地址。
+	xurl.SetSSRFAllowPrivateForTest(true)
+	t.Cleanup(func() { xurl.SetSSRFAllowPrivateForTest(false) })
 
 	var gotModel string
 	var gotFileBody string

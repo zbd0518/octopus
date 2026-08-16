@@ -1,7 +1,9 @@
 package xurl
 
 import (
+	"context"
 	"net"
+	"net/http"
 	"testing"
 )
 
@@ -79,5 +81,105 @@ func TestAssertSafeURL(t *testing.T) {
 func TestAssertSafeHost_Nil(t *testing.T) {
 	if err := AssertSafeHost(nil); err == nil {
 		t.Error("AssertSafeHost(nil) = nil, want error")
+	}
+}
+
+func TestAssertSafeRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{"nil request", "", true},
+		{"loopback", "http://127.0.0.1/v1/chat", true},
+		{"metadata", "http://169.254.169.254/latest/meta-data/", true},
+		{"private", "http://10.0.0.1/v1/chat", true},
+		{"public ip", "http://8.8.8.8/v1/chat", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req *http.Request
+			if tt.url != "" {
+				var err error
+				req, err = http.NewRequest(http.MethodPost, tt.url, nil)
+				if err != nil {
+					t.Fatalf("new request: %v", err)
+				}
+			}
+			err := AssertSafeRequest(req)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("AssertSafeRequest(%q) error = %v, wantErr %v", tt.url, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestAssertSafeRequestWithPin_PinsIP(t *testing.T) {
+	// 公网 IP 不需 DNS 解析，AssertSafeRequestWithPin 应返回携带钉入 IP 的 context。
+	req, err := http.NewRequest(http.MethodPost, "http://8.8.8.8/v1/chat", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	safeCtx, err := AssertSafeRequestWithPin(req)
+	if err != nil {
+		t.Fatalf("AssertSafeRequestWithPin: %v", err)
+	}
+
+	ip, ok := safeCtx.Value(safeIPKey{}).(net.IP)
+	if !ok || ip == nil {
+		t.Fatal("expected safe IP pinned in context")
+	}
+	if ip.String() != "8.8.8.8" {
+		t.Fatalf("pinned IP = %s, want 8.8.8.8", ip)
+	}
+}
+
+func TestAssertSafeRequestWithPin_RejectsMetadata(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "http://169.254.169.254/latest/meta-data/", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	if _, err := AssertSafeRequestWithPin(req); err == nil {
+		t.Fatal("expected error for metadata endpoint, got nil")
+	}
+}
+
+func TestSafeDialContext_UsesPinnedIP(t *testing.T) {
+	// 携带钉入 IP 时，SafeDialContext 应连该 IP 而非原 addr 中的 host。
+	// 用一个本地 listener 验证：钉入的 IP 指向 listener，原 addr 用不存在的
+	// host + listener 的端口。若未用钉入 IP 会 DNS 失败。
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, _ := ln.Accept()
+		if conn != nil {
+			conn.Close()
+		}
+	}()
+
+	addr := ln.Addr().String()
+	ip, port, _ := net.SplitHostPort(addr)
+	pinnedIP := net.ParseIP(ip)
+
+	ctx := context.WithValue(context.Background(), safeIPKey{}, pinnedIP)
+	// addr 用不存在的 hostname + listener 端口；钉入 IP 会被使用，端口保留。
+	conn, err := SafeDialContext(ctx, "tcp", "nonexistent-host-xyz.invalid:"+port)
+	if err != nil {
+		t.Fatalf("SafeDialContext with pinned IP: %v", err)
+	}
+	conn.Close()
+}
+func TestSafeDialContext_FallbackNoPin(t *testing.T) {
+	// 未携带钉入 IP 时回退默认拨号；用不存在的 host 应 DNS 失败（非 panic）。
+	ctx := context.Background()
+	_, err := SafeDialContext(ctx, "tcp", "nonexistent-host-xyz.invalid:80")
+	if err == nil {
+		t.Fatal("expected DNS failure for unpinned nonexistent host")
 	}
 }

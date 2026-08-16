@@ -34,12 +34,3 @@ func Get(siteType string) (SiteAdapter, error) {
 	}
 	return nil, fmt.Errorf("no adapter registered for site type %q and no fallback available", siteType)
 }
-
-// MustGet is like Get but panics on error (for init-time wiring).
-func MustGet(siteType string) SiteAdapter {
-	a, err := Get(siteType)
-	if err != nil {
-		panic(err)
-	}
-	return a
-}

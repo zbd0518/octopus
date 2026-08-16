@@ -12,6 +12,7 @@ import (
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/utils/proxyx"
+	"github.com/lingyuins/octopus/internal/utils/xurl"
 	"golang.org/x/net/proxy"
 )
 
@@ -236,6 +237,10 @@ func clonedDefaultTransport() (*http.Transport, error) {
 	cloned.MaxIdleConns = httpMaxIdleConns
 	cloned.MaxIdleConnsPerHost = httpMaxIdleConnsPerHost
 	cloned.IdleConnTimeout = httpIdleConnTimeout
+	// SafeDialContext 从 context 读校验时钉入的安全 IP（AssertSafeRequestWithPin），
+	// 直连该 IP 杜绝 DNS rebinding；未携带时回退默认拨号。socks/ss/vmess 代理路径
+	// 自设 DialContext 覆盖此值，代理拨号不受影响（前置 AssertSafeHost 已校验目标）。
+	cloned.DialContext = xurl.SafeDialContext
 	return cloned, nil
 }
 

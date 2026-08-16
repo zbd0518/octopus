@@ -31,6 +31,20 @@ export interface APIKey {
 }
 
 /**
+ * 判断 API Key 是否为哈希化时期（commit e6cbcde15）写入的存量哈希值。
+ * 这些 key 的明文不可逆，认证仍可用（客户端持明文），但显示/复制无法恢复明文，
+ * 前端应标记「明文不可恢复，请重新生成」并禁用复制按钮。
+ *
+ * 特征：64 位 hex，不以 sk- 开头（新 key 是加密密文或明文，存量哈希是裸 hex）。
+ */
+export function isLegacyHashedAPIKey(apiKey: string | undefined): boolean {
+    if (!apiKey) return false;
+    if (apiKey.startsWith('sk-')) return false;
+    if (apiKey.startsWith('enc:')) return false;
+    return /^[0-9a-f]{64}$/.test(apiKey);
+}
+
+/**
  * API Key Stats 响应（包含 stats 和 info）
  */
 export interface APIKeyStatsResponse {

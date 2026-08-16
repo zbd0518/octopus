@@ -1921,7 +1921,9 @@
         "viewStats": "统计",
         "edit": "编辑",
         "delete": "删除",
-        "deleteConfirm": "确认删除该密钥？"
+        "deleteConfirm": "确认删除该密钥？",
+        "legacyHashed": "明文不可恢复，请重新生成该密钥",
+        "legacyHashedHint": "此密钥在旧版本中被哈希存储，明文已无法还原。认证仍可使用，但无法复制值。请删除后重新创建。"
       },
       "actions": {
         "viewStats": "查看统计",
@@ -3186,6 +3188,8 @@
       "remark": "备注",
       "priority": "优先级",
       "priorityHint": "数字越大越优先",
+      "supportedModels": "支持的模型（可选）",
+      "supportedModelsHint": "逗号分隔，限定此 key 只能用于这些模型。留空表示不限制。",
       "typeMiMoChat": "MiMo Chat",
       "typeCloudflare": "Cloudflare",
       "keySelectionStrategy": "Key 策略",

@@ -108,11 +108,12 @@ export function CreateDialogContent() {
             delay: Number(u.delay || 0),
             suffix_mode: u.suffix_mode && u.suffix_mode !== 'auto' ? u.suffix_mode : undefined,
         }));
-        const normalizedKeys = formData.keys.map((k) => ({ 
-            enabled: k.enabled, 
-            channel_key: k.channel_key.trim(), 
-            priority: Number(k.priority ?? 0), 
-            remark: k.remark ?? '' 
+        const normalizedKeys = formData.keys.map((k) => ({
+            enabled: k.enabled,
+            channel_key: k.channel_key.trim(),
+            priority: Number(k.priority ?? 0),
+            remark: k.remark ?? '',
+            supported_models: k.supported_models ?? '',
         }));
         const normalizedHeaders = (formData.custom_header ?? [])
             .map((h) => ({ header_key: h.header_key.trim(), header_value: h.header_value }))

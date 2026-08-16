@@ -398,6 +398,7 @@ type channelKeyRequestPayload struct {
 	TotalCost        float64 `json:"total_cost"`
 	Priority         int     `json:"priority"`
 	Remark           string  `json:"remark"`
+	SupportedModels  string  `json:"supported_models,omitempty"`
 }
 
 func (p channelRequestPayload) toChannel() model.Channel {
@@ -405,10 +406,11 @@ func (p channelRequestPayload) toChannel() model.Channel {
 	for _, key := range p.Keys {
 		// 空 key 也允许保留（issue #157：支持无 key 渠道）
 		keys = append(keys, model.ChannelKey{
-			Enabled:    key.Enabled,
-			ChannelKey: key.ChannelKey,
-			Priority:   key.Priority,
-			Remark:     key.Remark,
+			Enabled:         key.Enabled,
+			ChannelKey:      key.ChannelKey,
+			Priority:        key.Priority,
+			Remark:          key.Remark,
+			SupportedModels: key.SupportedModels,
 		})
 	}
 
