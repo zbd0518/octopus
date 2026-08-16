@@ -13,7 +13,7 @@ import (
 
 func init() {
 	RegisterBeforeAutoMigration(Migration{
-		Version: 52,
+		Version: 56,
 		Up:      migrateAPIKeyHashBackfill,
 	})
 }
