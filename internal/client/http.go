@@ -237,10 +237,10 @@ func clonedDefaultTransport() (*http.Transport, error) {
 	cloned.MaxIdleConns = httpMaxIdleConns
 	cloned.MaxIdleConnsPerHost = httpMaxIdleConnsPerHost
 	cloned.IdleConnTimeout = httpIdleConnTimeout
-	// SafeDialContext 从 context 读校验时钉入的安全 IP（AssertSafeRequestWithPin），
-	// 直连该 IP 杜绝 DNS rebinding；未携带时回退默认拨号。socks/ss/vmess 代理路径
-	// 自设 DialContext 覆盖此值，代理拨号不受影响（前置 AssertSafeHost 已校验目标）。
-	cloned.DialContext = xurl.SafeDialContext
+	// 注意：不在此处设置 SafeDialContext。HTTP/HTTPS 代理路径的 DialContext
+	// 连接的是代理服务器而非目标主机，钉入的目标 IP 会替换掉代理地址导致连接失败。
+	// SafeDialContext 仅在直连路径（newHTTPClientNoProxyWithTimeout）中设置；
+	// socks/ss/vmess 代理路径自设 DialContext 覆盖，也不受影响。
 	return cloned, nil
 }
 
@@ -254,6 +254,11 @@ func newHTTPClientNoProxyWithTimeout(timeout time.Duration) (*http.Client, error
 		return nil, err
 	}
 	cloned.Proxy = nil
+	// 直连路径设置 SafeDialContext：从 context 读校验时钉入的安全 IP
+	// （AssertSafeRequestWithPin），直连该 IP 杜绝 DNS rebinding。
+	// 代理路径不设置此函数——DialContext 连的是代理服务器，钉入目标 IP
+	// 会替换代理地址导致连接失败；代理路径的 SSRF 防护由前置 AssertSafeHost 保证。
+	cloned.DialContext = xurl.SafeDialContext
 	return &http.Client{Transport: cloned, Timeout: timeout}, nil
 }
 
