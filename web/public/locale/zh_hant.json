@@ -2858,7 +2858,8 @@
         "codex": "Codex"
       },
       "reasoningChars": "思考",
-      "reasoningCharsUnit": "字"
+      "reasoningCharsUnit": "字",
+      "reasoningTokensUnit": "字"
     },
     "view": {
       "relay": "轉發日誌",

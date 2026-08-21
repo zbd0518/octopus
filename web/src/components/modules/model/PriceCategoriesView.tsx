@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
+import { Hint } from '@/components/ui/hint'
 import {
   Table,
   TableBody,
@@ -275,14 +276,16 @@ export function PriceCategoriesView() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="pc-sort">{t('sortOrder')}</Label>
+                <Label htmlFor="pc-sort">
+                  {t('sortOrder')}
+                  <Hint text={t('sortOrderHint')} />
+                </Label>
                 <Input
                   id="pc-sort"
                   type="number"
                   value={form.sort_order}
                   onChange={(e) => setForm({ ...form, sort_order: e.target.value })}
                 />
-                <p className="text-xs text-muted-foreground">{t('sortOrderHint')}</p>
               </div>
             </div>
 
@@ -317,7 +320,10 @@ export function PriceCategoriesView() {
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div className="grid gap-2">
-                <Label htmlFor="pc-input">{t('input')}</Label>
+                <Label htmlFor="pc-input">
+                  {t('input')}
+                  <Hint text={t('priceHint')} />
+                </Label>
                 <Input
                   id="pc-input"
                   type="number"
@@ -361,7 +367,6 @@ export function PriceCategoriesView() {
                 />
               </div>
             </div>
-            <p className="text-xs text-muted-foreground">{t('priceHint')}</p>
 
             <div className="flex items-center gap-2">
               <Switch

@@ -2902,7 +2902,8 @@
         "codex": "Codex"
       },
       "reasoningChars": "Reasoning",
-      "reasoningCharsUnit": " chars"
+      "reasoningCharsUnit": " chars",
+      "reasoningTokensUnit": " tokens"
     },
     "view": {
       "relay": "Relay Logs",
