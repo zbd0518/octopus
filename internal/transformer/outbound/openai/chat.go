@@ -115,6 +115,19 @@ func SanitizeRequestForOpenAICompat(request *model.InternalLLMRequest, baseURL s
 		attachStandaloneDeepSeekReasoningMessages(request)
 	}
 
+	// Tool pairing sanitize runs for every OpenAI-compat chat outbound, not only
+	// reasoning targets: strict upstreams (DeepSeek/vLLM, Mimo, FuturePPO relays,
+	// and deepseek-* aliases proxied without "deepseek" in the host or provider
+	// metadata) reject a messages array where an assistant message with tool_calls
+	// is not immediately followed by the results for those calls (e.g. after a
+	// client reconnect / truncated history replay drops the tool results). Drop the
+	// unresolved calls and any orphan tool results so the request stays
+	// well-formed. For non-streaming requests a trailing assistant with tool_calls
+	// is a valid DeepSeek continuation and is preserved; for streaming requests it
+	// is invalid and stripped too.
+	streaming := request.Stream != nil && *request.Stream
+	request.Messages = sanitizeToolPairingForOpenAICompat(request.Messages, streaming)
+
 	for i := range request.Messages {
 		sanitizeMessageForOpenAICompat(&request.Messages[i], preserveDeepSeekReasoning)
 	}
