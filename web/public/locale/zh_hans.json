@@ -2531,7 +2531,7 @@
         "videoLabel": "视频接口类型",
         "videoHint": "选择视频接口类型，保存后由后端自动改写视频透传请求路径。",
         "imageLabel": "图片接口类型",
-        "imageHint": "选择图片接口类型，保存后由后端自动改写图片透传 JSON（如 Agnes 会把顶层 response_format 移入 extra_body）。",
+        "imageHint": "选择图片接口类型，保存后由后端自动改写图片透传 JSON（如 Agnes 会把顶层 response_format 移入 extra_body）；透传（信息体）会保留客户端原始请求体与请求路径，仅改写模型名。",
         "audioSpeechLabel": "语音合成接口类型",
         "audioSpeechHint": "选择语音合成接口类型，保存后由后端自动改写 TTS 请求格式和路径。"
       },
