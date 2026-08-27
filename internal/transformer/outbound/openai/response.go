@@ -193,8 +193,35 @@ func (o *ResponseOutbound) TransformStream(ctx context.Context, eventData []byte
 			},
 		}
 
+	case "response.custom_tool_call_input.delta":
+		// Codex Response Lite native tools (custom exec/wait/etc.) stream their
+		// arguments via custom_tool_call_input.delta, which is the analogue of
+		// function_call_arguments.delta for namespace/custom tools.
+		resp.Choices = []model.Choice{
+			{
+				Index: 0,
+				Delta: &model.Message{
+					Role: "assistant",
+					ToolCalls: []model.ToolCall{
+						{
+							Index: streamEvent.OutputIndex,
+							ID:    streamEvent.CallID,
+							Type:  "custom",
+							Function: model.FunctionCall{
+								Arguments: streamEvent.Delta,
+							},
+						},
+					},
+				},
+			},
+		}
+
 	case "response.output_item.added":
-		if streamEvent.Item != nil && streamEvent.Item.Type == "function_call" {
+		if streamEvent.Item == nil {
+			return nil, nil
+		}
+		switch streamEvent.Item.Type {
+		case "function_call":
 			resp.Choices = []model.Choice{
 				{
 					Index: 0,
@@ -213,7 +240,27 @@ func (o *ResponseOutbound) TransformStream(ctx context.Context, eventData []byte
 					},
 				},
 			}
-		} else {
+		case "custom_tool_call":
+			resp.Choices = []model.Choice{
+				{
+					Index: 0,
+					Delta: &model.Message{
+						Role: "assistant",
+						ToolCalls: []model.ToolCall{
+							{
+								Index:     streamEvent.OutputIndex,
+								ID:        streamEvent.Item.CallID,
+								Type:      "custom",
+								Namespace: streamEvent.Item.Namespace,
+								Function: model.FunctionCall{
+									Name: streamEvent.Item.Name,
+								},
+							},
+						},
+					},
+				},
+			}
+		default:
 			return nil, nil
 		}
 
@@ -332,6 +379,12 @@ type ResponsesItem struct {
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
 
+	// Response Lite / native tool fields (custom_tool_call, local_shell_call, etc.)
+	Namespace string                 `json:"namespace,omitempty"`
+	Input     string                 `json:"input,omitempty"`
+	Action    map[string]interface{} `json:"action,omitempty"`
+	Execution string                 `json:"execution,omitempty"`
+
 	// Function call output
 	Output *ResponsesInput `json:"output,omitempty"`
 
@@ -344,6 +397,10 @@ type ResponsesItem struct {
 
 	// Reasoning fields
 	Summary []ResponsesReasoningSummary `json:"summary,omitempty"`
+
+	// Response Lite "additional_tools" item: native tool payload preserved
+	// verbatim from the inbound request.
+	Tools *transformer.RawMessage `json:"tools,omitempty"`
 }
 
 type ResponsesReasoningSummary struct {
@@ -476,6 +533,14 @@ func ConvertToResponsesRequest(req *model.InternalLLMRequest) *ResponsesRequest 
 	// Convert input from messages
 	result.Input = convertInputFromMessages(req.Messages, req.TransformOptions)
 
+	// Restore Response Lite "additional_tools" native tool payload verbatim.
+	// These are native tools (namespace/custom/local_shell) that could not be
+	// represented by the internal function/image_generation Tool model, so the
+	// inbound side stashed the raw JSON in TransformerMetadata.
+	if raw, ok := req.TransformerMetadata[transformerMetadataResponsesLiteAdditionalTools]; ok && raw != "" {
+		result.Input = prependAdditionalTools(result.Input, raw)
+	}
+
 	// Convert tools
 	if len(req.Tools) > 0 {
 		result.Tools = convertToolsToResponses(req.Tools)
@@ -503,6 +568,39 @@ func ConvertToResponsesRequest(req *model.InternalLLMRequest) *ResponsesRequest 
 	}
 
 	return result
+}
+
+// transformerMetadataResponsesLiteAdditionalTools mirrors the inbound key so the
+// raw Codex Response Lite additional_tools payload survives the inbound->internal->outbound hop.
+const transformerMetadataResponsesLiteAdditionalTools = "responses_lite_additional_tools"
+
+// prependAdditionalTools re-inserts a Response Lite "additional_tools" item at the
+// front of the input array. The raw tools JSON is preserved verbatim because native
+// tools (namespace/custom/local_shell/web_search) are not representable by the
+// internal function/image_generation Tool model.
+func prependAdditionalTools(input ResponsesInput, rawTools string) ResponsesInput {
+	// additional_tools is an input item, so the input must be in array form.
+	if input.Text != nil {
+		items := make([]ResponsesItem, 0, 2)
+		if *input.Text != "" {
+			items = append(items, ResponsesItem{
+				Type: "input_text",
+				Text: input.Text,
+			})
+		}
+		input = ResponsesInput{Items: items}
+	}
+
+	raw := transformer.RawMessage([]byte(rawTools))
+	additional := ResponsesItem{
+		Type:  "additional_tools",
+		Role:  "developer",
+		Tools: &raw,
+	}
+
+	return ResponsesInput{
+		Items: append([]ResponsesItem{additional}, input.Items...),
+	}
 }
 
 func convertInstructionsFromMessages(msgs []model.Message) string {
@@ -609,6 +707,16 @@ func convertAssistantMessageToResponses(msg model.Message) []ResponsesItem {
 
 	// Handle tool calls
 	for _, tc := range msg.ToolCalls {
+		if tc.Type == "custom" {
+			items = append(items, ResponsesItem{
+				Type:      "custom_tool_call",
+				CallID:    tc.ID,
+				Name:      tc.Function.Name,
+				Namespace: tc.Namespace,
+				Input:     tc.Function.Arguments,
+			})
+			continue
+		}
 		items = append(items, ResponsesItem{
 			Type:      "function_call",
 			CallID:    tc.ID,
@@ -667,8 +775,13 @@ func convertToolMessageToResponses(msg model.Message) ResponsesItem {
 		output.Text = lo.ToPtr("")
 	}
 
+	itemType := "function_call_output"
+	if msg.ToolCallType == "custom" {
+		itemType = "custom_tool_call_output"
+	}
+
 	return ResponsesItem{
-		Type:   "function_call_output",
+		Type:   itemType,
 		CallID: lo.FromPtr(msg.ToolCallID),
 		Output: &output,
 	}
@@ -766,6 +879,18 @@ func convertToLLMResponseFromResponses(resp *ResponsesResponse) *model.InternalL
 				Function: model.FunctionCall{
 					Name:      outputItem.Name,
 					Arguments: outputItem.Arguments,
+				},
+			})
+		case "custom_tool_call":
+			// Codex Response Lite native tool call: the argument string lives in
+			// "input", and the tool is scoped by an optional namespace.
+			toolCalls = append(toolCalls, model.ToolCall{
+				ID:        outputItem.CallID,
+				Type:      "custom",
+				Namespace: outputItem.Namespace,
+				Function: model.FunctionCall{
+					Name:      outputItem.Name,
+					Arguments: outputItem.Input,
 				},
 			})
 		case "reasoning":

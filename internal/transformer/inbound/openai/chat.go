@@ -240,6 +240,9 @@ func mergeToolCall(toolCalls []model.ToolCall, delta model.ToolCall) []model.Too
 			if delta.Function.Arguments != "" {
 				toolCalls[i].Function.Arguments += delta.Function.Arguments
 			}
+			if delta.Namespace != "" {
+				toolCalls[i].Namespace = delta.Namespace
+			}
 			return toolCalls
 		}
 	}

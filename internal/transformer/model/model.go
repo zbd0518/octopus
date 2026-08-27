@@ -509,6 +509,11 @@ type Message struct {
 	// The name of the tool call.
 	// Is is a help field, will not be sent to the llm service.
 	ToolCallName *string `json:"-"`
+	// ToolCallType records the Responses-native tool category for a tool-output
+	// message (e.g. "function" for function_call_output, "custom" for
+	// custom_tool_call_output). It is a help field and is not serialized; the
+	// Responses outbound adapter uses it to re-emit the correct item type.
+	ToolCallType string `json:"-"`
 	// This field is a help field, will not be sent to the llm service.
 	ToolCallIsError *bool      `json:"-"`
 	ToolCalls       []ToolCall `json:"tool_calls,omitempty"`
@@ -975,6 +980,13 @@ type ToolCall struct {
 	Type string `json:"type,omitempty"`
 
 	Function FunctionCall `json:"function"`
+
+	// Namespace carries the Responses-native tool namespace (e.g. "functions",
+	// "mcp__servers") for Codex Response Lite "custom" tools. It is an
+	// in-memory-only field so it does not leak into Chat Completions tool_calls
+	// payloads; the Responses outbound adapter materializes it back into a
+	// customer_tool_call item when the field is non-empty.
+	Namespace string `json:"-"`
 
 	// Index is the index of the tool call in the list of tool calls.
 	// Cannot use omitempty, as an index of 0 would be omitted, which can break consumers.

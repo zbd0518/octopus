@@ -12,6 +12,13 @@ import (
 	"github.com/lingyuins/octopus/internal/utils/xurl"
 )
 
+// TransformerMetadata key that carries the raw JSON of Codex Response Lite
+// "additional_tools" (which may contain native tools such as namespace/custom
+// that are not representable by the internal function/image_generation model).
+// Defined once here and reused by the outbound side so the string key cannot
+// drift between the two packages.
+const transformerMetadataResponsesLiteAdditionalTools = "responses_lite_additional_tools"
+
 // ResponseInbound implements the Inbound interface for OpenAI Responses API.
 type ResponseInbound struct {
 	// State tracking
@@ -348,9 +355,10 @@ func (i *ResponseInbound) handleToolCalls(toolCalls []model.ToolCall) [][]byte {
 			events = append(events, i.closeCurrentOutputItem()...)
 
 			i.toolCalls[toolCallIndex] = &model.ToolCall{
-				Index: toolCallIndex,
-				ID:    tc.ID,
-				Type:  tc.Type,
+				Index:     toolCallIndex,
+				ID:        tc.ID,
+				Type:      tc.Type,
+				Namespace: tc.Namespace,
 				Function: model.FunctionCall{
 					Name:      tc.Function.Name,
 					Arguments: "",
@@ -362,13 +370,7 @@ func (i *ResponseInbound) handleToolCalls(toolCalls []model.ToolCall) [][]byte {
 				itemID = generateItemID()
 			}
 
-			item := &ResponsesItem{
-				ID:     itemID,
-				Type:   "function_call",
-				Status: lo.ToPtr("in_progress"),
-				CallID: tc.ID,
-				Name:   tc.Function.Name,
-			}
+			item := newNativeToolCallItem(itemID, tc)
 
 			events = append(events, i.enqueueEvent(&ResponsesStreamEvent{
 				Type:        "response.output_item.added",
@@ -385,15 +387,21 @@ func (i *ResponseInbound) handleToolCalls(toolCalls []model.ToolCall) [][]byte {
 		// Accumulate arguments
 		i.toolCalls[toolCallIndex].Function.Arguments += tc.Function.Arguments
 
-		// Emit function_call_arguments.delta
+		// Emit arguments/input delta (function_call_arguments.delta for standard
+		// function tools, custom_tool_call_input.delta for Response Lite native tools).
 		if tc.Function.Arguments != "" {
 			itemID := i.toolCalls[toolCallIndex].ID
 			if itemID == "" {
 				itemID = i.currentItemID
 			}
 
+			deltaEventType := "response.function_call_arguments.delta"
+			if tc.Type == "custom" {
+				deltaEventType = "response.custom_tool_call_input.delta"
+			}
+
 			events = append(events, i.enqueueEvent(&ResponsesStreamEvent{
-				Type:         "response.function_call_arguments.delta",
+				Type:         deltaEventType,
 				ItemID:       &itemID,
 				OutputIndex:  lo.ToPtr(i.outputIndex - 1),
 				ContentIndex: lo.ToPtr(0),
@@ -403,6 +411,29 @@ func (i *ResponseInbound) handleToolCalls(toolCalls []model.ToolCall) [][]byte {
 	}
 
 	return events
+}
+
+// newNativeToolCallItem builds the output_item.added payload for a tool call,
+// emitting a custom_tool_call item for Response Lite native tools (namespace/
+// custom) and a standard function_call item otherwise.
+func newNativeToolCallItem(itemID string, tc model.ToolCall) *ResponsesItem {
+	if tc.Type == "custom" {
+		return &ResponsesItem{
+			ID:        itemID,
+			Type:      "custom_tool_call",
+			Status:    lo.ToPtr("in_progress"),
+			CallID:    tc.ID,
+			Name:      tc.Function.Name,
+			Namespace: tc.Namespace,
+		}
+	}
+	return &ResponsesItem{
+		ID:     itemID,
+		Type:   "function_call",
+		Status: lo.ToPtr("in_progress"),
+		CallID: tc.ID,
+		Name:   tc.Function.Name,
+	}
 }
 
 func (i *ResponseInbound) closeReasoningItem() [][]byte {
@@ -547,24 +578,22 @@ func (i *ResponseInbound) closeCurrentOutputItem() [][]byte {
 				itemID = i.currentItemID
 			}
 
-			// Emit function_call_arguments.done
+			doneEventType := "response.function_call_arguments.done"
+			if tc.Type == "custom" {
+				doneEventType = "response.custom_tool_call_input.done"
+			}
+
+			// Emit arguments/input done
 			toolCallOutputIdx := i.toolCallOutputIndex[idx]
 			events = append(events, i.enqueueEvent(&ResponsesStreamEvent{
-				Type:        "response.function_call_arguments.done",
+				Type:        doneEventType,
 				ItemID:      &itemID,
 				OutputIndex: &toolCallOutputIdx,
 				Arguments:   tc.Function.Arguments,
 			}))
 
 			// Emit output_item.done
-			item := ResponsesItem{
-				ID:        itemID,
-				Type:      "function_call",
-				Status:    lo.ToPtr("completed"),
-				CallID:    tc.ID,
-				Name:      tc.Function.Name,
-				Arguments: tc.Function.Arguments,
-			}
+			item := newNativeToolCallDoneItem(itemID, *tc)
 
 			events = append(events, i.enqueueEvent(&ResponsesStreamEvent{
 				Type:        "response.output_item.done",
@@ -577,6 +606,31 @@ func (i *ResponseInbound) closeCurrentOutputItem() [][]byte {
 	}
 
 	return events
+}
+
+// newNativeToolCallDoneItem builds the output_item.done payload for a completed
+// tool call, mirroring newNativeToolCallItem with completed status and the
+// accumulated arguments/input.
+func newNativeToolCallDoneItem(itemID string, tc model.ToolCall) ResponsesItem {
+	if tc.Type == "custom" {
+		return ResponsesItem{
+			ID:        itemID,
+			Type:      "custom_tool_call",
+			Status:    lo.ToPtr("completed"),
+			CallID:    tc.ID,
+			Name:      tc.Function.Name,
+			Namespace: tc.Namespace,
+			Input:     tc.Function.Arguments,
+		}
+	}
+	return ResponsesItem{
+		ID:        itemID,
+		Type:      "function_call",
+		Status:    lo.ToPtr("completed"),
+		CallID:    tc.ID,
+		Name:      tc.Function.Name,
+		Arguments: tc.Function.Arguments,
+	}
 }
 
 // foldStreamChunk merges one stream chunk into the running aggregation.
@@ -754,6 +808,10 @@ type ResponsesItem struct {
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
 
+	// Response Lite / native tool call fields (custom_tool_call)
+	Namespace string `json:"namespace,omitempty"`
+	Input     string `json:"input,omitempty"`
+
 	// Function call output
 	Output *ResponsesInput `json:"output,omitempty"`
 
@@ -767,6 +825,12 @@ type ResponsesItem struct {
 	// Reasoning fields
 	Summary          []ResponsesReasoningSummary `json:"summary,omitempty"`
 	EncryptedContent *string                     `json:"encrypted_content,omitempty"`
+
+	// Response Lite "additional_tools" item: carries native tool payload
+	// (namespace/custom/local_shell/web_search/etc.) verbatim. These tools do
+	// not map onto the internal function/image_generation Tool model, so we
+	// preserve the raw JSON and re-emit it on the outbound side.
+	Tools *transformer.RawMessage `json:"tools,omitempty"`
 }
 
 func (item ResponsesItem) isOutputMessageContent() bool {
@@ -982,6 +1046,19 @@ func convertToInternalRequest(req *ResponsesRequest) (*model.InternalLLMRequest,
 	messages = append(messages, inputMessages...)
 	chatReq.Messages = messages
 
+	// Preserve Response Lite "additional_tools" native tool payload verbatim.
+	// Models such as gpt-5.6-{sol,terra,luna} use Responses Lite, which places
+	// the tool schema into input[].additional_tools instead of the top-level
+	// "tools" field. A nil top-level tools field combined with a non-empty
+	// additional_tools payload would otherwise be silently dropped in
+	// convertToolsToInternal, leaving the model with no tools at all.
+	for _, item := range req.Input.Items {
+		if item.Type == "additional_tools" && item.Tools != nil && len(*item.Tools) > 0 {
+			chatReq.TransformerMetadata[transformerMetadataResponsesLiteAdditionalTools] = string(*item.Tools)
+			break
+		}
+	}
+
 	// Convert tools
 	if len(req.Tools) > 0 {
 		tools, err := convertToolsToInternal(req.Tools)
@@ -1044,9 +1121,27 @@ func convertInputToMessages(input *ResponsesInput) ([]model.Message, error) {
 		if err != nil {
 			return nil, err
 		}
-		if msg != nil {
-			messages = append(messages, *msg)
+		if msg == nil {
+			continue
 		}
+
+		// Responses 语义下，连续的 function_call / custom_tool_call 项同属一个
+		// assistant 回合。将它们合并为同一 assistant 消息的多个 ToolCalls，
+		// 避免下游 tool-pairing 清洗误判为「有 tool_calls 但无紧随工具结果」而
+		// 丢弃并行调用（并行调用历史丢失 bug 的根因）。
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 && len(messages) > 0 {
+			last := &messages[len(messages)-1]
+			if last.Role == "assistant" && len(last.ToolCalls) > 0 &&
+				last.Content.Content == nil && len(last.Content.MultipleContent) == 0 {
+				for i := range msg.ToolCalls {
+					msg.ToolCalls[i].Index = len(last.ToolCalls) + i
+				}
+				last.ToolCalls = append(last.ToolCalls, msg.ToolCalls...)
+				continue
+			}
+		}
+
+		messages = append(messages, *msg)
 	}
 
 	return messages, nil
@@ -1107,15 +1202,50 @@ func convertItemToMessage(item *ResponsesItem) (*model.Message, error) {
 			},
 		}, nil
 
+	case "custom_tool_call":
+		// Response Lite native tool call: the argument string lives in "input",
+		// and the tool is scoped by an optional namespace.
+		return &model.Message{
+			Role: "assistant",
+			ToolCalls: []model.ToolCall{
+				{
+					ID:        item.CallID,
+					Type:      "custom",
+					Namespace: item.Namespace,
+					Function: model.FunctionCall{
+						Name:      item.Name,
+						Arguments: item.Input,
+					},
+				},
+			},
+		}, nil
+
 	case "function_call_output":
 		var outputContent model.MessageContent
 		if item.Output != nil {
 			outputContent = convertInputToMessageContent(*item.Output)
 		}
 		return &model.Message{
-			Role:       "tool",
-			ToolCallID: lo.ToPtr(item.CallID),
-			Content:    outputContent,
+			Role:         "tool",
+			ToolCallID:   lo.ToPtr(item.CallID),
+			ToolCallType: "function",
+			Content:      outputContent,
+		}, nil
+
+	case "custom_tool_call_output":
+		// Response Lite native tool result. Encoded identically to
+		// function_call_output (output is a plain string or content_items array),
+		// but must be re-emitted as custom_tool_call_output to preserve the
+		// namespace/custom tool pairing.
+		var outputContent model.MessageContent
+		if item.Output != nil {
+			outputContent = convertInputToMessageContent(*item.Output)
+		}
+		return &model.Message{
+			Role:         "tool",
+			ToolCallID:   lo.ToPtr(item.CallID),
+			ToolCallType: "custom",
+			Content:      outputContent,
 		}, nil
 
 	case "reasoning":
