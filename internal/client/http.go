@@ -279,6 +279,9 @@ func newHTTPClientCustomProxyWithTimeout(proxyURLStr string, timeout time.Durati
 
 	switch proxyURL.Scheme {
 	case "http", "https":
+		// HTTP(S) 代理由代理端解析并连接上游域名，客户端只需连到代理地址。
+		// 这里保留 clonedDefaultTransport 的默认 DialContext（不注入 SafeDialContext），
+		// 避免上游钉住的 IP 被拼到代理地址上导致拨号目标错误。
 		cloned.Proxy = http.ProxyURL(proxyURL)
 	case "socks", "socks5":
 		socksDialer, err := proxy.FromURL(proxyURL, proxy.Direct)

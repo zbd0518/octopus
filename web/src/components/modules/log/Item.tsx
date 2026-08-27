@@ -528,6 +528,24 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                         <span className="font-medium text-emerald-600 dark:text-emerald-400">
                                             {t('cost')} {costDisplay}
                                         </span>
+                                        {log.billing_window === 'peak' && (
+                                            <Badge
+                                                variant="outline"
+                                                className="shrink-0 text-xs px-1.5 py-0 border-amber-400/50 text-amber-500 dark:text-amber-400"
+                                                title={t('billingWindowHint')}
+                                            >
+                                                {t('billingWindowPeak')}
+                                            </Badge>
+                                        )}
+                                        {log.billing_window === 'offpeak' && (
+                                            <Badge
+                                                variant="outline"
+                                                className="shrink-0 text-xs px-1.5 py-0 border-sky-400/50 text-sky-500 dark:text-sky-400"
+                                                title={t('billingWindowHint')}
+                                            >
+                                                {t('billingWindowOffPeak')}
+                                            </Badge>
+                                        )}
                                     </div>
                                 )}
                                 {vis.reasoningEffort && !!log.reasoning_effort && (
@@ -883,6 +901,24 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                     <span className="font-medium text-emerald-600 dark:text-emerald-400">
                                         {t('cost')}: {costDisplay}
                                     </span>
+                                    {log.billing_window === 'peak' && (
+                                        <Badge
+                                            variant="outline"
+                                            className="shrink-0 text-xs px-1.5 py-0 border-amber-400/50 text-amber-500 dark:text-amber-400"
+                                            title={t('billingWindowHint')}
+                                        >
+                                            {t('billingWindowPeak')}
+                                        </Badge>
+                                    )}
+                                    {log.billing_window === 'offpeak' && (
+                                        <Badge
+                                            variant="outline"
+                                            className="shrink-0 text-xs px-1.5 py-0 border-sky-400/50 text-sky-500 dark:text-sky-400"
+                                            title={t('billingWindowHint')}
+                                        >
+                                            {t('billingWindowOffPeak')}
+                                        </Badge>
+                                    )}
                                 </div>
                             )}
                             {vis.reasoningEffort && !!log.reasoning_effort && (
