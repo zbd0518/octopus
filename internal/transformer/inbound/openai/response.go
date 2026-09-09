@@ -17,7 +17,7 @@ import (
 // that are not representable by the internal function/image_generation model).
 // Defined once here and reused by the outbound side so the string key cannot
 // drift between the two packages.
-const transformerMetadataResponsesLiteAdditionalTools = "responses_lite_additional_tools"
+const transformerMetadataResponsesLiteAdditionalTools = model.TransformerMetadataResponsesLiteAdditionalTools
 
 // ResponseInbound implements the Inbound interface for OpenAI Responses API.
 type ResponseInbound struct {

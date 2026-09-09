@@ -25,8 +25,9 @@ const (
 )
 
 const (
-	TransformerMetadataGroupEndpointType     = "group_endpoint_type"
-	TransformerMetadataGroupEndpointProvider = "group_endpoint_provider"
+	TransformerMetadataGroupEndpointType            = "group_endpoint_type"
+	TransformerMetadataGroupEndpointProvider        = "group_endpoint_provider"
+	TransformerMetadataResponsesLiteAdditionalTools = "responses_lite_additional_tools"
 )
 
 // Request is the unified llm request model for AxonHub, to keep compatibility with major app and framework.

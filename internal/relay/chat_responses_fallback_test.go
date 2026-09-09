@@ -1,6 +1,9 @@
 package relay
 
 import (
+	"context"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/lingyuins/octopus/internal/transformer/model"
@@ -69,6 +72,77 @@ func TestOutboundAttemptTypesResponsesOnResponseChannelAutoPrefersChat(t *testin
 			t.Fatalf("attempt types = %#v, want %#v", got, want)
 		}
 	}
+}
+
+func TestOutboundAttemptTypesResponsesLiteAdditionalToolsForcesResponses(t *testing.T) {
+	req := &model.InternalLLMRequest{
+		RawAPIFormat: model.APIFormatOpenAIResponse,
+		TransformerMetadata: map[string]string{
+			model.TransformerMetadataResponsesLiteAdditionalTools: `[{"type":"namespace","name":"functions"}]`,
+		},
+	}
+
+	for _, format := range []string{"", "chat", "chat_only", "messages"} {
+		got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, format)
+		want := []outbound.OutboundType{outbound.OutboundTypeOpenAIResponse}
+		if len(got) != len(want) || got[0] != want[0] {
+			t.Fatalf("format %q: attempt types = %#v, want %#v", format, got, want)
+		}
+	}
+}
+
+func TestOutboundAttemptTypesResponsesLiteCustomHistoryForcesResponses(t *testing.T) {
+	req := &model.InternalLLMRequest{
+		RawAPIFormat: model.APIFormatOpenAIResponse,
+		Messages: []model.Message{{
+			Role: "assistant",
+			ToolCalls: []model.ToolCall{{
+				Type:     "custom",
+				Function: model.FunctionCall{Name: "exec"},
+			}},
+		}},
+	}
+
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "")
+	if len(got) != 1 || got[0] != outbound.OutboundTypeOpenAIResponse {
+		t.Fatalf("attempt types = %#v, want Responses only", got)
+	}
+}
+
+func TestResponsesLiteRelaySelectionPreservesAdditionalTools(t *testing.T) {
+	req := &model.InternalLLMRequest{
+		Model:        "gpt-5.6-luna",
+		RawAPIFormat: model.APIFormatOpenAIResponse,
+		TransformerMetadata: map[string]string{
+			model.TransformerMetadataResponsesLiteAdditionalTools: `[{"type":"namespace","name":"functions"}]`,
+		},
+		Messages: []model.Message{{
+			Role:    "user",
+			Content: model.MessageContent{Content: stringPtr("list files")},
+		}},
+	}
+
+	attemptTypes := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "")
+	if len(attemptTypes) != 1 || attemptTypes[0] != outbound.OutboundTypeOpenAIResponse {
+		t.Fatalf("attempt types = %#v, want Responses only", attemptTypes)
+	}
+
+	upstreamRequest, err := outbound.Get(attemptTypes[0]).TransformRequest(
+		context.Background(), req, "https://upstream.example.com/v1", "sk-test")
+	if err != nil {
+		t.Fatalf("Responses TransformRequest() error = %v", err)
+	}
+	body, err := io.ReadAll(upstreamRequest.Body)
+	if err != nil {
+		t.Fatalf("read outbound body: %v", err)
+	}
+	if !strings.Contains(string(body), `"additional_tools"`) || !strings.Contains(string(body), `"namespace"`) {
+		t.Fatalf("Responses outbound body lost native tools: %s", body)
+	}
+}
+
+func stringPtr(value string) *string {
+	return &value
 }
 
 func TestOutboundAttemptTypesEmbeddingNoFallback(t *testing.T) {

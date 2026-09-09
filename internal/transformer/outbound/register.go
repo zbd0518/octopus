@@ -149,6 +149,14 @@ func ResolveAttemptTypes(channelType OutboundType, request *model.InternalLLMReq
 			return []OutboundType{OutboundTypeRaw}
 		}
 	}
+	// Responses Lite native tools (additional_tools / custom_tool_call) have no
+	// lossless representation in Chat Completions. Keep these requests on the
+	// Responses adapter even when the group is configured for the default Chat
+	// first order; otherwise the first attempt silently drops the tool schema.
+	if hasResponsesLiteNativeTools(request) &&
+		(channelType == OutboundTypeOpenAIChat || channelType == OutboundTypeOpenAIResponse) {
+		return []OutboundType{OutboundTypeOpenAIResponse}
+	}
 	if request != nil && IsLLMRequestFormat(request) && (channelType == OutboundTypeOpenAIChat || channelType == OutboundTypeOpenAIResponse) {
 		switch format {
 		case "responses":
@@ -166,4 +174,21 @@ func ResolveAttemptTypes(channelType OutboundType, request *model.InternalLLMReq
 		}
 	}
 	return []OutboundType{channelType}
+}
+
+func hasResponsesLiteNativeTools(request *model.InternalLLMRequest) bool {
+	if request == nil || request.RawAPIFormat != model.APIFormatOpenAIResponse {
+		return false
+	}
+	if strings.TrimSpace(request.TransformerMetadata[model.TransformerMetadataResponsesLiteAdditionalTools]) != "" {
+		return true
+	}
+	for _, message := range request.Messages {
+		for _, toolCall := range message.ToolCalls {
+			if toolCall.Type == "custom" {
+				return true
+			}
+		}
+	}
+	return false
 }

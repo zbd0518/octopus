@@ -537,7 +537,7 @@ func ConvertToResponsesRequest(req *model.InternalLLMRequest) *ResponsesRequest 
 	// These are native tools (namespace/custom/local_shell) that could not be
 	// represented by the internal function/image_generation Tool model, so the
 	// inbound side stashed the raw JSON in TransformerMetadata.
-	if raw, ok := req.TransformerMetadata[transformerMetadataResponsesLiteAdditionalTools]; ok && raw != "" {
+	if raw, ok := req.TransformerMetadata[model.TransformerMetadataResponsesLiteAdditionalTools]; ok && raw != "" {
 		result.Input = prependAdditionalTools(result.Input, raw)
 	}
 
@@ -569,10 +569,6 @@ func ConvertToResponsesRequest(req *model.InternalLLMRequest) *ResponsesRequest 
 
 	return result
 }
-
-// transformerMetadataResponsesLiteAdditionalTools mirrors the inbound key so the
-// raw Codex Response Lite additional_tools payload survives the inbound->internal->outbound hop.
-const transformerMetadataResponsesLiteAdditionalTools = "responses_lite_additional_tools"
 
 // prependAdditionalTools re-inserts a Response Lite "additional_tools" item at the
 // front of the input array. The raw tools JSON is preserved verbatim because native

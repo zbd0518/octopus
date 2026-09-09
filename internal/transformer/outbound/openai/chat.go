@@ -15,6 +15,9 @@ import (
 type ChatOutbound struct{}
 
 func (o *ChatOutbound) TransformRequest(ctx context.Context, request *model.InternalLLMRequest, baseUrl, key string) (*http.Request, error) {
+	if err := validateOpenAIChatCompatTools(request); err != nil {
+		return nil, err
+	}
 	compatRequest := CloneRequestForOpenAICompat(request)
 	if compatRequest == nil {
 		return nil, fmt.Errorf("request is nil")
@@ -115,18 +118,13 @@ func SanitizeRequestForOpenAICompat(request *model.InternalLLMRequest, baseURL s
 		attachStandaloneDeepSeekReasoningMessages(request)
 	}
 
-	// Tool pairing sanitize runs for every OpenAI-compat chat outbound, not only
-	// reasoning targets: strict upstreams (DeepSeek/vLLM, Mimo, FuturePPO relays,
-	// and deepseek-* aliases proxied without "deepseek" in the host or provider
-	// metadata) reject a messages array where an assistant message with tool_calls
-	// is not immediately followed by the results for those calls (e.g. after a
-	// client reconnect / truncated history replay drops the tool results). Drop the
-	// unresolved calls and any orphan tool results so the request stays
-	// well-formed. For non-streaming requests a trailing assistant with tool_calls
-	// is a valid DeepSeek continuation and is preserved; for streaming requests it
-	// is invalid and stripped too.
-	streaming := request.Stream != nil && *request.Stream
-	request.Messages = sanitizeToolPairingForOpenAICompat(request.Messages, streaming)
+	// Only providers with known strict tool-pairing validation need this
+	// compatibility cleanup. Generic OpenAI-compatible endpoints must retain the
+	// client's conversation history instead of silently deleting tool calls.
+	if isReasoningCompatRequest(baseURL, request, isMimoChannel) {
+		streaming := request.Stream != nil && *request.Stream
+		request.Messages = sanitizeToolPairingForOpenAICompat(request.Messages, streaming)
+	}
 
 	for i := range request.Messages {
 		sanitizeMessageForOpenAICompat(&request.Messages[i], preserveDeepSeekReasoning)
@@ -145,6 +143,23 @@ func SanitizeRequestForOpenAICompat(request *model.InternalLLMRequest, baseURL s
 	// Official OpenAI accepts metadata; omitting it is always safe.
 	// Aligns with ResponseOutbound.TransformRequest which already strips it.
 	request.Metadata = nil
+}
+
+func validateOpenAIChatCompatTools(request *model.InternalLLMRequest) error {
+	if request == nil {
+		return fmt.Errorf("request is nil")
+	}
+	if strings.TrimSpace(request.TransformerMetadata[model.TransformerMetadataResponsesLiteAdditionalTools]) != "" {
+		return fmt.Errorf("openai chat outbound cannot represent Responses Lite additional_tools; use Responses outbound format")
+	}
+	for _, message := range request.Messages {
+		for _, toolCall := range message.ToolCalls {
+			if toolCall.Type == "custom" {
+				return fmt.Errorf("openai chat outbound cannot represent Responses native custom tool %q; use Responses outbound format", toolCall.Function.Name)
+			}
+		}
+	}
+	return nil
 }
 
 // marshalOpenAICompatRequest serializes the OpenAI-compat chat body and flattens

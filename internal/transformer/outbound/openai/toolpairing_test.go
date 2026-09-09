@@ -13,9 +13,9 @@ import (
 // decodedOutboundMessage is a minimal projection of the outbound chat message used
 // by the tests below to assert tool pairing behavior.
 type decodedOutboundMessage struct {
-	Role        string `json:"role"`
-	ToolCallID  string `json:"tool_call_id"`
-	ToolCalls   []struct {
+	Role       string `json:"role"`
+	ToolCallID string `json:"tool_call_id"`
+	ToolCalls  []struct {
 		ID string `json:"id"`
 	} `json:"tool_calls"`
 	Content json.RawMessage `json:"content"`
@@ -221,10 +221,9 @@ func TestSanitizeToolPairingForOpenAICompat_DropsEmptyAssistantWithOnlyUnfulfill
 }
 
 func TestSanitizeToolPairingForOpenAICompat_NonStreamingTrailingContinuationKeptOnGeneric(t *testing.T) {
-	// The tool pairing sanitize applies to every OpenAI-compat chat outbound, not
-	// only reasoning targets. A non-streaming trailing assistant with tool_calls is
-	// a valid continuation (arguments arrive next request) regardless of provider,
-	// so it is preserved verbatim.
+	// Generic OpenAI-compatible endpoints keep the client's history intact. The
+	// strict-provider cleanup is intentionally limited to DeepSeek/MiMo-style
+	// reasoning-compatible endpoints.
 	content := "I will call tools"
 	user := "please"
 	request := &model.InternalLLMRequest{
@@ -245,6 +244,45 @@ func TestSanitizeToolPairingForOpenAICompat_NonStreamingTrailingContinuationKept
 	}
 	if len(msgs[1].ToolCalls) != 2 {
 		t.Fatalf("expected non-streaming trailing tool calls kept verbatim, got %d", len(msgs[1].ToolCalls))
+	}
+}
+
+func TestChatOutboundGenericOpenAIKeepsUnresolvedToolHistory(t *testing.T) {
+	content := "I will call a tool"
+	next := "continue"
+	request := &model.InternalLLMRequest{
+		Model: "gpt-4o",
+		Messages: []model.Message{
+			{Role: "assistant", Content: model.MessageContent{Content: &content}, ToolCalls: []model.ToolCall{toolCall("call_a")}},
+			{Role: "user", Content: model.MessageContent{Content: &next}},
+		},
+	}
+
+	msgs := decodeOutboundMessages(t, request, "https://api.openai.com/v1")
+	if len(msgs) != 2 || len(msgs[0].ToolCalls) != 1 {
+		t.Fatalf("generic OpenAI history was unexpectedly sanitized: %#v", msgs)
+	}
+}
+
+func TestChatOutboundRejectsResponsesLiteNativeTools(t *testing.T) {
+	request := &model.InternalLLMRequest{
+		Model: "gpt-5.6-luna",
+		TransformerMetadata: map[string]string{
+			model.TransformerMetadataResponsesLiteAdditionalTools: `[{"type":"namespace"}]`,
+		},
+		Messages: []model.Message{{
+			Role: "assistant",
+			ToolCalls: []model.ToolCall{{
+				ID:        "call_exec",
+				Type:      "custom",
+				Namespace: "functions",
+				Function:  model.FunctionCall{Name: "exec", Arguments: `{"command":["ls"]}`},
+			}},
+		}},
+	}
+
+	if _, err := (&ChatOutbound{}).TransformRequest(context.Background(), request, "https://api.openai.com/v1", "sk-test"); err == nil {
+		t.Fatal("expected ChatOutbound to reject Responses Lite native tools")
 	}
 }
 
