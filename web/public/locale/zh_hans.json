@@ -1440,6 +1440,64 @@
         "hint": "当动作设为「阻断」且检测到关键词时，返回给客户端的错误提示文字。"
       }
     },
+    "privacyProtection": {
+      "title": "隐私保护",
+      "description": "开启后，你发给模型的请求会先在本站检查一遍：拦截请求 = 命中就不发给上游、直接报错；自动过滤 = 把敏感内容替换成占位符再发给上游，上游回复里的占位符会在返回给你之前还原成原文。关闭总开关后请求原样发送，不做任何检查。",
+      "enabled": {
+        "label": "启用隐私保护"
+      },
+      "categories": {
+        "label": "检测项与策略",
+        "hint": "默认全部开启且为「拦截请求」，可以逐项改成「自动过滤」或直接关掉。",
+        "api_key": {
+          "label": "密钥 / Token",
+          "description": "sk-、ghp_、AKIA、Bearer 等常见密钥与令牌"
+        },
+        "password": {
+          "label": "账号密码等凭据",
+          "description": "password= / api_key: 这类「字段名 + 值」的写法"
+        },
+        "phone": {
+          "label": "手机号",
+          "description": "中国大陆手机号与国际 + 号格式"
+        },
+        "email": {
+          "label": "邮箱地址",
+          "description": "例如 alice@example.com"
+        },
+        "id_card": {
+          "label": "身份证号",
+          "description": "18 位中国居民身份证（含校验位验证）"
+        },
+        "bank_card": {
+          "label": "银行卡号",
+          "description": "13–19 位数字并通过 Luhn 校验"
+        },
+        "entropy": {
+          "label": "高熵随机串",
+          "description": "没有固定格式、但统计上像密钥的随机字符串"
+        },
+        "custom": {
+          "label": "自定义敏感词",
+          "description": "你在下面填写的关键词或正则"
+        }
+      },
+      "actions": {
+        "block": "拦截请求",
+        "filter": "自动过滤"
+      },
+      "rules": {
+        "label": "自定义敏感词 / 正则",
+        "typeKeyword": "关键词",
+        "typeRegex": "正则",
+        "placeholder": "输入关键词或正则后按 Enter 添加",
+        "add": "添加",
+        "empty": "暂无自定义规则，可在上方填写需要额外匹配的内容。",
+        "duplicate": "该规则已存在",
+        "invalidRegex": "正则表达式不合法",
+        "removeHint": "点击移除"
+      }
+    },
     "retry": {
       "title": "重试配置",
       "count": {

@@ -15,11 +15,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lingyuins/octopus/internal/conf"
 	"github.com/lingyuins/octopus/internal/helper"
+	appmodel "github.com/lingyuins/octopus/internal/model"
 	dbmodel "github.com/lingyuins/octopus/internal/model"
 	ch "github.com/lingyuins/octopus/internal/op/channel"
 	grp "github.com/lingyuins/octopus/internal/op/group"
 	"github.com/lingyuins/octopus/internal/op/modelmapping"
 	rl "github.com/lingyuins/octopus/internal/op/ratelimitstore"
+	stg "github.com/lingyuins/octopus/internal/op/setting"
 	st "github.com/lingyuins/octopus/internal/op/stats"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
 	"github.com/lingyuins/octopus/internal/relay/condition"
@@ -193,6 +195,35 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 	requestModel := internalRequest.Model
 	apiKeyID := c.GetInt("api_key_id")
 
+	// 请求侧隐私保护（issue 020）：解析后立即检查/脱敏，重试复用同一脱敏请求。
+	// 命中 block 类别时直接拒绝，不进入渠道选择与重试。
+	// 脱敏产生的占位符映射存入 relayRequest.privacyMap，响应返回前还原。
+	var privacyPlaceholders *privacyPlaceholderMap
+	if privacyCfg := loadPrivacyFilterConfig(); privacyCfg.Enabled {
+		pcfgRaw, _ := stg.GetString(appmodel.SettingKeyPrivacyProtectionConfig)
+		var pcfg appmodel.PrivacyProtectionConfig
+		if pcfgRaw != "" {
+			_ = json.Unmarshal([]byte(pcfgRaw), &pcfg)
+		}
+		privacyPlaceholders = newPrivacyPlaceholderMap()
+		if blocked, category := applyPrivacyProtection(internalRequest, privacyCfg, pcfg, privacyPlaceholders); blocked {
+			log.Infof("[隐私保护] 请求被拦截: category=%s model=%s", category, requestModel)
+			errorResp := map[string]any{
+				"error": map[string]any{
+					"message": "The request contains sensitive content and has been blocked by privacy protection.",
+					"type":    "content_filter",
+					"code":    "content_blocked",
+				},
+			}
+			data, _ := jsonAPI.Marshal(errorResp)
+			c.Data(http.StatusOK, "application/json", data)
+			return
+		}
+		if !privacyPlaceholders.empty() {
+			log.Infof("[隐私保护] 请求已脱敏: placeholders=%d model=%s", len(privacyPlaceholders.forward), requestModel)
+		}
+	}
+
 	// Rate limiting: check RPM/TPM before forwarding
 	if rpm := c.GetInt("rate_limit_rpm"); rpm > 0 || c.GetInt("rate_limit_tpm") > 0 {
 		effectiveRPM, effectiveTPM := resolveAPIRateLimit(requestModel, c)
@@ -309,6 +340,7 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		iter:              iter,
 		streamSession:     streamSession,
 		retryCache:        newRetryRequestCache(),
+		privacyMap:        privacyPlaceholders,
 	}
 
 	var inflightKey string
@@ -595,6 +627,12 @@ func (ra *relayAttempt) forward() (int, error) {
 			log.Warnf("failed to prepare outbound request data: %v", err)
 			return 0, fmt.Errorf("failed to prepare outbound request data: %w", err)
 		}
+	} else if ra.privacyMap != nil && !ra.privacyMap.empty() {
+		// 隐私保护（issue 020）：passthrough/raw 转发的是原始 body（RawRequest），
+		// internalRequest 上的脱敏对它不可见。这里把命中片段在原始 body 上
+		// 同步替换为占位符。已知边界：值中含 JSON 转义字符（引号/换行）时
+		// 原文匹配不到，不替换——内置检测类别（密钥/手机号/邮箱等）极少含这些字符。
+		requestForOutbound.RawRequest = ra.privacyMap.maskRawBody(requestForOutbound.RawRequest)
 	}
 
 	// 构建出站请求
@@ -955,6 +993,8 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	shouldBuffer := (strategy == "buffer") // buffer=暂存; immediate=立即发送
 	var reasoningBuffer [][]byte           // 暂存仅含 reasoning 的 chunk，待可见内容到达后 flush
 	var reasoningBufferBytes int           // reasoningBuffer 累计字节数，用于软上限判定（见 maxReasoningBufferBytes）
+	// 隐私保护（issue 020）：流式占位符还原在 transformStreamData 内部完成
+	// （挂 ra.privacyStream，作用在内部 chunk 文本上，支持跨 chunk 拆分）。
 	clientDone := ra.clientCtx.Done()
 	clientDisconnected := false
 	clientDisconnectLogged := false
@@ -1280,6 +1320,9 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 
 	hasVisible := streamChunkHasVisibleContent(internalStream)
 
+	// 隐私保护（issue 020）：流式占位符还原（支持跨 chunk 拆分，内部文本层）。
+	ra.privacyStream.restoreChunk(internalStream)
+
 	// 输出结果关键词拦截（流式）
 	filterCfg := ra.getResponseFilterConfig()
 	if blocked, keyword := applyResponseFilter(internalStream, filterCfg); blocked {
@@ -1303,6 +1346,10 @@ func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Respo
 		logRelayErrorfByContext(err, "failed to transform response: %v", err)
 		return fmt.Errorf("failed to transform outbound response: %w", err)
 	}
+
+	// 隐私保护占位符还原（issue 020）：转换到内部格式后立即还原，
+	// 后续输出拦截、入站序列化、metrics/日志拿到的都是还原后的文本。
+	restorePrivacyPlaceholders(internalResponse, ra.privacyMap)
 
 	// 输出结果关键词拦截
 	filterCfg := ra.getResponseFilterConfig()
@@ -1690,6 +1737,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 						poolType:             poolType,
 						poolAccountID:        poolAccountID,
 						poolAccount:          poolAccount,
+						privacyStream:        req.privacyMap.newStreamRestorer(),
 					}
 
 					result = ra.attempt()

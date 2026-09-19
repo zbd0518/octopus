@@ -104,6 +104,8 @@ export const SettingKey = {
     ResponseFilterKeywords: 'response_filter_keywords',
     ResponseFilterAction: 'response_filter_action',
     ResponseFilterErrorMessage: 'response_filter_error_message',
+    PrivacyProtectionEnabled: 'privacy_protection_enabled',
+    PrivacyProtectionConfig: 'privacy_protection_config',
     LogLevel: 'log_level',
     LogExcludedGroups: 'log_excluded_groups',
     ModelNormalizeRouterPrefixes: 'model_normalize_router_prefixes',

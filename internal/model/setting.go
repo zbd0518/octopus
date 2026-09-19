@@ -99,6 +99,8 @@ const (
 	SettingKeyResponseFilterKeywords               SettingKey = "response_filter_keywords"                 // 拦截关键词列表(JSON 数组)
 	SettingKeyResponseFilterAction                 SettingKey = "response_filter_action"                   // 拦截动作: block(阻断) / replace(替换为*)
 	SettingKeyResponseFilterErrorMessage           SettingKey = "response_filter_error_message"            // 阻断时返回的错误信息
+	SettingKeyPrivacyProtectionEnabled             SettingKey = "privacy_protection_enabled"               // 隐私保护总开关（请求侧敏感信息拦截/脱敏，issue 020）
+	SettingKeyPrivacyProtectionConfig              SettingKey = "privacy_protection_config"                // 隐私保护配置(JSON: categories + rules)
 	SettingKeyLogLevel                             SettingKey = "log_level"                                // 应用日志级别: debug, info, warn, error
 	SettingKeyLogExcludedGroups                    SettingKey = "log_excluded_groups"                      // 在日志列表/实时流中屏蔽的分组名称列表(JSON 数组)
 	SettingKeyModelNormalizeRouterPrefixes         SettingKey = "model_normalize_router_prefixes"          // 模型名归一化: 路由商/平台前缀列表(JSON 数组，元素如 "dmxapi-")
@@ -203,6 +205,8 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyResponseFilterKeywords, Value: "[]"},
 		{Key: SettingKeyResponseFilterAction, Value: "block"},
 		{Key: SettingKeyResponseFilterErrorMessage, Value: "The response contains blocked keywords and has been intercepted."},
+		{Key: SettingKeyPrivacyProtectionEnabled, Value: "false"}, // 默认关闭隐私保护，请求原样发送
+		{Key: SettingKeyPrivacyProtectionConfig, Value: `{"categories":{},"rules":[]}`},
 		{Key: SettingKeyLogLevel, Value: "info"},
 		{Key: SettingKeyLogExcludedGroups, Value: "[]"},
 		{Key: SettingKeyModelNormalizeRouterPrefixes, Value: "[]"},        // 默认无自定义路由前缀，回退到前端内置默认
@@ -219,7 +223,7 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyKeyHealthCheckNotifyEnabled, Value: "true"},     // 默认发送失败通知
 		{Key: SettingKeyKeyHealthCheckRecoveryNotify, Value: "true"},    // 默认发送恢复通知
 		{Key: SettingKeyKeyHealthCheckNotifyCooldown, Value: "300"},     // 默认通知冷却 5 分钟
-		{Key: SettingKeyGroupProbePrompt, Value: "hi"},                 // 默认模型测活提示词（与历史硬编码一致）
+		{Key: SettingKeyGroupProbePrompt, Value: "hi"},                  // 默认模型测活提示词（与历史硬编码一致）
 		{Key: SettingKeyGroupUpstreamMetaDisplayEnabled, Value: "true"}, // 默认开启分组上游元信息展示
 		{Key: SettingKeyPoolTokenRefreshInterval, Value: "10"},          // 默认 10 分钟检查号池 OAuth token 刷新
 		{Key: SettingKeyPoolQuotaSyncInterval, Value: "360"},            // 默认 6 小时同步号池额度
@@ -476,6 +480,13 @@ func (s *Setting) Validate() error {
 		default:
 			return fmt.Errorf("response filter action must be block or replace")
 		}
+	case SettingKeyPrivacyProtectionEnabled:
+		if s.Value != "true" && s.Value != "false" {
+			return fmt.Errorf("setting value must be true or false")
+		}
+		return nil
+	case SettingKeyPrivacyProtectionConfig:
+		return ValidatePrivacyProtectionConfig(s.Value)
 	case SettingKeyResponseFilterErrorMessage, SettingKeyGroupProbePrompt:
 		return nil
 	case SettingKeyLogLevel:

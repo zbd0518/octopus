@@ -1440,6 +1440,64 @@
         "hint": "當動作設為「阻斷」且檢測到關鍵詞時，返回給客戶端的錯誤提示文字。"
       }
     },
+    "privacyProtection": {
+      "title": "隱私保護",
+      "description": "開啟後，你發給模型的要求會先在本站檢查一遍：攔截請求 = 命中就不發給上游、直接報錯；自動過濾 = 把敏感內容替換成佔位符再發給上游，上游回覆裡的佔位符會在返回給你之前還原成原文。關閉總開關後請求原樣發送，不做任何檢查。",
+      "enabled": {
+        "label": "啟用隱私保護"
+      },
+      "categories": {
+        "label": "檢測項與策略",
+        "hint": "預設全部開啟且為「攔截請求」，可以逐項改成「自動過濾」或直接關掉。",
+        "api_key": {
+          "label": "密鑰 / Token",
+          "description": "sk-、ghp_、AKIA、Bearer 等常見密鑰與令牌"
+        },
+        "password": {
+          "label": "帳號密碼等憑據",
+          "description": "password= / api_key: 這類「欄位名 + 值」的寫法"
+        },
+        "phone": {
+          "label": "手機號",
+          "description": "中國大陸手機號與國際 + 號格式"
+        },
+        "email": {
+          "label": "信箱地址",
+          "description": "例如 alice@example.com"
+        },
+        "id_card": {
+          "label": "身分證號",
+          "description": "18 位中國居民身分證（含校驗位驗證）"
+        },
+        "bank_card": {
+          "label": "銀行卡號",
+          "description": "13–19 位數字並通過 Luhn 校驗"
+        },
+        "entropy": {
+          "label": "高熵隨機串",
+          "description": "沒有固定格式、但統計上像密的隨機字串"
+        },
+        "custom": {
+          "label": "自訂敏感詞",
+          "description": "你在下面填寫的關鍵詞或正則"
+        }
+      },
+      "actions": {
+        "block": "攔截請求",
+        "filter": "自動過濾"
+      },
+      "rules": {
+        "label": "自訂敏感詞 / 正則",
+        "typeKeyword": "關鍵詞",
+        "typeRegex": "正則",
+        "placeholder": "輸入關鍵詞或正則後按 Enter 添加",
+        "add": "添加",
+        "empty": "暫無自訂規則，可在上方填寫需要額外匹配的內容。",
+        "duplicate": "該規則已存在",
+        "invalidRegex": "正則表達式不合法",
+        "removeHint": "點擊移除"
+      }
+    },
     "retry": {
       "title": "重試配置",
       "count": {

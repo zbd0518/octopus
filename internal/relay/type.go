@@ -248,6 +248,9 @@ type relayRequest struct {
 	iter              *balancer.Iterator
 	streamSession     *relayStreamSession
 	retryCache        *retryRequestCache
+	// privacyMap 隐私保护占位符映射（issue 020）。请求脱敏后填充，
+	// 响应返回前按映射还原；跨重试共享（脱敏幂等，映射不变）。
+	privacyMap *privacyPlaceholderMap
 }
 
 // relayAttempt 尝试级上下文
@@ -280,6 +283,11 @@ type relayAttempt struct {
 	// chunk 上重复读取 setting 并解析关键词 JSON。通过 getResponseFilterConfig
 	// 懒加载，仅在首次需要时计算一次。
 	filterCfg *responseFilterConfig
+	// privacyStream 流式占位符还原器（issue 020）。仅当请求发生过脱敏时非 nil，
+	// 在 outAdapter→inAdapter 转换间对内部 chunk 文本做跨 chunk 还原。
+	// 空间归属：占位符跨 chunk 拆分是「重试换渠道会重新开始流」的边界问题，
+	// 因此挂在 attempt 级（换渠道重试会新建 attempt，carry 不会跨渠道污染）。
+	privacyStream *privacyStreamRestorer
 }
 
 // getResponseFilterConfig 返回本次尝试的响应过滤配置，仅加载一次并缓存。

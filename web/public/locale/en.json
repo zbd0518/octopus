@@ -1484,6 +1484,64 @@
         "hint": "The error message text returned to the client when a keyword is detected in block mode."
       }
     },
+    "privacyProtection": {
+      "title": "Privacy Protection",
+      "description": "When enabled, requests you send to models are checked here first: Block request = matching content is never sent upstream, an error is returned instead; Auto filter = sensitive content is replaced with placeholders before being sent upstream, and placeholders in the upstream reply are restored to the original text before reaching you. With the master switch off, requests are forwarded as-is with no checks.",
+      "enabled": {
+        "label": "Enable privacy protection"
+      },
+      "categories": {
+        "label": "Detectors & policies",
+        "hint": "All detectors are enabled with \"Block request\" by default. Each can be switched to \"Auto filter\" or turned off.",
+        "api_key": {
+          "label": "Secrets / Tokens",
+          "description": "Common keys and tokens such as sk-, ghp_, AKIA, Bearer"
+        },
+        "password": {
+          "label": "Credentials",
+          "description": "Field-name + value patterns like password= / api_key:"
+        },
+        "phone": {
+          "label": "Phone numbers",
+          "description": "Mainland China mobile numbers and international + format"
+        },
+        "email": {
+          "label": "Email addresses",
+          "description": "e.g. alice@example.com"
+        },
+        "id_card": {
+          "label": "ID card numbers",
+          "description": "18-digit Chinese resident ID (with checksum validation)"
+        },
+        "bank_card": {
+          "label": "Bank card numbers",
+          "description": "13–19 digits passing the Luhn check"
+        },
+        "entropy": {
+          "label": "High-entropy strings",
+          "description": "Random-looking strings with no fixed format that statistically resemble secrets"
+        },
+        "custom": {
+          "label": "Custom sensitive terms",
+          "description": "Keywords or regexes you add below"
+        }
+      },
+      "actions": {
+        "block": "Block request",
+        "filter": "Auto filter"
+      },
+      "rules": {
+        "label": "Custom terms / regex",
+        "typeKeyword": "Keyword",
+        "typeRegex": "Regex",
+        "placeholder": "Type a keyword or regex and press Enter to add",
+        "add": "Add",
+        "empty": "No custom rules yet. Add extra patterns to match above.",
+        "duplicate": "This rule already exists",
+        "invalidRegex": "Invalid regular expression",
+        "removeHint": "Click to remove"
+      }
+    },
     "retry": {
       "title": "Retry Settings",
       "count": {
