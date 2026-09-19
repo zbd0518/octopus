@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CircleAlert, CircleCheck, Dot, GripVertical, Loader2, Trash2, Waves, X } from 'lucide-react';
 import { DragDropContext, Draggable, Droppable, type DraggableProvided, type DropResult } from '@hello-pangea/dnd';
 import { AnimatePresence, motion } from 'motion/react';
@@ -323,6 +324,13 @@ export function MemberList({
 }: MemberListProps) {
     const internalLayoutScope = useId();
     const layoutScope = externalLayoutScope ?? internalLayoutScope;
+    // 拖动中 portal 挂载点（见 Draggable 渲染处注释）：挂到 body 使 position:fixed
+    // 以视口为包含块，避免被 VirtualizedGrid 虚拟行的 transform 劫持。SSR 下 body
+    // 尚不存在，挂载后再设置。
+    const [dragCloneContainer, setDragCloneContainer] = useState<HTMLElement | null>(null);
+    useEffect(() => {
+        setDragCloneContainer(document.body);
+    }, []);
     const { data: settings } = useSettingList();
     // 外观设置默认开启；仅当显式 false 时关闭。分组卡仍可通过 prop 强制隐藏。
     const settingEnabled =
@@ -424,35 +432,44 @@ export function MemberList({
                                         index={index}
                                         isDragDisabled={removingIds.has(member.id)}
                                     >
-                                        {(draggableProvided, snapshot) => (
-                                            <MemberItem
-                                                member={member}
-                                                onRemove={onRemove}
-                                                onWeightChange={onWeightChange}
-                                                isRemoving={removingIds.has(member.id)}
-                                                index={index}
-                                                showWeight={showWeight}
-                                                showConfirmDelete={showConfirmDelete}
-                                                showUpstreamMeta={effectiveShowUpstreamMeta}
-                                                showStaticRisks={showStaticRisks}
-                                                noEnabledKey={Boolean(
-                                                    showStaticRisks &&
-                                                        hasEnabledKeyByChannelId &&
-                                                        channelHasNoEnabledKey(
-                                                            member.channel_id,
-                                                            hasEnabledKeyByChannelId,
-                                                        ),
-                                                )}
-                                                layoutScope={layoutScope}
-                                                dnd={{
-                                                    innerRef: draggableProvided.innerRef,
-                                                    draggableProps: draggableProvided.draggableProps,
-                                                    dragHandleProps: draggableProvided.dragHandleProps,
-                                                }}
-                                                isDragging={snapshot.isDragging}
-                                                availability={availabilityById[member.id]}
-                                            />
-                                        )}
+                                        {(draggableProvided, snapshot) => {
+                                            const item = (
+                                                <MemberItem
+                                                    member={member}
+                                                    onRemove={onRemove}
+                                                    onWeightChange={onWeightChange}
+                                                    isRemoving={removingIds.has(member.id)}
+                                                    index={index}
+                                                    showWeight={showWeight}
+                                                    showConfirmDelete={showConfirmDelete}
+                                                    showUpstreamMeta={effectiveShowUpstreamMeta}
+                                                    showStaticRisks={showStaticRisks}
+                                                    noEnabledKey={Boolean(
+                                                        showStaticRisks &&
+                                                            hasEnabledKeyByChannelId &&
+                                                            channelHasNoEnabledKey(
+                                                                member.channel_id,
+                                                                hasEnabledKeyByChannelId,
+                                                            ),
+                                                    )}
+                                                    layoutScope={layoutScope}
+                                                    dnd={{
+                                                        innerRef: draggableProvided.innerRef,
+                                                        draggableProps: draggableProvided.draggableProps,
+                                                        dragHandleProps: draggableProvided.dragHandleProps,
+                                                    }}
+                                                    isDragging={snapshot.isDragging}
+                                                    availability={availabilityById[member.id]}
+                                                />
+                                            );
+                                            // 拖动中 portal 到 body（库官方 portal 模式）：分组页列表视图的
+                                            // 卡片位于 VirtualizedGrid 虚拟行内，祖先带 translateY transform
+                                            // 会让拖动元素的 position:fixed 以该行为包含块，坐标错乱导致
+                                            // 元素"飞出"到别处、原位置空白。挂到 body 后 fixed 恢复视口定位。
+                                            return snapshot.isDragging && dragCloneContainer
+                                                ? createPortal(item, dragCloneContainer)
+                                                : item;
+                                        }}
                                     </Draggable>
                                 ))}
                                 {droppableProvided.placeholder}
