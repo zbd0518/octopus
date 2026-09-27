@@ -56,7 +56,22 @@ func Init() {
 	} else {
 		priceUpdateInterval := time.Duration(priceUpdateIntervalHours) * time.Hour
 		Register(string(model.SettingKeyModelInfoUpdateInterval), priceUpdateInterval, true, func() {
-			if err := price.UpdateLLMPrice(context.Background()); err != nil {
+			// 出站请求必须带超时：price.UpdateLLMPrice 走 internal/client 的 default 档
+			// （http.Client.Timeout=0，僵死保护只剩 Transport.ResponseHeaderTimeout，
+			// 而它仅覆盖「等响应头」阶段），因此响应体读取阶段没有任何时间上限。
+			// models.dev 的 10 MiB 响应体上限只防内存爆炸，不防无限慢速涓流：上游发完
+			// 响应头后以极慢速率吐 body，本 goroutine 会永久挂住。后果是连锁的——
+			// runOnce 的 defer entry.running.Store(false) 永不执行 ⇒ 此后每个 tick 都被
+			// skipping overlapping run 跳过（价格更新功能永久停摆，直到进程重启）；
+			// Shutdown 的 entry.wg.Wait() 永久阻塞 ⇒ 优雅关闭卡死，且 task.Shutdown
+			// 之后的 db.StopSerialWriter / op.SaveCache 等 hook 不执行，有数据丢失风险。
+			//
+			// 取值 2 分钟：对齐 op/remotesite 的既有先例（该处同样是「后台自动出站」）。
+			// 本任务间隔由 SettingKeyModelInfoUpdateInterval 控制（单位小时，默认 24h），
+			// 2min << 间隔，不会造成任务堆叠或长期占用。
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			if err := price.UpdateLLMPrice(ctx); err != nil {
 				log.Warnf("failed to update price info: %v", err)
 			}
 		})

@@ -12,7 +12,11 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -270,6 +274,16 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				written := c.Writer.Written()
 				decision := ClassifyRelayError(statusCode, fwdErr, written)
 
+				// 客户端断连豁免（对齐 relay.go attempt() 的 errClientDisconnected 语义）。
+				// 媒体路径的写失败会把 statusCode 置 0（见 SSE/二进制/JSON/TTS 四处 io.Copy），
+				// ClassifyRelayError 只能按 EPIPE→网络错误→ScopeNextChannel 或
+				// written→ScopeAbortAll 归类，把客户端主动停止误判为上游故障：
+				// 前者会记熔断并触发无谓的换渠道重试，后者会记熔断。
+				// 媒体路径全程持有 c，但 operationCtx 来自 newRelayOperationContext()，
+				// 基于 context.Background() 与 clientCtx 完全解耦（context.go），
+				// 因此判定断连必须查 c.Request.Context()，不能查 operationCtx。
+				markClientCancelIfGone(&decision, c.Request.Context(), fwdErr)
+
 				// key 冷却按 (channelID, keyID, model) 维度记录（见 issue #94），不再写整 key 共享的
 				// StatusCode/LastUseTimeStamp —— 那样会让某模型 429 拖累该 key 上其他模型。
 				if statusCode >= 400 {
@@ -308,7 +322,12 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					RequestFailed: 1,
 				})
 
-				if decision.Scope == ScopeNextChannel || decision.Scope == ScopeAbortAll {
+				// 熔断守卫与 relay.go 复用同一个纯函数 shouldRecordChannelFailure，避免两文件
+				// 判定逻辑漂移。媒体路径全程不使用 poolscheduler（无号池账号反馈），
+				// 因此 poolID 传 0：即使渠道配了 PoolID，媒体侧也只有渠道级熔断这一个
+				// 健康信号，保持现有行为不变。SkipFailureAccounting（客户端断连）由上方
+				// markClientCancelIfGone 写入，在此生效。
+				if shouldRecordChannelFailure(0, decision) {
 					balancer.RecordFailure(channel.ID, usedKey.ID, resolvedModel)
 					balancer.RecordAutoFailure(channel.ID, resolvedModel)
 				}
@@ -633,6 +652,15 @@ func forwardMediaRequestJSON(
 	if err != nil {
 		return 0, fmt.Errorf("failed to send request: %w", err)
 	}
+	// 上游可能发完响应头后把 body 永久 hang 住（或极慢涓流）。default 档 client
+	// 的 http.Client.Timeout 已改为 0（不限时，见 internal/client/http.go），
+	// ResponseHeaderTimeout 只覆盖「等响应头」，operationCtx 在未设
+	// OCTOPUS_RELAY_UPSTREAM_TIMEOUT_SECONDS 时也无 deadline（context.go），
+	// 因此 body 读取必须自己带上限，否则请求 goroutine 永久挂住。
+	//
+	// 必须在下面的 defer **之前**替换：Go 在 defer 语句执行时就固定方法接收者，
+	// 先包装才能让 defer 调到 watchdog 的 Close（否则 watchdog 收不到退出信号）。
+	response.Body = wrapMediaResponseBody(response.Body, mediaBodyIdleTimeout)
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -701,6 +729,9 @@ func forwardMediaRequestMultipart(
 	if err != nil {
 		return 0, fmt.Errorf("failed to send request: %w", err)
 	}
+	// 同 forwardMediaRequestJSON：multipart 路径的响应体读取同样必须有空闲上限，
+	// 且同样必须在 defer 之前替换（defer 语句执行时即固定方法接收者）。
+	response.Body = wrapMediaResponseBody(response.Body, mediaBodyIdleTimeout)
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -876,6 +907,175 @@ func copyMediaForwardHeaders(req *http.Request, c *gin.Context, channel *dbmodel
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
 	applyChannelHeaders(req, channel)
+}
+
+// defaultMediaBodyIdleTimeout 是媒体转发路径等待上游响应体「下一批字节」的最长空闲时长。
+//
+// 取值 600s 与本次修复前 default 档 http.Client.Timeout 的旧值一致，这是有意为之：
+// 旧值是「响应头 + 整个 body」的**总时长**上限，而这里是「两次读到字节之间」的
+// **空闲**上限。因为空闲时长恒 <= 总时长，所以新机制对任何在旧 600s 总上限内能
+// 正常完成的工作负载都严格更宽松（不会新引入误杀），同时又恢复了「有限上限」这
+// 一性质（不再永久挂住）。媒体端点包含视频 / 音乐生成，响应体可能又大又慢，
+// 用总时长上限会误杀合法的慢速下载，用空闲上限则只杀「上游彻底 stall」。
+const defaultMediaBodyIdleTimeout = 600 * time.Second
+
+// mediaBodyIdleTimeoutEnv 覆盖 defaultMediaBodyIdleTimeout（单位：秒）。
+//
+// 与 OCTOPUS_RELAY_UPSTREAM_TIMEOUT_SECONDS / OCTOPUS_HTTP_RESPONSE_HEADER_TIMEOUT_SECONDS
+// 同属「绕过 Viper、直接 os.Getenv、在 init() 一次性读取」的一批开关
+// （见 AGENTS.md「配置与环境变量」与 context.go 的既有写法）。
+// 取值 <=0 或非法时保持默认值。
+const mediaBodyIdleTimeoutEnv = "OCTOPUS_RELAY_MEDIA_BODY_IDLE_TIMEOUT_SECONDS"
+
+// mediaBodyIdleTimeout 是实际生效的媒体响应体空闲超时。
+// 声明为 var 而非 const，测试可按 context_test.go 覆盖 relayUpstreamTimeout 的
+// 既有模式临时改小（无需为可测性改造生产代码签名）。
+var mediaBodyIdleTimeout = defaultMediaBodyIdleTimeout
+
+func init() {
+	mediaBodyIdleTimeout = resolveMediaBodyIdleTimeout(os.Getenv(mediaBodyIdleTimeoutEnv), defaultMediaBodyIdleTimeout)
+}
+
+// resolveMediaBodyIdleTimeout 解析环境变量覆盖值（单位：秒）。
+// 空值 / 非法数字 / <=0 一律回退到 fallback，绝不产生「无上限」的退化值。
+func resolveMediaBodyIdleTimeout(raw string, fallback time.Duration) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallback
+	}
+	seconds, err := strconv.Atoi(raw)
+	if err != nil || seconds <= 0 {
+		return fallback
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// wrapMediaResponseBody 在上游响应体上安装空闲超时 watchdog。
+// idleTimeout <= 0 时原样返回，不引入任何包装与 goroutine。
+func wrapMediaResponseBody(src io.ReadCloser, idleTimeout time.Duration) io.ReadCloser {
+	if src == nil || idleTimeout <= 0 {
+		return src
+	}
+	return newMediaIdleTimeoutBody(src, idleTimeout)
+}
+
+// mediaIdleTimeoutBody 包装上游响应体：连续 idleTimeout 没有任何新字节到达时，
+// 关闭底层 body，强制正阻塞在 Read 上的 io.Copy / io.ReadAll / bufio.ReadSlice
+// 立刻返回，从而终结「上游发完响应头就 hang 住 body」造成的请求 goroutine 永久挂死。
+//
+// 为什么必须靠 Close() 而不是 SetReadDeadline：http.Response.Body 的实际类型是
+// net/http 内部的 *bodyEOFSignal（外层）套 *transfer.body（内层），拿不到底层
+// net.Conn，无法可靠地设置读截止时间；而 bodyEOFSignal.Read 在进入真正阻塞的
+// 底层 Read **之前**就已释放自身互斥锁，因此从另一个 goroutine 调 Close() 不会
+// 与并发的 Read 互相死锁。这与 relay.go 的 client-gone 宽限超时后
+// response.Body.Close() 强制收尾是同一套机制。
+type mediaIdleTimeoutBody struct {
+	src io.ReadCloser
+
+	idleTimeout time.Duration
+
+	// base 是构造时刻的时间戳，只写入一次。**它必须保留 time.Now() 自带的单调时钟
+	// 读数**：后续所有经过时间都由 time.Since(base) 得出，因而基于单调时钟，
+	// 不受系统墙钟回拨 / NTP 前跳影响。
+	// 若改用 UnixNano 存取，会丢掉单调读数（time.Unix 构造出的是纯墙钟时间），
+	// 一次 NTP 前跳就可能把正在正常下载的视频当成「空闲」误杀。
+	base time.Time
+
+	// lastProgressOffsetNanos 记录最近一次读到字节时距 base 的纳秒数。
+	// 存偏移量而非绝对时间戳：既能保持单调语义，又避免在热路径上分配 *time.Time。
+	lastProgressOffsetNanos atomic.Int64
+	// fired 标记 watchdog 已因空闲超时关闭了底层 body。
+	fired atomic.Bool
+
+	// stop 由 Close() 关闭，通知 watchdog 退出；stopOnce 保证 Close 可重入。
+	stopOnce sync.Once
+	stop     chan struct{}
+
+	// errIdleTimeout 是超时后统一上报的错误。文案刻意包含 "timeout"，
+	// 使 type.go 的 isTimeoutError 命中 → ClassifyRelayError 归为 ScopeNextChannel。
+	errIdleTimeout error
+}
+
+func newMediaIdleTimeoutBody(src io.ReadCloser, idleTimeout time.Duration) *mediaIdleTimeoutBody {
+	b := &mediaIdleTimeoutBody{
+		src:            src,
+		idleTimeout:    idleTimeout,
+		stop:           make(chan struct{}),
+		errIdleTimeout: fmt.Errorf("media relay: upstream response body idle timeout (no data for %s)", idleTimeout),
+	}
+	b.base = time.Now()
+	b.lastProgressOffsetNanos.Store(0)
+	go b.watch()
+	return b
+}
+
+// watch 是空闲超时 watchdog。退出路径只有两条，且都会退出：
+//  1. b.stop 被关闭 —— 由调用方的 defer response.Body.Close() 触发，覆盖正常完成、
+//     读失败、写失败、客户端断连、panic 展开（defer 在 panic 时同样执行）全部路径；
+//  2. watchdog 自己触发超时 —— 关闭底层 body 后立刻 return。
+//
+// 因此不存在 goroutine 泄漏：每个响应体至多产生一个 watchdog，且其生命周期被
+// 响应体的 Close 严格包住。
+func (b *mediaIdleTimeoutBody) watch() {
+	// 用「到期后按需重新武装的 timer」而非周期 ticker：
+	//   - 触发时刻精确落在「最后一次有进展起算 idleTimeout」那一刻，没有轮询超调
+	//     （ticker 方案最坏会晚到 idleTimeout 的 25%，让实际上限比声称的宽）；
+	//   - 唤醒次数更少：持续有进展的下载每个空闲周期至多醒一次，而 ticker
+	//     每 idleTimeout/4 就醒一次；
+	//   - 不需要在热路径（Read）上碰定时器，避免争用。
+	//
+	// 计时基于 time.Since(b.base)，而 base 保留了 time.Now() 的单调时钟读数，
+	// 因此不受系统墙钟回拨 / NTP 校时影响。
+	timer := time.NewTimer(b.idleTimeout)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-b.stop:
+			return
+		case <-timer.C:
+			// 距最后一次「真正读到字节」已经过去多久。
+			idle := time.Since(b.base) - time.Duration(b.lastProgressOffsetNanos.Load())
+			if remaining := b.idleTimeout - idle; remaining > 0 {
+				// 期间上游仍在产出：按剩余时间重新武装，继续等。
+				timer.Reset(remaining)
+				continue
+			}
+			// 先置 fired 再 Close：Read 侧据此把随后到来的
+			// "use of closed network connection" 归一成空闲超时错误。
+			b.fired.Store(true)
+			// 关闭失败也无从补救（底层连接已不可用），忽略返回值。
+			_ = b.src.Close()
+			return
+		}
+	}
+}
+
+func (b *mediaIdleTimeoutBody) Read(p []byte) (int, error) {
+	if b.fired.Load() {
+		return 0, b.errIdleTimeout
+	}
+	n, err := b.src.Read(p)
+	if n > 0 {
+		// 只有真正读到字节才算「有进展」：n==0 且 err==nil 的合法空读不重置计时，
+		// 否则上游可以用零长度读把 watchdog 永久喂住。
+		// 存的是相对 base 的偏移（单调），不存墙钟时间戳。
+		b.lastProgressOffsetNanos.Store(time.Since(b.base).Nanoseconds())
+	}
+	// 读失败与 watchdog 触发几乎同时发生（正是 watchdog 关闭 body 造成的失败）时，
+	// 统一上报为空闲超时。io.EOF 必须原样放行：那是响应正常结束，不是故障。
+	if err != nil && !errors.Is(err, io.EOF) && b.fired.Load() {
+		return n, b.errIdleTimeout
+	}
+	return n, err
+}
+
+// Close 停止 watchdog 并关闭底层 body。可安全重复调用：stopOnce 保证 stop 只关一次，
+// 而 net/http 的 bodyEOFSignal.Close / transfer.body.Close 对已关闭的 body 直接返回 nil
+// （已实测确认），所以 watchdog 先关、调用方 defer 再关不会出错也不会死锁。
+func (b *mediaIdleTimeoutBody) Close() error {
+	b.stopOnce.Do(func() { close(b.stop) })
+	return b.src.Close()
 }
 
 // handleBinaryResponse streams a binary response (e.g. audio) back to the client.

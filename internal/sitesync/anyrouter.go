@@ -809,10 +809,19 @@ func anyRouterRequestJSONWithCookies(ctx context.Context, siteRecord *model.Site
 			return nil, cookieHeader, err
 		}
 
-		bodyBytes, readErr := io.ReadAll(resp.Body)
+		// 与 http.go 的 requestJSON 同样限制读取大小：default 档共享客户端已不再设整体
+		// Client.Timeout（改用 Transport.ResponseHeaderTimeout，不覆盖 body 读取阶段），
+		// 而全量同步/签到入口走裸 ctx（无超时也无取消），故障或恶意上游发完响应头后
+		// hang 住 body 会永久占用该 goroutine 与那条连接。完整理由见 http.go 的
+		// maxSiteResponseBytes 声明处，此处不重复。
+		// 超限返回显式错误而不是静默截断：半截 JSON 会让解码失败并给出误导性信息。
+		bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, maxSiteResponseBytes+1))
 		resp.Body.Close()
 		if readErr != nil {
 			return nil, cookieHeader, readErr
+		}
+		if int64(len(bodyBytes)) > maxSiteResponseBytes {
+			return nil, cookieHeader, fmt.Errorf("anyrouter response exceeds %d bytes limit; upstream may be misbehaving", maxSiteResponseBytes)
 		}
 
 		cookieHeader = anyRouterMergeSetCookiePairs(cookieHeader, resp.Header.Values("Set-Cookie"))

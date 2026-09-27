@@ -15,6 +15,25 @@ import (
 	"github.com/lingyuins/octopus/internal/op"
 )
 
+// maxSiteResponseBytes 是站点同步 JSON 接口的单次响应体读取上限（10 MiB）。
+// 站点接口返回的是站点/渠道/令牌/分组/模型列表、登录与签到结果等结构化数据，
+// 单页最多几百条记录（见 sync_fetch.go 的 page_size=100、balance.go 的
+// logFallbackPageSize=100），10 MiB 已留出两个数量级的余量，取值对齐
+// internal/price/price.go 的 maxPriceResponseBytes。
+//
+// 必须限制的原因：故障或恶意上游可以在发完响应头之后让 body 永久 hang 或以极慢
+// 速率涓流，而 default 档共享客户端已不再设整体 Client.Timeout（改为 0=不限 +
+// Transport.ResponseHeaderTimeout），裸 ctx 入口（handlers/site.go 的全量同步 /
+// 全量签到走 safe.Go）因此既没有超时也没有取消 ⇒ 该 goroutine 与那条连接会被
+// 永久占用。读取上限把损失收敛为有限的字节数与内存。
+// 超限时报显式错误而不是静默截断：截断后的半截 JSON 会让解码失败并给出误导性
+// 的错误信息（与 price.go / transformer/body.go 的处理一致）。
+//
+// 用 var 而非 const：上限是包内私有值、生产代码从不改写，声明成 var 只为让回归
+// 测试能把上限调小后验证「超限即拒绝」这条路径，避免为了单测真的分配 10 MiB+
+// 内存（同 internal/client 的 responseHeaderTimeout 的测试注入先例）。
+var maxSiteResponseBytes int64 = 10 << 20
+
 func siteHTTPClient(ctx context.Context, siteRecord *model.Site, accounts ...*model.SiteAccount) (*http.Client, error) {
 	if siteRecord == nil {
 		return nil, fmt.Errorf("site is nil")
@@ -89,9 +108,12 @@ func requestJSON(ctx context.Context, siteRecord *model.Site, method string, req
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxSiteResponseBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if int64(len(bodyBytes)) > maxSiteResponseBytes {
+		return nil, fmt.Errorf("site response exceeds %d bytes limit; upstream may be misbehaving", maxSiteResponseBytes)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, formatSiteHTTPError(resp.StatusCode, resp.Header, bodyBytes)

@@ -428,26 +428,34 @@ func (ra *relayAttempt) attempt() attemptResult {
 	// 转发请求
 	statusCode, fwdErr := ra.forward()
 
-	// Client disconnected — do not record failure stats, circuit-breaker
-	// counts, or retry hints. The client chose to stop, not the channel.
+	// Client disconnected —— 不记失败统计、不记熔断、不写 failure hint。
+	// 客户端是自己选择停止的，不是渠道出了问题。
+	// 契约的执行机制：Decision 上的 SkipFailureAccounting 标记。
+	// attempt() 本身不调 RecordFailure（熔断与 Auto 策略由调用方统一控制，
+	// 避免 adapter 降级场景误熔断），因此这里必须把「不该计数」随 Decision
+	// 一起传出去，由 executeRelay 的 shouldRecordChannelFailure 守卫落实。
+	// 只写注释不加标记会造成契约跨函数边界失配（见回归测试
+	// relay_circuit_accounting_mem_test.go）。
 	if errors.Is(fwdErr, errClientDisconnected) {
 		span.End(dbmodel.AttemptClientClosed, statusCode, "client disconnected")
 		return attemptResult{
 			Success:  false,
 			Written:  ra.c.Writer.Written(),
 			Err:      fwdErr,
-			Decision: RetryDecision{Scope: ScopeAbortAll, Reason: "client disconnected", Code: statusCode},
+			Decision: RetryDecision{Scope: ScopeAbortAll, Reason: "client disconnected", Code: statusCode, SkipFailureAccounting: true},
 		}
 	}
 
-	// 输出结果关键词拦截 — 不重试，不记录渠道失败统计
+	// 输出结果关键词拦截 —— 不重试，也不记渠道失败统计。
+	// 内容被本站自己的过滤器拦下，不是上游渠道故障，把它计入熔断器
+	// 会让健康渠道因命中关键词而被误熔断（同 SkipFailureAccounting 语义）。
 	if errors.Is(fwdErr, errResponseFilterBlocked) {
 		span.End(dbmodel.AttemptFailed, statusCode, "response filter blocked")
 		return attemptResult{
 			Success:  false,
 			Written:  ra.c.Writer.Written(),
 			Err:      fwdErr,
-			Decision: RetryDecision{Scope: ScopeAbortAll, Reason: "response filter blocked by keyword", Code: statusCode},
+			Decision: RetryDecision{Scope: ScopeAbortAll, Reason: "response filter blocked by keyword", Code: statusCode, SkipFailureAccounting: true},
 		}
 	}
 
@@ -989,6 +997,12 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 
 	firstToken := true
 	hasVisibleContent := false // 是否已产生可见内容（issue #155 流式空输出检测）
+	// sawDoneMarker 记录是否已收到上游的 SSE 终止标记 `data: [DONE]`。
+	// 不在收到标记的当场 return：[DONE] 本身仍需要走完正常的 chunk 处理，
+	// 因为入站适配器会把它渲染成客户端协议对应的终止帧（openai: `data: [DONE]\n\n`，
+	// anthropic: message_stop 系列），直接 return 会吞掉客户端期待的流终止帧。
+	// 标记由循环顶部的 finalizeStream 在本轮写入完成后收尾。
+	sawDoneMarker := false
 	strategy := getReasoningBufferStrategy(ra.group, ra.internalRequest)
 	shouldBuffer := (strategy == "buffer") // buffer=暂存; immediate=立即发送
 	var reasoningBuffer [][]byte           // 暂存仅含 reasoning 的 chunk，待可见内容到达后 flush
@@ -1081,7 +1095,63 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		defer clientGoneTicker.Stop()
 	}
 
+	// finalizeStream 流式响应的正常收尾路径。
+	//
+	// 上游关闭（SSE reader 遇到 EOF）与上游发来 `data: [DONE]` 两种终止方式在语义上
+	// 完全等价：流已结束，可以按成功收尾。部分上游（以及部分中间代理）发完 [DONE]
+	// 后并不关闭连接，这时若继续等 EOF，会一直阻塞到客户端/中间层先超时断开，
+	// 被记成 client disconnected 并计入熔断器——把一个本来成功的响应变成失败。
+	// 因此收到 [DONE] 后主动收尾（见下方 isSSEDoneMarker 分支）。
+	//
+	// 两条路径共用本闭包（而非复制一份逻辑），保证 [DONE] 早退与 EOF 收尾逐字一致：
+	// 空输出重试（issue #106/#155）、reasoningBuffer 释放、stream session Finish
+	// 都不因终止方式不同而产生分叉。
+	finalizeStream := func() error {
+		// 需要区分正常结束（上游 EOF / [DONE]）和异常中断（ctx 取消/超时）。
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			if ra.streamSession != nil {
+				ra.streamSession.Finish(ctxErr)
+			}
+			return fmt.Errorf("stream interrupted: %w", ctxErr)
+		}
+		logClientDisconnected()
+		if ra.streamSession != nil {
+			ra.streamSession.Finish(nil)
+			log.Infof("stream end")
+			// 流结束显式释放 reasoningBuffer（虽随函数返回被 GC，但提前释放降低峰值持续时间）。
+			reasoningBuffer = nil
+			reasoningBufferBytes = 0
+			// 空输出检测（issue #106/#155）：整个流式响应没有产生任何可见内容。
+			// buffer 策略：reasoning-only chunk 被暂存到 reasoningBuffer，未写入客户端（Written()=false），
+			// 可以安全重试。immediate 策略：reasoning 已发送，不可重试（只记录日志）。
+			// 仅当启用空输出重试且使用 buffer 策略时触发重试。
+			// 收到 [DONE] 不等于有可见内容：上游完全可以只发 reasoning 就终止，
+			// 所以这里不能无条件记成功，必须继续走空输出重试判定。
+			if isRetryEmptyOutputEnabled() && shouldBuffer && !hasVisibleContent {
+				log.Infof("channel %s returned empty stream (no visible content), will retry", ra.channel.Name)
+				if ra.streamSession != nil {
+					ra.streamSession.Finish(nil)
+				}
+				return errEmptyOutput
+			}
+			if !shouldBuffer && !hasVisibleContent {
+				log.Warnf("channel %s returned empty stream (immediate strategy, no retry)", ra.channel.Name)
+			}
+			return nil
+		}
+		return nil
+	}
+
 	for {
+		// 上游已发出 [DONE] 且该标记已经过下方正常 chunk 处理写入客户端：主动收尾，
+		// 不再阻塞等 EOF。
+		// 动机：部分上游（及部分中间代理）发完 [DONE] 后并不关闭连接，继续等 EOF
+		// 会一直阻塞到客户端/中间层先超时断开，被记成 client disconnected 并计入
+		// 熔断器——把一个本来成功的响应变成失败，进而误熔断健康渠道。
+		// 与 EOF 收尾共用 finalizeStream（见其定义处注释），两条路径语义一致。
+		if sawDoneMarker {
+			return finalizeStream()
+		}
 		select {
 		case <-clientDone:
 			if ra.streamSession == nil {
@@ -1131,38 +1201,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			}
 		case r, ok := <-results:
 			if !ok {
-				// results channel 被 SSE reader goroutine 关闭。
-				// 需要区分正常结束（上游 EOF）和异常中断（ctx 取消/超时）。
-				if ctxErr := ctx.Err(); ctxErr != nil {
-					if ra.streamSession != nil {
-						ra.streamSession.Finish(ctxErr)
-					}
-					return fmt.Errorf("stream interrupted: %w", ctxErr)
-				}
-				logClientDisconnected()
-				if ra.streamSession != nil {
-					ra.streamSession.Finish(nil)
-					log.Infof("stream end")
-					// 流结束显式释放 reasoningBuffer（虽随函数返回被 GC，但提前释放降低峰值持续时间）。
-					reasoningBuffer = nil
-					reasoningBufferBytes = 0
-					// 空输出检测（issue #106/#155）：整个流式响应没有产生任何可见内容。
-					// buffer 策略：reasoning-only chunk 被暂存到 reasoningBuffer，未写入客户端（Written()=false），
-					// 可以安全重试。immediate 策略：reasoning 已发送，不可重试（只记录日志）。
-					// 仅当启用空输出重试且使用 buffer 策略时触发重试。
-					if isRetryEmptyOutputEnabled() && shouldBuffer && !hasVisibleContent {
-						log.Infof("channel %s returned empty stream (no visible content), will retry", ra.channel.Name)
-						if ra.streamSession != nil {
-							ra.streamSession.Finish(nil)
-						}
-						return errEmptyOutput
-					}
-					if !shouldBuffer && !hasVisibleContent {
-						log.Warnf("channel %s returned empty stream (immediate strategy, no retry)", ra.channel.Name)
-					}
-					return nil
-				}
-				return nil
+				// results channel 被 SSE reader goroutine 关闭（上游 EOF / 连接关闭）。
+				// 收尾逻辑与下方 [DONE] 早退共用 finalizeStream，保证两者语义一致。
+				return finalizeStream()
 			}
 			if r.err != nil {
 				logClientDisconnected()
@@ -1198,9 +1239,23 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 					if closeErr := response.Body.Close(); closeErr != nil {
 						log.Warnf("failed to close response body on response filter block: %v", closeErr)
 					}
-					return fmt.Errorf("response filter blocked streaming output")
+					// 用 %w 包裹哨兵错误：裸 fmt.Errorf 会在这里丢失 errResponseFilterBlocked，
+					// 使 attempt() 里的 errors.Is(fwdErr, errResponseFilterBlocked) 分支成为
+					// 不可达死码，拦截失败退化成普通 transformer 错误 → 记熔断 + 换渠道重试。
+					return fmt.Errorf("response filter blocked streaming output: %w", errResponseFilterBlocked)
 				}
 				continue
+			}
+			// 上游流终止标记：记下但不在这里 return。[DONE] 仍要走完下方正常的
+			// chunk 写入（buffer flush / stream session AddPayload / Write+Flush），
+			// 因为入站适配器会把它渲染成客户端协议对应的终止帧（openai 渲染
+			// `data: [DONE]\n\n`，anthropic 渲染为 nil 由其自身的 message_stop 收尾）；
+			// 当场 return 会吞掉客户端期待的终止帧。收尾由下一轮循环顶部的
+			// sawDoneMarker 分支调 finalizeStream 完成。
+			// 故意放在 transformStreamData 的错误处理之后：[DONE] chunk 上的真实
+			// 转换错误仍应优先返回，不该被终止标记掩盖。
+			if isSSEDoneMarker(r.data) {
+				sawDoneMarker = true
 			}
 			if len(data) == 0 {
 				continue
@@ -1778,24 +1833,61 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 
 				// 号池模式：上报失败 + 释放槽位 + 设置冷却。
 				if poolAccount != nil {
+					// ReportResult 故意保持无条件调用（即使 SkipFailureAccounting）。
+					// 取舍：客户端断连确实会给账号 EWMA errorRate 记一笔失败（轻污染），
+					// 但 ReportResult 同时是 globalPoolStats 条目与 lastActivity 的
+					// 唯一创建点（scheduler.go 的 LoadOrStore），跳过它会让 PurgeStale
+					// 出现结构性盲区——PurgeStale Range 的是 globalPoolStats 而非
+					// globalPoolSlots，账号若从无 stats 条目（首次请求即断连）就永远
+					// 遍历不到，进程内并发槽位永久假死。默认 EffectiveConcurrency
+					// 为 1，单次泄漏即完全饱和，远比 EWMA 轻污染严重。
+					// poolscheduler 目前也没有「只刷新 lastActivity 不记失败」的导出
+					// 函数可替代（待后续 PR 补 TouchActivity 后再改成条件调用）。
 					poolscheduler.ReportResult(channel.PoolID, poolAccount.ID, false, 0, 0)
+					// ReleaseSlot 必须无条件执行：漏掉即号池并发槽位泄漏。
+					// 下方的 client disconnected 早退绝不能前移到这一行之前。
+					// 回归守卫：relay_circuit_accounting_mem_test.go。
 					poolscheduler.ReleaseSlot(channel.PoolID, poolAccount.ID)
-					if result.Decision.Code == http.StatusTooManyRequests {
+					// 限流/过载冷却只对真实上游信号生效：客户端断连、内容拦截
+					// 的 Code 不是渠道侧限流证据，不该把账号打入冷却。
+					if result.Decision.Code == http.StatusTooManyRequests && !result.Decision.SkipFailureAccounting {
 						poolscheduler.SetRateLimitCooldown(channel.PoolID, poolAccount.ID, time.Now().Add(5*time.Minute))
-					} else if result.Decision.Code >= 500 {
+					} else if result.Decision.Code >= 500 && !result.Decision.SkipFailureAccounting {
 						poolscheduler.SetOverload(channel.PoolID, poolAccount.ID, time.Now().Add(60*time.Second))
 					}
 					// P0 调度健壮性：OpenAI 403 阈值禁用 / OAuth 401 临时禁用（对齐 sub2api ratelimit_service）。
-					handlePoolAuthError(poolAccount, poolCredType, result.Decision.Code)
+					// 客户端主动停止 / 内容拦截不是鉴权失败，显式排除，避免把健康账号
+					// 打成 IncrementAuthError + 临时禁用甚至账号级 SetError。
+					if !result.Decision.SkipFailureAccounting {
+						handlePoolAuthError(poolAccount, poolCredType, result.Decision.Code)
+					}
 				}
 
 				// 熔断器和 Auto 策略：在所有 adapter 类型（如 Responses→Chat）均失败后才记录，
 				// 避免 Response adapter 降级到 Chat 的过程中误触发熔断。
-				if channel.PoolID == 0 && (result.Decision.Scope == ScopeNextChannel || result.Decision.Scope == ScopeAbortAll) {
+				// 守卫统一交给 shouldRecordChannelFailure（type.go），它同时负责：
+				//   1. 号池渠道（PoolID != 0）不进渠道级熔断（走 poolscheduler 反馈）；
+				//   2. SkipFailureAccounting（客户端断连、关键词拦截）不是渠道故障。
+				// 历史上这里只看 Scope，而断连分支恰好产出 ScopeAbortAll，导致每次
+				// 转发中途的客户端断连都给 (channelID, keyID, model) 熔断器 +1，
+				// 阈值默认 5 次后健康渠道被误熔断，再叠加 HalfOpen 试探被断连打断
+				// → TripCount++ 冷却翻倍至上限 → Auto 策略 score=-Inf 降权，
+				// 最终表现为「所有 key 不可用」。
+				if shouldRecordChannelFailure(channel.PoolID, result.Decision) {
 					balancer.RecordFailure(channel.ID, usedKey.ID, resolvedModelName)
 					balancer.RecordAutoFailure(channel.ID, resolvedModelName)
 				}
 
+				// Client disconnected —— 立即停止所有重试，不写 failure hint、
+				// 不再尝试其他渠道。熔断/Auto 计数已由上方 SkipFailureAccounting
+				// 守卫排除；本块只负责结束请求并落盘 metrics。
+				// 注意：本块必须留在号池失败块之后，前移会跳过
+				// poolscheduler.ReleaseSlot，造成号池并发槽位泄漏。
+				// 回归守卫：relay_circuit_accounting_mem_test.go。
+				if errors.Is(result.Err, errClientDisconnected) {
+					req.metrics.Save(false, result.Err, currentAttempts)
+					return nil, result.Err
+				}
 				// hold 路径：本轮 429 会立刻再试同一渠道，不写 failure hint / 不记 failedKey，
 				// 并清掉 attempt() 里刚写入的 key 冷却，避免间隔到期后仍被挡住。
 				holdingRateLimit := shouldHoldOnRateLimit(rateLimitHoldCfg, result.Decision) &&

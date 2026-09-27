@@ -9,11 +9,19 @@ import (
 
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/utils/apikeyhash"
+	"github.com/lingyuins/octopus/internal/utils/crypto"
+	"github.com/lingyuins/octopus/internal/utils/log"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-const dbDumpVersion = 1
+// dbDumpVersion 是 DBDump 的格式版本。
+// v2 起（issue #247）：敏感字段（api_keys.api_key、channel_keys.channel_key 等，
+// 处理清单见 decryptDumpSecrets / encryptDumpSecrets）导出为**明文**，
+// 导入侧按目标实例的 crypto key 幂等重加密。
+// v1 的 dump 中这些字段是源实例的 enc: 密文，跨实例导入后无法解密不可用。
+const dbDumpVersion = 2
 const maxRelayLogsExport = 500_000
 const maxAuditLogsExport = 500_000
 const batchInsertSize = 1000 // 分批插入：每批最多 1000 行（避免 SQLite 参数限制）
@@ -172,6 +180,10 @@ func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDu
 	if err := conn.Find(&d.SiteChannelBindings).Error; err != nil {
 		return nil, fmt.Errorf("export site_channel_bindings: %w", err)
 	}
+
+	// 敏感字段在库中以 enc: 密文存储；导出前解密为明文，使备份文件
+	// 跨实例可移植（导入侧会用目标实例的 key 重加密，见 encryptDumpSecrets）。
+	decryptDumpSecrets(d)
 
 	return d, nil
 }
@@ -334,6 +346,10 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 	if target == nil {
 		return nil, fmt.Errorf("target database is nil")
 	}
+	// 敏感字段幂等加密：明文（v2 dump）→ 用本实例 key 加密；已带 enc: 前缀的
+	// （v1 dump 同实例恢复）或空值原样保留，避免双重加密。
+	// api_keys 明文的 api_key_hash 一并补算（sha256 hex）。
+	encryptDumpSecrets(dump)
 	isFull := mode == model.ImportModeFull
 	res := &model.DBImportResult{RowsAffected: map[string]int64{}}
 	cfg := &importConfig{conn: target.WithContext(ctx), res: res, isFull: isFull, version: dump.Version}
@@ -656,4 +672,105 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 // ImportIncremental is the backward-compatible wrapper.
 func ImportIncremental(ctx context.Context, dump *model.DBDump) (*model.DBImportResult, error) {
 	return ImportWithMode(ctx, dump, model.ImportModeIncremental)
+}
+
+// decryptDumpSecrets 在导出路径上把库内 enc: 密文的敏感字段解密为明文（issue #247）。
+// 解密失败（密钥不匹配、payload 损坏等）时保留原值并告警，不阻断导出；
+// 非密文（存量明文、旧哈希、空值）原样保留。
+func decryptDumpSecrets(d *model.DBDump) {
+	decryptValue := func(name string, v string) string {
+		if !crypto.IsEncrypted(v) {
+			return v
+		}
+		plain, err := crypto.Decrypt(v)
+		if err != nil {
+			log.Warnf("backup export: decrypt %s failed (%v), keeping original value", name, err)
+			return v
+		}
+		return plain
+	}
+
+	for i := range d.APIKeys {
+		d.APIKeys[i].APIKey = decryptValue("api_keys.api_key", d.APIKeys[i].APIKey)
+	}
+	for i := range d.ChannelKeys {
+		d.ChannelKeys[i].ChannelKey = decryptValue("channel_keys.channel_key", d.ChannelKeys[i].ChannelKey)
+	}
+	for i := range d.APICredentialProfiles {
+		d.APICredentialProfiles[i].APIKey = decryptValue("api_credential_profiles.api_key", d.APICredentialProfiles[i].APIKey)
+	}
+	for i := range d.RemoteSites {
+		d.RemoteSites[i].AccessToken = decryptValue("remote_sites.access_token", d.RemoteSites[i].AccessToken)
+		d.RemoteSites[i].Password = decryptValue("remote_sites.password", d.RemoteSites[i].Password)
+	}
+	for i := range d.RemoteSiteTokens {
+		d.RemoteSiteTokens[i].Key = decryptValue("remote_site_tokens.key", d.RemoteSiteTokens[i].Key)
+	}
+	for i := range d.SiteAccounts {
+		d.SiteAccounts[i].Password = decryptValue("site_accounts.password", d.SiteAccounts[i].Password)
+		d.SiteAccounts[i].AccessToken = decryptValue("site_accounts.access_token", d.SiteAccounts[i].AccessToken)
+		d.SiteAccounts[i].APIKey = decryptValue("site_accounts.api_key", d.SiteAccounts[i].APIKey)
+		d.SiteAccounts[i].RefreshToken = decryptValue("site_accounts.refresh_token", d.SiteAccounts[i].RefreshToken)
+	}
+	for i := range d.SiteTokens {
+		d.SiteTokens[i].Token = decryptValue("site_tokens.token", d.SiteTokens[i].Token)
+	}
+}
+
+// encryptDumpSecrets 在导入路径上对 dump 中的敏感字段做幂等加密（issue #247）。
+// 幂等规则：空值或已带 enc: 前缀的值原样保留；其余视为明文并用本实例 key 加密。
+// 加密失败（如 ErrNoKey，进程未配置 encryption key）时保留明文并告警——
+// 正常运行路径下启动硬守卫会拒绝无 key 启动，此处仅兜底。
+//
+// api_keys 特例：每条明文（非空、非 enc:）key 同时补算 api_key_hash（SHA-256 hex
+// 小写，与 op/apikey.HashAPIKey 共用 utils/apikeyhash 实现），保证导入后的 key
+// 能被 GetByKey 的确定性哈希列命中；密文行不动（v1 旧 dump 行自带原 hash）。
+func encryptDumpSecrets(d *model.DBDump) {
+	encryptValue := func(name string, v string) string {
+		if v == "" || crypto.IsEncrypted(v) {
+			return v
+		}
+		enc, err := crypto.Encrypt(v)
+		if err != nil {
+			log.Warnf("backup import: encrypt %s failed (%v), storing plaintext", name, err)
+			return v
+		}
+		return enc
+	}
+
+	for i := range d.APIKeys {
+		r := &d.APIKeys[i]
+		if r.APIKey != "" && !crypto.IsEncrypted(r.APIKey) {
+			r.APIKeyHash = apikeyhash.Sum(r.APIKey)
+		}
+		r.APIKey = encryptValue("api_keys.api_key", r.APIKey)
+	}
+	for i := range d.ChannelKeys {
+		r := &d.ChannelKeys[i]
+		r.ChannelKey = encryptValue("channel_keys.channel_key", r.ChannelKey)
+	}
+	for i := range d.APICredentialProfiles {
+		r := &d.APICredentialProfiles[i]
+		r.APIKey = encryptValue("api_credential_profiles.api_key", r.APIKey)
+	}
+	for i := range d.RemoteSites {
+		r := &d.RemoteSites[i]
+		r.AccessToken = encryptValue("remote_sites.access_token", r.AccessToken)
+		r.Password = encryptValue("remote_sites.password", r.Password)
+	}
+	for i := range d.RemoteSiteTokens {
+		r := &d.RemoteSiteTokens[i]
+		r.Key = encryptValue("remote_site_tokens.key", r.Key)
+	}
+	for i := range d.SiteAccounts {
+		r := &d.SiteAccounts[i]
+		r.Password = encryptValue("site_accounts.password", r.Password)
+		r.AccessToken = encryptValue("site_accounts.access_token", r.AccessToken)
+		r.APIKey = encryptValue("site_accounts.api_key", r.APIKey)
+		r.RefreshToken = encryptValue("site_accounts.refresh_token", r.RefreshToken)
+	}
+	for i := range d.SiteTokens {
+		r := &d.SiteTokens[i]
+		r.Token = encryptValue("site_tokens.token", r.Token)
+	}
 }

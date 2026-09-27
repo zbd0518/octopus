@@ -89,8 +89,15 @@ func TestAccount(poolID, accountID int, modelName string) (*AccountTestResult, e
 	// HTTP client（含账号级代理）。
 	client := &http.Client{Timeout: testTimeout}
 	if pc, perr := helper.PoolAccountHttpClient(acct.ProxyConfigID); perr == nil && pc != nil {
-		client = pc
-		client.Timeout = testTimeout
+		// pc 是 client 包按 (bucket, proxyURL) 缓存的共享单例：直接写 pc.Timeout 会永久
+		// 污染转发链路（relay 的 sendRequest 用同一指针），导致该代理的流式请求在
+		// testTimeout 处被砍断，且不自愈（直到进程重启）。
+		// 浅拷贝 http.Client 即可独立设置超时：http.Client 只有 Transport/CheckRedirect/
+		// Jar/Timeout 四个字段、无 mutex 无内部状态，Transport 指针共享因此连接池照常复用。
+		// 先例见 internal/op/airoute/route.go 的 cloned := *baseClient 写法。
+		cloned := *pc
+		cloned.Timeout = testTimeout
+		client = &cloned
 	}
 
 	start := time.Now()
