@@ -62,7 +62,7 @@ type opsProviderPromptCacheAggregate struct {
 	EstimatedCostSaved float64
 }
 
-func OpsCacheStatusGet(ctx context.Context) (*model.OpsCacheStatus, error) {
+func OpsCacheStatusGet(ctx context.Context, r model.AnalyticsRange) (*model.OpsCacheStatus, error) {
 	enabled, err := setting.GetBool(model.SettingKeySemanticCacheEnabled)
 	if err != nil {
 		return nil, err
@@ -82,7 +82,7 @@ func OpsCacheStatusGet(ctx context.Context) (*model.OpsCacheStatus, error) {
 
 	hits, misses, size := semantic_cache.Stats()
 	status := buildOpsCacheStatus(enabled, semantic_cache.RuntimeEnabled(), ttlSeconds, threshold, maxEntries, hits, misses, size)
-	status.ProviderPromptCache = buildOpsProviderPromptCacheSummary(ctx)
+	status.ProviderPromptCache = buildOpsProviderPromptCacheSummary(ctx, r)
 	return &status, nil
 }
 
@@ -110,7 +110,7 @@ func OpsQuotaSummaryGet(ctx context.Context) (*model.OpsQuotaSummary, error) {
 }
 
 func OpsHealthStatusGet(ctx context.Context) (*model.OpsHealthStatus, error) {
-	cacheStatus, err := OpsCacheStatusGet(ctx)
+	cacheStatus, err := OpsCacheStatusGet(ctx, model.AnalyticsRange1D)
 	if err != nil {
 		return nil, err
 	}
@@ -271,33 +271,78 @@ func buildOpsCacheStatus(
 // providerPromptCacheResult caches the expensive provider prompt cache summary
 // which loads relay logs including response_content. It is called from multiple
 // ops endpoints (cache, health, telemetry), so a short TTL avoids redundant DB queries.
+// 结果按 range 分别缓存，避免不同周期互相污染（issue: 缓存页签 7d/30d 只看当天）。
+type providerPromptCacheEntry struct {
+	result model.OpsProviderPromptCacheSummary
+	exp    time.Time
+}
+
 var (
 	providerPromptCacheMu     sync.RWMutex
-	providerPromptCacheResult model.OpsProviderPromptCacheSummary
-	providerPromptCacheExp    time.Time
+	providerPromptCacheResult map[model.AnalyticsRange]providerPromptCacheEntry
 )
 
 const providerPromptCacheTTL = 60 * time.Second
 
-func buildOpsProviderPromptCacheSummary(ctx context.Context) model.OpsProviderPromptCacheSummary {
+func buildOpsProviderPromptCacheSummary(ctx context.Context, r model.AnalyticsRange) model.OpsProviderPromptCacheSummary {
 	providerPromptCacheMu.RLock()
-	if time.Now().Before(providerPromptCacheExp) {
-		cached := providerPromptCacheResult
+	if entry, ok := providerPromptCacheResult[r]; ok && time.Now().Before(entry.exp) {
 		providerPromptCacheMu.RUnlock()
-		return cached
+		return entry.result
 	}
 	providerPromptCacheMu.RUnlock()
 
-	start := opsHourlyWindowStart(time.Now(), stats.StatsLocation())
+	start, bucketHours, bucketCount := opsRangeWindow(time.Now(), stats.StatsLocation(), r)
 	logs := loadOpsProviderPromptCacheLogs(ctx, start)
-	result := buildOpsProviderPromptCacheSummaryFromLogs(logs, start)
+	result := buildOpsProviderPromptCacheSummaryFromLogs(logs, start, bucketHours, bucketCount)
 
 	providerPromptCacheMu.Lock()
-	providerPromptCacheResult = result
-	providerPromptCacheExp = time.Now().Add(providerPromptCacheTTL)
+	if providerPromptCacheResult == nil {
+		providerPromptCacheResult = make(map[model.AnalyticsRange]providerPromptCacheEntry)
+	}
+	providerPromptCacheResult[r] = providerPromptCacheEntry{
+		result: result,
+		exp:    time.Now().Add(providerPromptCacheTTL),
+	}
 	providerPromptCacheMu.Unlock()
 
 	return result
+}
+
+// opsRangeWindow 按统计时区计算统计窗口起点、桶宽（小时）与桶数。
+// loc 为统计时区，窗口按 loc 对齐后转回 UTC 用于 DB 时间过滤（与 opsHourlyWindowStart 一致）。
+//
+//	1d      → 过去 24 小时，小时桶 ×24（与历史行为一致）
+//	7d/30d/90d/ytd → 按天桶，从当天 0 点回溯 N 天（含今天）
+//	all     → 按天桶，上限 366 天（避免趋势图过大的点阵）
+func opsRangeWindow(now time.Time, loc *time.Location, r model.AnalyticsRange) (start time.Time, bucketHours int, bucketCount int) {
+	localNow := now.In(loc)
+	dayStart := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc)
+
+	switch r {
+	case model.AnalyticsRange1D:
+		hourStart := localNow.Add(-23 * time.Hour).Truncate(time.Hour)
+		return hourStart.In(time.UTC), 1, 24
+	case model.AnalyticsRange7D:
+		return dayStart.AddDate(0, 0, -6).In(time.UTC), 24, 7
+	case model.AnalyticsRange30D:
+		return dayStart.AddDate(0, 0, -29).In(time.UTC), 24, 30
+	case model.AnalyticsRange90D:
+		return dayStart.AddDate(0, 0, -89).In(time.UTC), 24, 90
+	case model.AnalyticsRangeYTD:
+		yearStart := time.Date(localNow.Year(), time.January, 1, 0, 0, 0, 0, loc)
+		dayCount := int(localNow.Sub(yearStart).Hours()/24) + 1
+		if dayCount < 1 {
+			dayCount = 1
+		}
+		return yearStart.In(time.UTC), 24, dayCount
+	case model.AnalyticsRangeAll:
+		return dayStart.AddDate(0, 0, -365).In(time.UTC), 24, 366
+	default:
+		// 未识别周期回退 1d 语义
+		hourStart := localNow.Add(-23 * time.Hour).Truncate(time.Hour)
+		return hourStart.In(time.UTC), 1, 24
+	}
 }
 
 // opsHourlyWindowStart 计算过去 24 小时（按整点对齐）的窗口起点，返回 UTC 时间。
@@ -311,9 +356,9 @@ func opsHourlyWindowStart(now time.Time, loc *time.Location) time.Time {
 func buildOpsProviderPromptCacheSummaryFromLogs(
 	logs []model.RelayLog,
 	start time.Time,
+	bucketHours int,
+	bucketCount int,
 ) model.OpsProviderPromptCacheSummary {
-	const bucketCount = 24
-
 	summary := model.OpsProviderPromptCacheSummary{
 		Providers: []model.OpsProviderPromptCacheProviderItem{},
 		Trend:     make([]model.OpsProviderPromptCacheTrendPoint, bucketCount),
@@ -321,7 +366,7 @@ func buildOpsProviderPromptCacheSummaryFromLogs(
 
 	for i := 0; i < bucketCount; i++ {
 		summary.Trend[i] = model.OpsProviderPromptCacheTrendPoint{
-			Timestamp: start.Add(time.Duration(i) * time.Hour).Unix(),
+			Timestamp: start.Add(time.Duration(i*bucketHours) * time.Hour).Unix(),
 		}
 	}
 
@@ -358,7 +403,7 @@ func buildOpsProviderPromptCacheSummaryFromLogs(
 		aggregate.EstimatedCostSaved += estimateOpsProviderPromptCacheSaved(relayLog.ActualModelName, usage)
 		providers[relayLog.ChannelId] = aggregate
 
-		bucketIndex := int((time.Unix(relayLog.Time, 0).Sub(start)) / time.Hour)
+		bucketIndex := int((time.Unix(relayLog.Time, 0).Sub(start)) / (time.Duration(bucketHours) * time.Hour))
 		if bucketIndex >= 0 && bucketIndex < bucketCount {
 			summary.Trend[bucketIndex].RequestCount++
 			if isCached {
@@ -1321,7 +1366,7 @@ func TelemetrySummaryGet(ctx context.Context) (*model.OpsTelemetrySummary, error
 	}
 
 	// ── PromptCache ──
-	cacheStatus, err := OpsCacheStatusGet(ctx)
+	cacheStatus, err := OpsCacheStatusGet(ctx, model.AnalyticsRange1D)
 	if err == nil {
 		summary.PromptCache = model.OpsTelemetryPromptCache{
 			Entries:    cacheStatus.CurrentEntries,

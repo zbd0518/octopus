@@ -8,8 +8,8 @@ import (
 )
 
 // Deprecated: Use ops.OpsCacheStatusGet from internal/op/ops instead.
-func OpsCacheStatusGet(ctx context.Context) (*model.OpsCacheStatus, error) {
-	return ops.OpsCacheStatusGet(ctx)
+func OpsCacheStatusGet(ctx context.Context, r model.AnalyticsRange) (*model.OpsCacheStatus, error) {
+	return ops.OpsCacheStatusGet(ctx, r)
 }
 
 // Deprecated: Use ops.RefreshSemanticCacheRuntime from internal/op/ops instead.

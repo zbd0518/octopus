@@ -11,6 +11,7 @@ import (
 	stg "github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/relay/privacy"
 	"github.com/lingyuins/octopus/internal/transformer/model"
+	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
 var errPrivacyBlocked = errors.New("privacy protection blocked the request")
@@ -18,12 +19,16 @@ var errPrivacyBlocked = errors.New("privacy protection blocked the request")
 // privacyFilterConfig 请求侧隐私保护配置（每次中继请求加载一次并缓存）。
 type privacyFilterConfig struct {
 	Enabled  bool
+	LogHits  bool // 是否打印命中明细调试日志（block/filter/还原），调试用
 	Matchers []privacy.Matcher
 }
 
 // loadPrivacyFilterConfig 读取隐私保护设置并构建检测器列表。
 func loadPrivacyFilterConfig() privacyFilterConfig {
 	cfg := privacyFilterConfig{}
+
+	logEnabled, _ := stg.GetBool(appmodel.SettingKeyPrivacyProtectionLogEnabled)
+	cfg.LogHits = logEnabled
 
 	enabled, _ := stg.GetBool(appmodel.SettingKeyPrivacyProtectionEnabled)
 	if !enabled {
@@ -59,6 +64,7 @@ type privacyPlaceholderMap struct {
 	forward   map[string]string // 原文 → 占位符
 	reverse   map[string]string // 占位符 → 原文
 	nextIndex int
+	logHits   bool // 是否打印命中明细调试日志（随配置传入）
 }
 
 func newPrivacyPlaceholderMap() *privacyPlaceholderMap {
@@ -85,15 +91,29 @@ func (pm *privacyPlaceholderMap) mask(original string) string {
 }
 
 // restore 把文本中的占位符还原成原文；无映射时原样返回。
+// 日志开关打开时，每次实际还原都会打调试日志（占位符 → 原文）。
 func (pm *privacyPlaceholderMap) restore(text string) string {
 	if text == "" || !strings.Contains(text, privacyPlaceholderPrefix) {
 		return text
 	}
+	// 持锁期间只做替换并收集命中，日志放到解锁后写，避免 I/O 阻塞其它请求。
+	type restored struct{ placeholder, original string }
+	var restoredPairs []restored
+
 	pm.mu.Lock()
-	defer pm.mu.Unlock()
 	result := text
 	for ph, original := range pm.reverse {
-		result = strings.ReplaceAll(result, ph, original)
+		if strings.Contains(result, ph) {
+			restoredPairs = append(restoredPairs, restored{ph, original})
+			result = strings.ReplaceAll(result, ph, original)
+		}
+	}
+	pm.mu.Unlock()
+
+	if pm.logHits {
+		for _, pair := range restoredPairs {
+			log.Infof("[隐私保护] 响应还原: %q → %q", pair.placeholder, pair.original)
+		}
 	}
 	return result
 }
@@ -179,6 +199,14 @@ func applyPrivacyProtection(req *model.InternalLLMRequest, cfg privacyFilterConf
 		}
 		for _, hit := range privacy.Run(*p, cfg.Matchers) {
 			if pcfg.CategoryAction(hit.Category) == appmodel.PrivacyActionBlock {
+				// 调试日志（受隐私保护日志开关控制）：打印命中的类别与内容片段
+				if cfg.LogHits {
+					values := make([]string, 0, len(hit.Matches))
+					for _, m := range hit.Matches {
+						values = append(values, m.Value)
+					}
+					log.Infof("[隐私保护] block 命中: category=%s matches=%q", hit.Category, values)
+				}
 				return true, string(hit.Category)
 			}
 		}
@@ -199,7 +227,11 @@ func applyPrivacyProtection(req *model.InternalLLMRequest, cfg privacyFilterConf
 				if m.Value == "" {
 					continue
 				}
-				text = strings.ReplaceAll(text, m.Value, pm.mask(m.Value))
+				placeholder := pm.mask(m.Value)
+				if cfg.LogHits {
+					log.Infof("[隐私保护] filter 命中并脱敏: category=%s %q → %q", hit.Category, m.Value, placeholder)
+				}
+				text = strings.ReplaceAll(text, m.Value, placeholder)
 				changed = true
 			}
 			if changed {

@@ -35,6 +35,11 @@ func TestParseImportedAccountsPreservesSub2APIOpenAIAccountID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseImportedAccounts() error = %v", err)
 	}
+	// TestMain 已 crypto.Init，凭据落盘为密文；解析前必须先解密
+	// （同 internal/server/handlers/pool_oauth_dedupe_test.go 的做法）。
+	if err := DecryptAccountCredentials(&accounts[0]); err != nil {
+		t.Fatalf("DecryptAccountCredentials() error = %v", err)
+	}
 	cred := model.ParsePoolCredential(accounts[0].Credentials)
 	if cred.AccountID != "chatgpt-acct-1" {
 		t.Fatalf("AccountID = %q, want chatgpt-acct-1", cred.AccountID)

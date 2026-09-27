@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { apiClient } from '../client';
+import type { AnalyticsRange } from './analytics';
 import { REFETCH_INTERVAL_CONFIG } from '../constants';
 
 export interface OpsCacheStatus {
@@ -176,10 +177,10 @@ const auditLogsInfiniteQueryKey = (pageSize: number) => ['audit', 'infinite', pa
 
 export const DEFAULT_AUDIT_PAGE_SIZE = 12;
 
-export function useOpsCacheStatus() {
+export function useOpsCacheStatus(range: AnalyticsRange = '7d') {
     return useQuery({
-        queryKey: ['ops', 'cache'],
-        queryFn: async () => apiClient.get<OpsCacheStatus>('/api/v1/ops/cache'),
+        queryKey: ['ops', 'cache', range],
+        queryFn: async () => apiClient.get<OpsCacheStatus>('/api/v1/ops/cache', { range }),
         select: (data): OpsCacheStatus => ({
             ...data,
             provider_prompt_cache: {

@@ -82,12 +82,15 @@ type PrivacyProtectionConfig struct {
 	Rules      []PrivacyRule                             `json:"rules,omitempty"`
 }
 
-// CategoryEnabled 类别开关，未配置默认开启（总开关关闭时整体不生效）
+// CategoryEnabled 类别开关（总开关关闭时整体不生效）。
+// 未配置时默认开启，唯独 entropy（高熵随机串）默认关闭：
+// 熵检测本质是启发式，对文件路径 / 包名 / 分支名等人类可读标识符误报率高
+// （如 /e/workspace/idea/kotlin_demo），用户显式开启后才参与检测。
 func (c *PrivacyProtectionConfig) CategoryEnabled(cat PrivacyCategory) bool {
 	if cfg, ok := c.Categories[cat]; ok {
 		return cfg.IsEnabled()
 	}
-	return true
+	return cat != PrivacyCategoryEntropy
 }
 
 // CategoryAction 类别动作，未配置默认 filter（脱敏比拦截温和，作为缺省）

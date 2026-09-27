@@ -38,7 +38,11 @@ func init() {
 }
 
 func getOpsCache(c *gin.Context) {
-	data, err := ops.OpsCacheStatusGet(c.Request.Context())
+	r, ok := parseAnalyticsRange(c)
+	if !ok {
+		return
+	}
+	data, err := ops.OpsCacheStatusGet(c.Request.Context(), r)
 	if err != nil {
 		resp.InternalError(c)
 		return

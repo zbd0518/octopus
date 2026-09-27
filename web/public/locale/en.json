@@ -1490,6 +1490,10 @@
       "enabled": {
         "label": "Enable privacy protection"
       },
+      "logEnabled": {
+        "label": "Hit log",
+        "hint": "Print every block/filter/restore hit with its content to the server log, for debugging only. Off by default: high request volume produces lots of log lines."
+      },
       "categories": {
         "label": "Detectors & policies",
         "hint": "All detectors are enabled with \"Block request\" by default. Each can be switched to \"Auto filter\" or turned off.",
@@ -1519,7 +1523,7 @@
         },
         "entropy": {
           "label": "High-entropy strings",
-          "description": "Random-looking strings with no fixed format that statistically resemble secrets"
+          "description": "Random-looking strings with no fixed format that statistically resemble secrets (experimental: prone to false positives, off by default)"
         },
         "custom": {
           "label": "Custom sensitive terms",

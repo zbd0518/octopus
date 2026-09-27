@@ -3,12 +3,13 @@
 import { useState, useMemo, useCallback } from 'react';
 import { Activity, Coins, Database, Gauge, HardDrive, Layers3, SlidersHorizontal } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import type { AnalyticsRange } from '@/api/endpoints/analytics';
 import type { OpsCacheStatus, OpsProviderPromptCacheProviderItem, OpsProviderPromptCacheSummary } from '@/api/endpoints/ops';
 import { useOpsCacheStatus } from '@/api/endpoints/ops';
 import { useNavStore } from '@/components/modules/navbar';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { MetricCard, QueryState, StatusBadge, formatPercent, formatUnixTime } from '@/components/modules/analytics/shared';
+import { MetricCard, QueryState, StatusBadge, formatPercent, formatUnixTime, formatUnixDay } from '@/components/modules/analytics/shared';
 import { formatProviderPromptCacheCount, getProviderPromptCacheTrendTokens } from './cache-format';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
@@ -165,9 +166,10 @@ function ProviderPromptCacheRow({
     );
 }
 
-function formatChartData(trend: Array<{ timestamp: number; cache_read_tokens?: number; cache_write_tokens?: number; request_count?: number }>) {
+function formatChartData(trend: Array<{ timestamp: number; cache_read_tokens?: number; cache_write_tokens?: number; request_count?: number }>, daily: boolean) {
     return trend.map((point) => ({
-        time: formatUnixTime(point.timestamp),
+        // 天桶只显示 月/日，小时桶保留 HH:mm（formatUnixTime 已有月/日/HH:mm，天桶再裁掉时间部分）
+        time: daily ? formatUnixDay(point.timestamp) : formatUnixTime(point.timestamp),
         cache_read_tokens: point.cache_read_tokens ?? 0,
         cache_write_tokens: point.cache_write_tokens ?? 0,
         request_count: point.request_count ?? 0,
@@ -203,17 +205,21 @@ function TrendTooltipValue({ value, name, t }: { value: number; name: string; t:
 function ProviderPromptCacheView({
     data,
     t,
+    range,
 }: {
     data: OpsProviderPromptCacheSummary;
     t: CacheTranslations;
+    range: AnalyticsRange;
 }) {
     const trend = data.trend ?? [];
+    // 1d 为小时桶（显示 HH:mm），多日周期为天桶（只显示 月/日）
+    const isDailyBucket = range !== '1d';
     const readTokens = formatProviderPromptCacheCount(data.cache_read_tokens);
     const writeTokens = formatProviderPromptCacheCount(data.cache_write_tokens);
     const hasTrendActivity = trend.some((item) => item.request_count > 0 || item.cache_read_tokens > 0 || item.cache_write_tokens > 0);
     const missingUsageHint = `${t('cache.providerPrompt.providers.empty')} (${data.parsed_log_count}/${data.sampled_log_count})`;
 
-    const chartData = useMemo(() => formatChartData(trend), [trend]);
+    const chartData = useMemo(() => formatChartData(trend, isDailyBucket), [trend, isDailyBucket]);
     const chartConfig = useMemo(() => buildChartConfig(t), [t]);
 
     return (
@@ -375,10 +381,10 @@ function ProviderPromptCacheView({
     );
 }
 
-export function Cache() {
+export function Cache({ range = '7d' }: { range?: AnalyticsRange }) {
     const t = useTranslations('ops');
     const { setActiveItem } = useNavStore();
-    const { data, isLoading, error } = useOpsCacheStatus();
+    const { data, isLoading, error } = useOpsCacheStatus(range);
     const [view, setView] = useState<CacheView>('providerPrompt');
 
     return (
@@ -418,7 +424,7 @@ export function Cache() {
                     view === 'semantic' ? (
                         <SemanticCacheView data={data} t={t} />
                     ) : (
-                        <ProviderPromptCacheView data={data.provider_prompt_cache} t={t} />
+                        <ProviderPromptCacheView data={data.provider_prompt_cache} t={t} range={range} />
                     )
                 ) : null}
             </QueryState>

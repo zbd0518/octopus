@@ -281,7 +281,7 @@ func TestBuildOpsProviderPromptCacheSummaryFromLogs_AggregatesByChannelAndTrend(
 		},
 	}
 
-	summary := buildOpsProviderPromptCacheSummaryFromLogs(logs, start)
+	summary := buildOpsProviderPromptCacheSummaryFromLogs(logs, start, 1, 24)
 
 	if summary.RequestCount != 3 {
 		t.Fatalf("RequestCount = %d, want 3", summary.RequestCount)
@@ -328,7 +328,7 @@ func TestBuildOpsProviderPromptCacheSummaryFromLogs_UsesTimezoneAlignedBuckets(t
 		ChannelName:     "openai",
 		ActualModelName: "gpt-4o",
 		ResponseContent: `{"usage":{"input_tokens":1000,"input_token_details":{"cached_tokens":250}}}`,
-	}}, start)
+	}}, start, 1, 24)
 
 	if summary.RequestCount != 1 || summary.CacheReadTokens != 250 {
 		t.Fatalf("unexpected summary: %+v", summary)
@@ -338,6 +338,141 @@ func TestBuildOpsProviderPromptCacheSummaryFromLogs_UsesTimezoneAlignedBuckets(t
 	}
 	if summary.Trend[15].Timestamp != time.Date(2026, 5, 24, 2, 0, 0, 0, time.UTC).Unix() {
 		t.Fatalf("trend[15].Timestamp = %d, want 2026-05-24T02:00:00Z", summary.Trend[15].Timestamp)
+	}
+}
+
+func TestOpsRangeWindow_DayBucketsForMultiDayRanges(t *testing.T) {
+	loc := time.FixedZone("UTC+8", 8*3600)
+	now := time.Date(2026, 5, 24, 10, 15, 0, 0, loc)
+
+	// 7d：当天 0 点回溯 6 天，共 7 个天桶
+	t.Run("7d", func(t *testing.T) {
+		start, bucketHours, bucketCount := opsRangeWindow(now, loc, model.AnalyticsRange7D)
+		wantStart := time.Date(2026, 5, 18, 0, 0, 0, 0, loc).In(time.UTC)
+		if !start.Equal(wantStart) {
+			t.Fatalf("start = %s, want %s", start.Format(time.RFC3339), wantStart.Format(time.RFC3339))
+		}
+		if bucketHours != 24 || bucketCount != 7 {
+			t.Fatalf("bucketHours = %d, bucketCount = %d, want 24, 7", bucketHours, bucketCount)
+		}
+	})
+
+	// 30d：当天 0 点回溯 29 天，共 30 个天桶
+	t.Run("30d", func(t *testing.T) {
+		start, bucketHours, bucketCount := opsRangeWindow(now, loc, model.AnalyticsRange30D)
+		wantStart := time.Date(2026, 4, 25, 0, 0, 0, 0, loc).In(time.UTC)
+		if !start.Equal(wantStart) {
+			t.Fatalf("start = %s, want %s", start.Format(time.RFC3339), wantStart.Format(time.RFC3339))
+		}
+		if bucketHours != 24 || bucketCount != 30 {
+			t.Fatalf("bucketHours = %d, bucketCount = %d, want 24, 30", bucketHours, bucketCount)
+		}
+	})
+
+	// 1d 保持历史语义：过去 24 小时，小时桶 ×24
+	t.Run("1d", func(t *testing.T) {
+		start, bucketHours, bucketCount := opsRangeWindow(now, loc, model.AnalyticsRange1D)
+		wantStart := time.Date(2026, 5, 23, 11, 0, 0, 0, loc).In(time.UTC)
+		if !start.Equal(wantStart) {
+			t.Fatalf("start = %s, want %s", start.Format(time.RFC3339), wantStart.Format(time.RFC3339))
+		}
+		if bucketHours != 1 || bucketCount != 24 {
+			t.Fatalf("bucketHours = %d, bucketCount = %d, want 1, 24", bucketHours, bucketCount)
+		}
+	})
+
+	// ytd：从今年 1 月 1 日到今天的自然天数
+	t.Run("ytd", func(t *testing.T) {
+		_, bucketHours, bucketCount := opsRangeWindow(now, loc, model.AnalyticsRangeYTD)
+		if bucketHours != 24 {
+			t.Fatalf("bucketHours = %d, want 24", bucketHours)
+		}
+		wantDays := int(now.Sub(time.Date(2026, time.January, 1, 0, 0, 0, 0, loc)).Hours()/24) + 1
+		if bucketCount != wantDays {
+			t.Fatalf("bucketCount = %d, want %d", bucketCount, wantDays)
+		}
+	})
+
+	// all：上限 366 个天桶
+	t.Run("all", func(t *testing.T) {
+		_, bucketHours, bucketCount := opsRangeWindow(now, loc, model.AnalyticsRangeAll)
+		if bucketHours != 24 || bucketCount != 366 {
+			t.Fatalf("bucketHours = %d, bucketCount = %d, want 24, 366", bucketHours, bucketCount)
+		}
+	})
+}
+
+func TestBuildOpsProviderPromptCacheSummaryFromLogs_DayBuckets(t *testing.T) {
+	llmCache := llm.GetCache()
+	oldLLMs := llmCache.GetAll()
+	llmCache.Clear()
+	llmCache.Set("gpt-4o", model.LLMPrice{
+		Input:      2.5,
+		Output:     10,
+		CacheRead:  1.25,
+		CacheWrite: 0,
+	})
+	defer func() {
+		llmCache.Clear()
+		for k, v := range oldLLMs {
+			llmCache.Set(k, v)
+		}
+	}()
+
+	// 7d 窗口：2026-05-18 00:00 (UTC+8) 起 7 个天桶
+	loc := time.FixedZone("UTC+8", 8*3600)
+	now := time.Date(2026, 5, 24, 10, 15, 0, 0, loc)
+	start, bucketHours, bucketCount := opsRangeWindow(now, loc, model.AnalyticsRange7D)
+
+	logs := []model.RelayLog{
+		{
+			Time:            time.Date(2026, 5, 19, 3, 0, 0, 0, loc).Unix(),
+			ChannelId:       1,
+			ChannelName:     "openai",
+			ActualModelName: "gpt-4o",
+			ResponseContent: `{"usage":{"input_tokens":1000,"input_tokens_details":{"cached_tokens":250},"output_tokens":10}}`,
+		},
+		{
+			// 与上一条同一天，验证聚合
+			Time:            time.Date(2026, 5, 19, 20, 30, 0, 0, loc).Unix(),
+			ChannelId:       1,
+			ChannelName:     "openai",
+			ActualModelName: "gpt-4o",
+			ResponseContent: `{"usage":{"input_tokens":500,"output_tokens":20}}`,
+		},
+		{
+			// 另一天
+			Time:            time.Date(2026, 5, 21, 12, 0, 0, 0, loc).Unix(),
+			ChannelId:       2,
+			ChannelName:     "anthropic",
+			ActualModelName: "claude-3-5-sonnet-20241022",
+			ResponseContent: `{"usage":{"input_tokens":600,"input_tokens_details":{"cached_tokens":300},"cache_creation_input_tokens":120}}`,
+		},
+	}
+
+	summary := buildOpsProviderPromptCacheSummaryFromLogs(logs, start, bucketHours, bucketCount)
+
+	if summary.RequestCount != 3 {
+		t.Fatalf("RequestCount = %d, want 3", summary.RequestCount)
+	}
+	if len(summary.Trend) != 7 {
+		t.Fatalf("Trend len = %d, want 7", len(summary.Trend))
+	}
+	// 5/19 是窗口中第 2 个天桶（索引 1），两条日志应聚合到同一天
+	idx19 := 1
+	if summary.Trend[idx19].RequestCount != 2 {
+		t.Fatalf("trend[1].RequestCount = %d, want 2", summary.Trend[idx19].RequestCount)
+	}
+	if summary.Trend[idx19].CachedRequestCount != 1 {
+		t.Fatalf("trend[1].CachedRequestCount = %d, want 1", summary.Trend[idx19].CachedRequestCount)
+	}
+	// 5/21 是窗口中第 4 个天桶（索引 3）
+	idx21 := 3
+	if summary.Trend[idx21].RequestCount != 1 {
+		t.Fatalf("trend[3].RequestCount = %d, want 1", summary.Trend[idx21].RequestCount)
+	}
+	if summary.Trend[idx21].CacheWriteTokens != 120 {
+		t.Fatalf("trend[3].CacheWriteTokens = %d, want 120", summary.Trend[idx21].CacheWriteTokens)
 	}
 }
 

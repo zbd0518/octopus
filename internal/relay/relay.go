@@ -206,6 +206,7 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 			_ = json.Unmarshal([]byte(pcfgRaw), &pcfg)
 		}
 		privacyPlaceholders = newPrivacyPlaceholderMap()
+		privacyPlaceholders.logHits = privacyCfg.LogHits
 		if blocked, category := applyPrivacyProtection(internalRequest, privacyCfg, pcfg, privacyPlaceholders); blocked {
 			log.Infof("[隐私保护] 请求被拦截: category=%s model=%s", category, requestModel)
 			errorResp := map[string]any{

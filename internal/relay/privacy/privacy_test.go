@@ -145,7 +145,7 @@ func TestBankCardMatcher(t *testing.T) {
 }
 
 func TestEntropyMatcher(t *testing.T) {
-	// 高熵随机串命中；普通单词不命中
+	// 高熵随机串命中：大小写混合 + 数字 + 符号，无分隔符结构，字符重复率低
 	got := collectHits(t, "random string: aB3xK9mQ2pL7vN4wE8jR5tY1uI6oP0zH", DefaultMatchers())
 	values := got[string(appmodel.PrivacyCategoryEntropy)]
 	if len(values) == 0 {
@@ -155,6 +155,39 @@ func TestEntropyMatcher(t *testing.T) {
 	noHit := collectHits(t, "this is a plain english sentence about things", DefaultMatchers())
 	if v := noHit[string(appmodel.PrivacyCategoryEntropy)]; len(v) != 0 {
 		t.Fatalf("expected no entropy hit for plain sentence, got %v", v)
+	}
+}
+
+// 用户实测误报回归（issue 020 反馈）：文件路径 / 包名 / 分支名等人类可读标识符
+// 不得被熵检测命中。
+func TestEntropyMatcher_HumanIdentifiersNotMatched(t *testing.T) {
+	text := "look at /e/workspace/idea/kotlin_demo and /client/exchange/MultiPlatformExchangeApi " +
+		"also branch -o-feature-lx-sdk-sync-doc-baseline-20260917 and word multiplatformexchangeapi " +
+		"plus /lx-sdk-20260917-field-diff/review-Finance and /lingxing/pipeline/MultiPlatformIngestor"
+	got := collectHits(t, text, DefaultMatchers())
+	if v := got[string(appmodel.PrivacyCategoryEntropy)]; len(v) != 0 {
+		t.Fatalf("human-readable identifiers must not hit entropy detector, got %v", v)
+	}
+}
+
+// 熵检测未配置时默认关闭（entropy 是唯一默认禁用的类别）。
+func TestPrivacyCategoryEnabled_EntropyDefaultsOff(t *testing.T) {
+	enabled := true
+	cfg := appmodel.PrivacyProtectionConfig{}
+	if cfg.CategoryEnabled(appmodel.PrivacyCategoryEntropy) {
+		t.Fatal("entropy must default to disabled")
+	}
+	if !cfg.CategoryEnabled(appmodel.PrivacyCategoryPhone) {
+		t.Fatal("other categories must default to enabled")
+	}
+	// 显式开启后应生效
+	cfgExplicit := appmodel.PrivacyProtectionConfig{
+		Categories: map[appmodel.PrivacyCategory]appmodel.PrivacyCategoryConfig{
+			appmodel.PrivacyCategoryEntropy: {Enabled: &enabled},
+		},
+	}
+	if !cfgExplicit.CategoryEnabled(appmodel.PrivacyCategoryEntropy) {
+		t.Fatal("explicitly enabled entropy must be enabled")
 	}
 }
 

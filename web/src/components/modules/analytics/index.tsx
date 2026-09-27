@@ -284,7 +284,7 @@ export function Analytics() {
 
                     <TabsContents>
                         <TabsContent value="cache">
-                            <Cache />
+                            <Cache range={range} />
                         </TabsContent>
                         <TabsContent value="utilization">
                             <Utilization range={range} />

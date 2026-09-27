@@ -101,6 +101,7 @@ const (
 	SettingKeyResponseFilterErrorMessage           SettingKey = "response_filter_error_message"            // 阻断时返回的错误信息
 	SettingKeyPrivacyProtectionEnabled             SettingKey = "privacy_protection_enabled"               // 隐私保护总开关（请求侧敏感信息拦截/脱敏，issue 020）
 	SettingKeyPrivacyProtectionConfig              SettingKey = "privacy_protection_config"                // 隐私保护配置(JSON: categories + rules)
+	SettingKeyPrivacyProtectionLogEnabled          SettingKey = "privacy_protection_log_enabled"           // 隐私保护命中明细调试日志（block/filter/还原），默认关
 	SettingKeyLogLevel                             SettingKey = "log_level"                                // 应用日志级别: debug, info, warn, error
 	SettingKeyLogExcludedGroups                    SettingKey = "log_excluded_groups"                      // 在日志列表/实时流中屏蔽的分组名称列表(JSON 数组)
 	SettingKeyModelNormalizeRouterPrefixes         SettingKey = "model_normalize_router_prefixes"          // 模型名归一化: 路由商/平台前缀列表(JSON 数组，元素如 "dmxapi-")
@@ -208,6 +209,7 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyResponseFilterErrorMessage, Value: "The response contains blocked keywords and has been intercepted."},
 		{Key: SettingKeyPrivacyProtectionEnabled, Value: "false"}, // 默认关闭隐私保护，请求原样发送
 		{Key: SettingKeyPrivacyProtectionConfig, Value: `{"categories":{},"rules":[]}`},
+		{Key: SettingKeyPrivacyProtectionLogEnabled, Value: "false"}, // 默认关闭命中明细日志（高频误报会刷屏，调试时再开）
 		{Key: SettingKeyLogLevel, Value: "info"},
 		{Key: SettingKeyLogExcludedGroups, Value: "[]"},
 		{Key: SettingKeyModelNormalizeRouterPrefixes, Value: "[]"},        // 默认无自定义路由前缀，回退到前端内置默认
@@ -481,7 +483,7 @@ func (s *Setting) Validate() error {
 		default:
 			return fmt.Errorf("response filter action must be block or replace")
 		}
-	case SettingKeyPrivacyProtectionEnabled:
+	case SettingKeyPrivacyProtectionEnabled, SettingKeyPrivacyProtectionLogEnabled:
 		if s.Value != "true" && s.Value != "false" {
 			return fmt.Errorf("setting value must be true or false")
 		}

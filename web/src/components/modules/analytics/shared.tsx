@@ -29,6 +29,15 @@ export function formatUnixTime(value: number | undefined) {
     });
 }
 
+/** 仅显示 月/日，用于按天分桶的趋势图 x 轴。 */
+export function formatUnixDay(value: number | undefined) {
+    if (!value) return '';
+    return formatUnixSeconds(value, {
+        month: '2-digit',
+        day: '2-digit',
+    });
+}
+
 export function getErrorMessage(error: unknown) {
     if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
         return error.message;

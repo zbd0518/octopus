@@ -51,6 +51,7 @@ export function SettingPrivacyProtection() {
     const setSetting = useSetSetting();
 
     const [enabled, setEnabled] = useState(false);
+    const [logEnabled, setLogEnabled] = useState(false);
     const [config, setConfig] = useState<PrivacyConfig>(DEFAULT_CONFIG);
     const [newRulePattern, setNewRulePattern] = useState('');
     const [newRuleType, setNewRuleType] = useState<'keyword' | 'regex'>('keyword');
@@ -58,6 +59,7 @@ export function SettingPrivacyProtection() {
     const intendedValuesRef = useRef<Record<string, string>>({
         [SettingKey.PrivacyProtectionEnabled]: 'false',
         [SettingKey.PrivacyProtectionConfig]: DEFAULT_CONFIG_TEXT,
+        [SettingKey.PrivacyProtectionLogEnabled]: 'false',
     });
     const loadedKeysRef = useRef<Set<string>>(new Set());
     const hasLocalIntentRef = useRef<Record<string, boolean>>({});
@@ -71,6 +73,8 @@ export function SettingPrivacyProtection() {
                 settings.find((item) => item.key === SettingKey.PrivacyProtectionEnabled)?.value || 'false',
             [SettingKey.PrivacyProtectionConfig]:
                 settings.find((item) => item.key === SettingKey.PrivacyProtectionConfig)?.value || DEFAULT_CONFIG_TEXT,
+            [SettingKey.PrivacyProtectionLogEnabled]:
+                settings.find((item) => item.key === SettingKey.PrivacyProtectionLogEnabled)?.value || 'false',
         };
 
         const shouldApplyServerValue = (key: string, nextValue: string) => {
@@ -101,6 +105,10 @@ export function SettingPrivacyProtection() {
                 } catch {
                     setConfig(DEFAULT_CONFIG);
                 }
+            }
+            if (shouldApplyServerValue(SettingKey.PrivacyProtectionLogEnabled, nextValues[SettingKey.PrivacyProtectionLogEnabled])) {
+                intendedValuesRef.current[SettingKey.PrivacyProtectionLogEnabled] = nextValues[SettingKey.PrivacyProtectionLogEnabled];
+                setLogEnabled(nextValues[SettingKey.PrivacyProtectionLogEnabled] === 'true');
             }
         });
     }, [settings]);
@@ -137,13 +145,17 @@ export function SettingPrivacyProtection() {
         flushSettingSave(key);
     };
 
-    const saveBooleanSetting = (checked: boolean) => {
+    const saveBooleanSetting = (key: string, checked: boolean) => {
         const value = checked ? 'true' : 'false';
-        setEnabled(checked);
-        if (value === intendedValuesRef.current[SettingKey.PrivacyProtectionEnabled]) return;
-        intendedValuesRef.current[SettingKey.PrivacyProtectionEnabled] = value;
-        hasLocalIntentRef.current[SettingKey.PrivacyProtectionEnabled] = true;
-        flushSettingSave(SettingKey.PrivacyProtectionEnabled);
+        if (key === SettingKey.PrivacyProtectionEnabled) {
+            setEnabled(checked);
+        } else if (key === SettingKey.PrivacyProtectionLogEnabled) {
+            setLogEnabled(checked);
+        }
+        if (value === intendedValuesRef.current[key]) return;
+        intendedValuesRef.current[key] = value;
+        hasLocalIntentRef.current[key] = true;
+        flushSettingSave(key);
     };
 
     const saveConfig = (next: PrivacyConfig) => {
@@ -215,13 +227,32 @@ export function SettingPrivacyProtection() {
                 <p className="text-sm text-muted-foreground">{t('privacyProtection.description')}</p>
             </div>
 
-            {/* 总开关 */}
+            {/* 总开关 + 命中明细日志开关 */}
             <div className="flex min-w-0 flex-col gap-3 rounded-lg border border-border/30 bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0 flex items-center gap-3">
-                    <ShieldCheck className="h-5 w-5 text-muted-foreground" />
+                    <ShieldCheck className="h-5 w-5 shrink-0 text-muted-foreground" />
                     <span className="text-sm font-medium">{t('privacyProtection.enabled.label')}</span>
                 </div>
-                <Switch checked={enabled} onCheckedChange={saveBooleanSetting} />
+                <div className="flex shrink-0 items-center gap-5">
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">
+                            {t('privacyProtection.logEnabled.label')}
+                        </span>
+                        <Hint text={t('privacyProtection.logEnabled.hint')} />
+                        <Switch
+                            checked={logEnabled}
+                            onCheckedChange={(checked) =>
+                                saveBooleanSetting(SettingKey.PrivacyProtectionLogEnabled, checked)
+                            }
+                        />
+                    </div>
+                    <Switch
+                        checked={enabled}
+                        onCheckedChange={(checked) =>
+                            saveBooleanSetting(SettingKey.PrivacyProtectionEnabled, checked)
+                        }
+                    />
+                </div>
             </div>
 
             {/* 检测项与策略 */}
