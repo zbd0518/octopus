@@ -117,6 +117,8 @@ export type Channel = {
     proxy_config_id?: number | null;
     proxy: boolean;
     auto_sync: boolean;
+    /** 开启后，模型自动同步会逐 key 抓取其支持的模型并回填到每个 key 的 supported_models */
+    auto_sync_key_models?: boolean;
     auto_group: AutoGroupType;
     skip_model_test: boolean;
     disposable: boolean;
@@ -158,6 +160,7 @@ export type CreateChannelRequest = {
     proxy_config_id?: number | null;
     proxy?: boolean;
     auto_sync?: boolean;
+    auto_sync_key_models?: boolean;
     skip_model_test?: boolean;
     disposable?: boolean;
     expire_at?: string | null;
@@ -188,6 +191,7 @@ export type UpdateChannelRequest = {
     proxy_config_id?: number | null;
     proxy?: boolean;
     auto_sync?: boolean;
+    auto_sync_key_models?: boolean;
     key_selection_strategy?: string;
     skip_model_test?: boolean;
     disposable?: boolean;
@@ -209,7 +213,9 @@ export type UpdateChannelRequest = {
 export type FetchModelRequest = {
     type: ChannelType;
     base_urls: BaseUrl[];
-    keys: Array<Pick<ChannelKey, 'enabled' | 'channel_key'>>;
+    // id / remark 为可选：按 key 抓取时一并上传，后端在结果的 key_id / key_remark 里原样回传，
+    // 供前端把抓取结果精确回填到对应表单 key（参见 key-model-fill.ts）。
+    keys: Array<Pick<ChannelKey, 'enabled' | 'channel_key'> & { id?: number; remark?: string }>;
     proxy_mode?: ChannelProxyMode;
     proxy_config_id?: number | null;
     proxy?: boolean;
@@ -235,6 +241,8 @@ export type TestChannelSummary = {
 };
 
 export type KeyModelResult = {
+    /** 对应 channel_keys.id；未保存的新 key 可能为 0 或缺省 */
+    key_id?: number;
     key_remark?: string;
     key_masked?: string;
     models: string[];

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.6.1] - 2026-09-28
+
+### 🎨 UI/UX
+
+- **Group**: 分组创建/编辑页信息降噪——低频字段（匹配正则、超时、会话保持、推理缓冲、条件表达式）折叠进「高级配置」面板，首屏只保留必填字段
+- **Group**: 表单提交时内联校验提示（分组名称必填、至少选择一个模型）
+- **Group**: 编辑弹窗标题去重，直接显示分组名
+- **Group**: 「移除失败模型」操作增加二次确认弹窗
+
 ## [v2.6.0] - 2026-08-28
 
 ### 🚀 Features

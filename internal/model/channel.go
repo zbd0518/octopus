@@ -73,19 +73,24 @@ type RequestRewriteConfig struct {
 }
 
 type Channel struct {
-	ID                   int                   `json:"id" gorm:"primaryKey"`
-	Name                 string                `json:"name" gorm:"unique;not null"`
-	GroupID              int                   `json:"group_id" gorm:"not null;default:0;index"`
-	Type                 outbound.OutboundType `json:"type"`
-	Enabled              bool                  `json:"enabled"`
-	BaseUrls             []BaseUrl             `json:"base_urls" gorm:"serializer:json"`
-	Keys                 []ChannelKey          `json:"keys" gorm:"foreignKey:ChannelID"`
-	Model                string                `json:"model"`
-	CustomModel          string                `json:"custom_model"`
-	ProxyMode            ProxyUsageMode        `json:"proxy_mode" gorm:"type:varchar(16);not null;default:'direct'"`
-	ProxyConfigID        *int                  `json:"proxy_config_id"`
-	Proxy                bool                  `json:"proxy" gorm:"default:false"`
-	AutoSync             bool                  `json:"auto_sync" gorm:"default:false"`
+	ID            int                   `json:"id" gorm:"primaryKey"`
+	Name          string                `json:"name" gorm:"unique;not null"`
+	GroupID       int                   `json:"group_id" gorm:"not null;default:0;index"`
+	Type          outbound.OutboundType `json:"type"`
+	Enabled       bool                  `json:"enabled"`
+	BaseUrls      []BaseUrl             `json:"base_urls" gorm:"serializer:json"`
+	Keys          []ChannelKey          `json:"keys" gorm:"foreignKey:ChannelID"`
+	Model         string                `json:"model"`
+	CustomModel   string                `json:"custom_model"`
+	ProxyMode     ProxyUsageMode        `json:"proxy_mode" gorm:"type:varchar(16);not null;default:'direct'"`
+	ProxyConfigID *int                  `json:"proxy_config_id"`
+	Proxy         bool                  `json:"proxy" gorm:"default:false"`
+	AutoSync      bool                  `json:"auto_sync" gorm:"default:false"`
+	// AutoSyncKeyModels 开启后，模型自动同步任务会逐个 key 抓取上游模型列表，
+	// 并把结果回填到每个 key 的 SupportedModels（按 key 隔离模型权限）。
+	// 抓取失败的 key 保留旧值，绝不清空。默认关闭：关闭时同步任务只抓成本最低
+	// 的一个 key，把结果写进渠道级 Model（保持原有行为不变）。
+	AutoSyncKeyModels    bool                  `json:"auto_sync_key_models" gorm:"column:auto_sync_key_models;default:false"`
 	AutoGroup            AutoGroupType         `json:"auto_group" gorm:"default:0"`
 	SkipModelTest        bool                  `json:"skip_model_test" gorm:"default:false"`
 	Disposable           bool                  `json:"disposable" gorm:"default:false"`
@@ -137,7 +142,7 @@ type ChannelKey struct {
 	// SupportedModels 逗号分隔的模型列表，限定该 key 只能用于这些模型。
 	// 空表示不限制（兼容存量 key）。key 选择时用 ModelMatches 过滤，
 	// 避免把不支持当前模型的 key 发给上游（如上游中转站某 token 无某模型权限）。
-	SupportedModels string `json:"supported_models,omitempty" gorm:"column:supported_models;type:varchar(512)"`
+	SupportedModels string `json:"supported_models,omitempty" gorm:"column:supported_models;type:text"`
 	// Managed 标记该 key 是否由 site 同步投影自动生成。
 	// site 同步 diff 时只删除 Managed=true 的 key，
 	// 保留用户手动添加的（Managed=false）key 不被清除。
@@ -167,30 +172,33 @@ var KeyCooldownFunc func(channelID, keyID int, modelName string) bool
 
 // ChannelUpdateRequest 渠道更新请求 - 仅包含变更的数据
 type ChannelUpdateRequest struct {
-	ID                   int                    `json:"id" binding:"required"`
-	Name                 *string                `json:"name,omitempty"`
-	GroupID              *int                   `json:"group_id,omitempty"`
-	Type                 *outbound.OutboundType `json:"type,omitempty"`
-	Enabled              *bool                  `json:"enabled,omitempty"`
-	BaseUrls             *[]BaseUrl             `json:"base_urls,omitempty"`
-	Model                *string                `json:"model,omitempty"`
-	CustomModel          *string                `json:"custom_model,omitempty"`
-	ProxyMode            *ProxyUsageMode        `json:"proxy_mode,omitempty"`
-	ProxyConfigID        *int                   `json:"proxy_config_id,omitempty"`
-	Proxy                *bool                  `json:"proxy,omitempty"`
-	AutoSync             *bool                  `json:"auto_sync,omitempty"`
-	SkipModelTest        *bool                  `json:"skip_model_test,omitempty"`
-	Disposable           *bool                  `json:"disposable,omitempty"`
-	ExpireAt             *time.Time             `json:"expire_at,omitempty"`
-	NotifChannelID       *int                   `json:"notif_channel_id,omitempty"`
-	KeySelectionStrategy *string                `json:"key_selection_strategy,omitempty"`
-	AutoGroup            *AutoGroupType         `json:"auto_group,omitempty"`
-	CustomHeader         *[]CustomHeader        `json:"custom_header,omitempty"`
-	ChannelProxy         *string                `json:"channel_proxy,omitempty"`
-	ParamOverride        *string                `json:"param_override,omitempty"`
-	RequestRewrite       *RequestRewriteConfig  `json:"request_rewrite,omitempty"`
-	MatchRegex           *string                `json:"match_regex,omitempty"`
-	PoolID               *int                   `json:"pool_id,omitempty"`
+	ID            int                    `json:"id" binding:"required"`
+	Name          *string                `json:"name,omitempty"`
+	GroupID       *int                   `json:"group_id,omitempty"`
+	Type          *outbound.OutboundType `json:"type,omitempty"`
+	Enabled       *bool                  `json:"enabled,omitempty"`
+	BaseUrls      *[]BaseUrl             `json:"base_urls,omitempty"`
+	Model         *string                `json:"model,omitempty"`
+	CustomModel   *string                `json:"custom_model,omitempty"`
+	ProxyMode     *ProxyUsageMode        `json:"proxy_mode,omitempty"`
+	ProxyConfigID *int                   `json:"proxy_config_id,omitempty"`
+	Proxy         *bool                  `json:"proxy,omitempty"`
+	AutoSync      *bool                  `json:"auto_sync,omitempty"`
+	// AutoSyncKeyModels 为 true 时，模型自动同步任务逐个 key 抓取并回填每个 key 的
+	// SupportedModels；nil 表示本次请求不修改该开关（白名单补丁语义）。
+	AutoSyncKeyModels    *bool                 `json:"auto_sync_key_models,omitempty"`
+	SkipModelTest        *bool                 `json:"skip_model_test,omitempty"`
+	Disposable           *bool                 `json:"disposable,omitempty"`
+	ExpireAt             *time.Time            `json:"expire_at,omitempty"`
+	NotifChannelID       *int                  `json:"notif_channel_id,omitempty"`
+	KeySelectionStrategy *string               `json:"key_selection_strategy,omitempty"`
+	AutoGroup            *AutoGroupType        `json:"auto_group,omitempty"`
+	CustomHeader         *[]CustomHeader       `json:"custom_header,omitempty"`
+	ChannelProxy         *string               `json:"channel_proxy,omitempty"`
+	ParamOverride        *string               `json:"param_override,omitempty"`
+	RequestRewrite       *RequestRewriteConfig `json:"request_rewrite,omitempty"`
+	MatchRegex           *string               `json:"match_regex,omitempty"`
+	PoolID               *int                  `json:"pool_id,omitempty"`
 
 	KeysToAdd    []ChannelKeyAddRequest    `json:"keys_to_add,omitempty"`
 	KeysToUpdate []ChannelKeyUpdateRequest `json:"keys_to_update,omitempty"`

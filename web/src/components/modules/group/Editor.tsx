@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Hint } from '@/components/ui/hint';
 import { Input } from '@/components/ui/input';
-import { Accordion, AccordionContent, AccordionItem } from '@/components/ui/accordion';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { cn } from '@/lib/utils';
 import { getModelIcon } from '@/lib/model-icons';
 import { GroupMode } from '@/api/endpoints/group';
@@ -398,6 +398,7 @@ export function GroupEditor({
     const conditionPlaceholder = '[{"key":"model","op":"contains","value":"gpt-4"}]';
 
     const [groupName, setGroupName] = useState(initial?.name ?? '');
+    const [groupNameTouched, setGroupNameTouched] = useState(false);
     const [category, setCategory] = useState(initial?.category ?? '');
     const [endpointType, setEndpointType] = useState(normalizeEndpointType(initial?.endpoint_type));
     const [endpointProvider, setEndpointProvider] = useState(normalizeEndpointProvider(initial?.endpoint_provider));
@@ -413,7 +414,7 @@ export function GroupEditor({
     const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
     const [showDisabledChannels, setShowDisabledChannels] = useState(false);
     const [channelGroupFilterId, setChannelGroupFilterId] = useState<number | null>(null);
-
+    const [showValidation, setShowValidation] = useState(false);
     const groupKey = normalizeKey(groupName);
     const regexKey = matchRegex.trim();
 
@@ -526,6 +527,8 @@ export function GroupEditor({
 
     const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
+        setGroupNameTouched(true);
+        setShowValidation(true);
         if (!isValid) return;
         onSubmit({
             name: groupName,
@@ -571,9 +574,16 @@ export function GroupEditor({
                                     <Input
                                         id="group-name"
                                         value={groupName}
-                                        onChange={(e) => setGroupName(e.target.value)}
-                                        className="h-10 rounded-lg text-sm md:h-11"
+                                        onChange={(e) => { setGroupName(e.target.value); if (!groupNameTouched) setGroupNameTouched(true); }}
+                                        className={cn(
+                                            "h-10 rounded-lg text-sm md:h-11",
+                                            showValidation && !groupKey && "border-destructive focus-visible:ring-destructive/20"
+                                        )}
+                                        aria-invalid={showValidation && !groupKey ? true : undefined}
                                     />
+                                    {showValidation && !groupKey && (
+                                        <p className="mt-1 text-xs text-destructive">{t('form.nameRequired')}</p>
+                                    )}
                                 </Field>
                                 <Field>
                                     <FieldLabel htmlFor="group-category">
@@ -726,6 +736,19 @@ export function GroupEditor({
                                         </select>
                                     </Field>
                                 ) : null}
+                            </div>
+
+                            {/* ── 高级配置（低频字段折叠） ── */}
+                            <Accordion type="single" collapsible className="w-full">
+                                <AccordionItem value="advanced" className="border-none">
+                                    <AccordionTrigger className="py-2 text-xs text-muted-foreground hover:text-foreground hover:no-underline">
+                                        <span className="inline-flex items-center gap-1.5">
+                                            <SlidersHorizontal className="size-3.5" />
+                                            {t('form.advancedSettings')}
+                                        </span>
+                                    </AccordionTrigger>
+                                    <AccordionContent className="pb-0">
+                                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
                                 <Field className="md:col-span-2">
                                     <FieldLabel htmlFor="group-match-regex">{t('form.matchRegex')}</FieldLabel>
                                     <Input
@@ -843,7 +866,10 @@ export function GroupEditor({
                                         placeholder={conditionPlaceholder}
                                     />
                                 </Field>
-                            </div>
+                                        </div>
+                                    </AccordionContent>
+                                </AccordionItem>
+                            </Accordion>
 
                             <div className="space-y-2">
                                 <div className="inline-flex items-center gap-1.5 rounded-md border border-border/25 bg-card px-2 py-0.5 text-[0.64rem] font-semibold text-muted-foreground md:gap-2 md:rounded-full md:px-3 md:py-1 md:text-[0.68rem]">
@@ -883,6 +909,9 @@ export function GroupEditor({
                                     {selectedMembers.length}
                                 </div>
                             </div>
+                            {showValidation && selectedMembers.length === 0 && (
+                                <p className="text-xs text-destructive">{t('form.membersRequired')}</p>
+                            )}
 
                             <div className="grid min-w-0 grid-cols-1 gap-3 xl:flex-1 xl:min-h-0 2xl:grid-cols-[minmax(18rem,0.92fr)_minmax(20rem,1.18fr)] 2xl:gap-4">
                                 <ModelPickerSection

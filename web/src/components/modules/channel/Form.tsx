@@ -23,6 +23,11 @@ import { channelTemplates } from './templates';
 import { CHANNEL_TYPE_OPTIONS } from './type-options';
 import { isOpenAICompatBaseUrlSuffixMode } from './base-url-suffix';
 import {
+    applyPerKeyModelFill,
+    planPerKeyModelFill,
+    type PerKeyFillMatch,
+} from './key-model-fill';
+import {
     Select,
     SelectContent,
     SelectItem,
@@ -89,6 +94,7 @@ export interface ChannelFormData {
     proxy_mode: ChannelProxyMode;
     proxy_config_id: number | null;
     auto_sync: boolean;
+    auto_sync_key_models: boolean;
     auto_group: AutoGroupType;
     skip_model_test: boolean;
     disposable: boolean;
@@ -203,6 +209,10 @@ interface ModelPickerDialogPanelProps {
     onApply: () => void;
     perKeyResults?: KeyModelResult[] | null;
     perKeyLoading?: boolean;
+    /** 把单个 key 的抓取结果回填到对应表单 key 的 supported_models */
+    onFillPerKeyResult?: (result: KeyModelResult, resultIndex: number) => void;
+    /** 把所有 passed 的抓取结果批量回填 */
+    onFillAllPerKeyResults?: () => void;
 }
 
 interface ModelProviderGroup {
@@ -233,7 +243,7 @@ function groupModelsByProvider(models: string[]): ModelProviderGroup[] {
     });
 }
 
-function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoading, onApply, perKeyResults, perKeyLoading }: ModelPickerDialogPanelProps) {
+function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoading, onApply, perKeyResults, perKeyLoading, onFillPerKeyResult, onFillAllPerKeyResults }: ModelPickerDialogPanelProps) {
     const t = useTranslations('channel.form.modelPicker');
     const { setIsOpen } = useMorphingDialog();
     const [searchTerm, setSearchTerm] = useState('');
@@ -241,6 +251,9 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
     const [viewMode, setViewMode] = useState<'all' | 'perKey'>('all');
     const hasPerKeyData = perKeyResults && perKeyResults.length > 0;
     const showPerKey = perKeyLoading || hasPerKeyData;
+    const canFillAllPerKey =
+        typeof onFillAllPerKeyResults === 'function' &&
+        !!perKeyResults?.some((result) => result.passed && (result.models?.length ?? 0) > 0);
 
     const normalizedSearch = searchTerm.trim().toLowerCase();
     const isSearching = normalizedSearch.length > 0;
@@ -473,6 +486,25 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
                     </>
                 )}
                 {viewMode === 'perKey' && (
+                    <>
+                    {hasPerKeyData && onFillAllPerKeyResults && (
+                        <div className="flex shrink-0 items-center justify-between gap-2">
+                            <p className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">
+                                {t('perKeyHint')}
+                            </p>
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                onClick={onFillAllPerKeyResults}
+                                disabled={!canFillAllPerKey}
+                                className="h-8 shrink-0 rounded-lg px-2 text-xs"
+                            >
+                                <Sparkles className="size-3.5" />
+                                {t('fillAll')}
+                            </Button>
+                        </div>
+                    )}
                     <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border/25 bg-card p-2 shadow-sm">
                         {perKeyLoading ? (
                             <div className="flex h-40 items-center justify-center gap-2 text-sm text-muted-foreground">
@@ -483,7 +515,7 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
                             <div className="flex flex-col gap-3">
                                 {perKeyResults!.map((result, idx) => (
                                     <div
-                                        key={result.key_masked ?? idx}
+                                        key={`${result.key_id ?? 0}-${result.key_masked ?? ''}-${idx}`}
                                         className={`rounded-lg border p-3 ${result.passed ? 'border-border/25 bg-background/40' : 'border-red-500/20 bg-red-500/5'}`}
                                     >
                                         <div className="mb-2 flex items-center gap-2">
@@ -499,6 +531,20 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
                                                 <Badge variant="secondary" className="h-4 rounded-full px-1.5 text-[0.625rem]">
                                                     {result.key_remark}
                                                 </Badge>
+                                            )}
+                                            {onFillPerKeyResult && (
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => onFillPerKeyResult(result, idx)}
+                                                    disabled={!result.passed || (result.models?.length ?? 0) === 0}
+                                                    aria-label={t('fillOne')}
+                                                    className="ml-auto h-6 shrink-0 rounded-md px-2 text-[0.625rem] text-muted-foreground/70 hover:bg-transparent hover:text-foreground disabled:opacity-40"
+                                                >
+                                                    <Check className="size-3" />
+                                                    {t('fillOne')}
+                                                </Button>
                                             )}
                                         </div>
                                         {result.passed && result.models.length > 0 ? (
@@ -540,6 +586,7 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
                             </div>
                         )}
                     </div>
+                    </>
                 )}
 
                 <div className="flex shrink-0 flex-col gap-2 border-t border-border/20 pt-4 sm:flex-row">
@@ -658,6 +705,8 @@ export function ChannelForm({
     const globalKeyStrategy = settings?.find((s) => s.key === SettingKey.KeySelectionStrategy)?.value ?? 'cost';
     const effectiveKeyStrategy = formData.key_selection_strategy || globalKeyStrategy;
     const showPriorityInput = effectiveKeyStrategy === 'priority';
+    // 号池绑定渠道不在表单里编辑 key，此时不提供“回填到 key”操作（表单里没有可写的 key）
+    const canFillPerKeyModels = formData.pool_id === 0;
 
     // Ensure the form always shows at least 1 row for base_urls / keys / custom_header.
     // This avoids "empty list" UI and also keeps URL + APIKEY layout consistent.
@@ -718,6 +767,107 @@ export function ChannelForm({
         const nextAutoModels = Array.from(new Set(modelPickerDraft)).filter((model) => !customModelSet.has(model));
         updateModels(nextAutoModels, customModels);
         toast.success(t('modelPicker.applySuccess', { count: nextAutoModels.length }));
+    };
+
+    /**
+     * 描述一个按 key 抓取结果（用于 toast 文案）：优先备注，其次脱敏 key，最后回退到序号。
+     */
+    const describePerKeyResult = (result: KeyModelResult, index: number) =>
+        result.key_remark?.trim() || result.key_masked?.trim() || t('modelPicker.fillKeyFallback', { index: index + 1 });
+
+    /**
+     * 将回填计划落到表单 keys 状态（只改状态，不调后端），
+     * 并把“成功 / 抓取失败跳过 / 上游返回空列表跳过 / 匹配不上”汇总成一条 toast。
+     */
+    const applyPerKeyFillPlan = (results: KeyModelResult[]) => {
+        const plan = planPerKeyModelFill(results, formData.keys);
+
+        if (plan.fills.length > 0) {
+            onFormDataChange({
+                ...formData,
+                keys: applyPerKeyModelFill(formData.keys, plan.fills),
+            });
+        }
+
+        const skippedLabels = plan.skippedFailed.map((match: PerKeyFillMatch) =>
+            describePerKeyResult(match.result, match.resultIndex),
+        );
+        const emptyLabels = plan.skippedEmpty.map((match: PerKeyFillMatch) =>
+            describePerKeyResult(match.result, match.resultIndex),
+        );
+        const unmatchedLabels = plan.unmatched.map((match: PerKeyFillMatch) =>
+            describePerKeyResult(match.result, match.resultIndex),
+        );
+
+        // sonner 的 description 默认不保留换行，用分隔符拼接保证多段提示都能完整渲染
+        const description = [
+            skippedLabels.length > 0 ? t('modelPicker.fillSkippedFailed', { count: skippedLabels.length, keys: skippedLabels.join(', ') }) : '',
+            emptyLabels.length > 0 ? t('modelPicker.fillSkippedEmpty', { count: emptyLabels.length, keys: emptyLabels.join(', ') }) : '',
+            unmatchedLabels.length > 0 ? t('modelPicker.fillUnmatched', { count: unmatchedLabels.length, keys: unmatchedLabels.join(', ') }) : '',
+        ].filter(Boolean).join(' · ');
+
+        if (plan.fills.length === 0) {
+            toast.warning(description || t('modelPicker.fillNothing'));
+            return;
+        }
+
+        toast.success(t('modelPicker.fillAllSuccess', { count: plan.fills.length }), description ? { description } : undefined);
+    };
+
+    const handleFillAllPerKeyResults = () => {
+        if (!perKeyResults || perKeyResults.length === 0) {
+            toast.warning(t('modelPicker.fillNothing'));
+            return;
+        }
+        applyPerKeyFillPlan(perKeyResults);
+    };
+
+    const handleFillPerKeyResult = (result: KeyModelResult, resultIndex: number) => {
+        const plan = planPerKeyModelFill([result], formData.keys);
+
+        if (plan.unmatched.length > 0) {
+            toast.warning(t('modelPicker.fillUnmatched', {
+                count: 1,
+                keys: describePerKeyResult(result, resultIndex),
+            }));
+            return;
+        }
+
+        if (plan.fills.length === 0) {
+            // 按钮对 passed=false / models 为空的结果已禁用，这里是防御分支：
+            // 优先把“为何没填”的具体原因告知用户，而不是一句笼统的“无可填充”。
+            const failedMatch = plan.skippedFailed[0];
+            if (failedMatch) {
+                toast.warning(t('modelPicker.fillSkippedFailed', {
+                    count: 1,
+                    keys: describePerKeyResult(failedMatch.result, failedMatch.resultIndex),
+                }));
+                return;
+            }
+
+            const emptyMatch = plan.skippedEmpty[0];
+            if (emptyMatch) {
+                toast.warning(t('modelPicker.fillSkippedEmpty', {
+                    count: 1,
+                    keys: describePerKeyResult(emptyMatch.result, emptyMatch.resultIndex),
+                }));
+                return;
+            }
+
+            toast.warning(t('modelPicker.fillNothing'));
+            return;
+        }
+
+        onFormDataChange({
+            ...formData,
+            keys: applyPerKeyModelFill(formData.keys, plan.fills),
+        });
+        // 计数以“实际写入的非空模型数”为准，而不是原始 result.models.length（后者可能含空白项）
+        const filledCount = plan.fills[0].supportedModels ? plan.fills[0].supportedModels.split(',').filter(Boolean).length : 0;
+        toast.success(t('modelPicker.fillOneSuccess', {
+            count: filledCount,
+            key: describePerKeyResult(result, resultIndex),
+        }));
     };
 
     const normalizeFetchedModels = (data: unknown): string[] => {
@@ -863,7 +1013,13 @@ export function ChannelForm({
             fetchModelsPerKey.mutate(
                 {
                     ...payload,
-                    keys: enabledKeys.map((k) => ({ enabled: true, channel_key: k.channel_key.trim() })),
+                    // 带上 id / remark，后端会在 key_id / key_remark 里回传，供“回填到该 key”精确定位
+                    keys: enabledKeys.map((k) => ({
+                        id: k.id,
+                        enabled: true,
+                        channel_key: k.channel_key.trim(),
+                        remark: k.remark ?? '',
+                    })),
                 },
                 {
                     onSuccess: (data) => {
@@ -1388,6 +1544,8 @@ export function ChannelForm({
                                     onApply={applyFetchedModelSelection}
                                     perKeyResults={perKeyResults}
                                     perKeyLoading={fetchModelsPerKey.isPending}
+                                    onFillPerKeyResult={canFillPerKeyModels ? handleFillPerKeyResult : undefined}
+                                    onFillAllPerKeyResults={canFillPerKeyModels ? handleFillAllPerKeyResults : undefined}
                                 />
                             </MorphingDialogContent>
                         </MorphingDialogContainer>
@@ -1754,6 +1912,26 @@ export function ChannelForm({
                         />
                         <span className="text-sm text-card-foreground">{t('autoSync')}</span>
                     </label>
+                    {/* 仅在自动同步开启时有意义：参照 request_rewrite 子项的 disabled 依赖处理方式。
+                        Hint 放在 label 外侧，避免在 label 内嵌可交互控件导致点击图标误触发开关 */}
+                    {/* 号池渠道（pool_id !== 0）不渲染该开关：其 relay 走 poolscheduler，按
+                        PoolAccount.Models 过滤，完全不消费 ChannelKey.SupportedModels，开关打开也无效。
+                        门禁写法与下方 key 编辑区的 formData.pool_id === 0 / canFillPerKeyModels 保持一致。 */}
+                    {formData.pool_id === 0 && (
+                    <div className="flex items-center gap-1">
+                        <label className={cn('flex items-center gap-2', formData.auto_sync ? 'cursor-pointer' : 'cursor-not-allowed')}>
+                            <Switch
+                                checked={formData.auto_sync_key_models}
+                                disabled={!formData.auto_sync || formData.pool_id !== 0}
+                                onCheckedChange={(checked) => onFormDataChange({ ...formData, auto_sync_key_models: checked })}
+                            />
+                            <span className={cn('text-sm text-card-foreground', !formData.auto_sync && 'text-muted-foreground/60')}>
+                                {t('autoSyncKeyModels')}
+                            </span>
+                        </label>
+                        <Hint text={t('autoSyncKeyModelsHint')} />
+                    </div>
+                    )}
                     <label className="flex items-center gap-2 cursor-pointer">
                         <Switch
                             checked={formData.skip_model_test}
