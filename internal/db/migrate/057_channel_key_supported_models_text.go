@@ -8,12 +8,14 @@ import (
 
 func init() {
 	RegisterAfterAutoMigration(Migration{
-		Version: 53,
+		Version: 57,
 		Up:      migrateChannelKeySupportedModelsToText,
 	})
 }
 
-// 053: 放宽 channel_keys.supported_models 列类型为 text。
+// 057: 放宽 channel_keys.supported_models 列类型为 text。
+// 本迁移在 upstream/master 注册为 53，但本仓库 53 已被 groups.endpoint_type
+// 回填迁移占用（见 053.go），故合并时重排到 57。
 // 原列为 varchar(512)：填充「支持模型」时上游返回的模型列表逗号连接后可轻松超过
 // 512 字符（实测一个聚合站 123 个模型即达 2346 字符），MySQL/PostgreSQL 严格模式
 // 下直接拒写 → /api/v1/channel/update 返回 500。SQLite 对 varchar 长度不强制（按
