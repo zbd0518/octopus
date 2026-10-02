@@ -137,6 +137,8 @@ go run main.go start
 
 如果 `static/out/` 中已经有前端构建产物，Go 二进制会直接提供管理界面；如果还没有构建产物，Octopus 仍然可以正常启动并提供 API，但必须先构建前端并在执行 `go build` / `go run` 前将导出的资源放到 `static/out/` 下，管理界面才能访问。
 
+发布构建（`bash scripts/build.sh release`）使用 `--frozen-lockfile` 安装前端依赖；任一平台构建或产物准备失败都会终止。执行 `bash scripts/build_test.sh` 可在不编译二进制的情况下验证发布失败处理。
+
 **构建嵌入式管理界面资源**
 
 ```bash

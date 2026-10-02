@@ -12,6 +12,12 @@ import (
 
 var roundRobinCounter uint64
 
+// AutoPriceFunc 返回某模型的成本评分输入（0-1，越便宜越接近 1）。
+// 由 relay/init_hooks.go 在启动时注入（balancer 不能 import price——price 依赖
+// db 与 op/llm，会拉起 balancer 单测不需要的重量级依赖链）；nil 表示成本
+// 因子未启用（B3）。注入方负责价格归一化。
+var AutoPriceFunc func(modelName string) float64
+
 // Balancer 根据负载均衡模式选择通道
 type Balancer interface {
 	// Candidates 返回按策略排序的候选列表
@@ -79,14 +85,14 @@ func (b *Failover) Candidates(items []model.GroupItem) []model.GroupItem {
 	return sortByPriority(items)
 }
 
-// Weighted 加权分配：按权重从高到低排序
+// Weighted 加权分配：Smooth WRR 序列展开（B1）。详见 weighted.go。
 type Weighted struct{}
 
 func (b *Weighted) Candidates(items []model.GroupItem) []model.GroupItem {
 	if len(items) == 0 {
 		return nil
 	}
-	return sortByWeight(items)
+	return weightedCandidates(items)
 }
 
 // Auto 自动策略：探索优先，基于成功率和延迟动态选择
@@ -110,6 +116,8 @@ func (b *Auto) Candidates(items []model.GroupItem) []model.GroupItem {
 	minSamples := getMinSamples()
 	timeWindow := getTimeWindow()
 	latencyWeight := getLatencyWeight()
+	ttftWeight := getAutoTTFTWeight()
+	priceWeight := getAutoPriceWeight()
 
 	// Calculate scores for each item
 	scored := make([]autoScoredItem, len(items))
@@ -128,12 +136,25 @@ func (b *Auto) Candidates(items []model.GroupItem) []model.GroupItem {
 			// Exploitation phase: blend success rate with latency
 			scored[i].score = successRate
 			if latencyWeight > 0 {
+				// B4：TTFT 权重启用且该渠道有 TTFT 样本时，用 TTFT EMA 替代总延迟
+				// EMA 作为延迟评分输入（流式体感优先）；无样本回退 GetLatency()。
 				latencyMs := stats.GetLatency()
+				if ttftWeight > 0 {
+					if ttftMs := stats.GetTTFT(); ttftMs > 0 {
+						latencyMs = ttftMs
+					}
+				}
 				latencyScore := normalizeLatency(latencyMs)
 				scored[i].score = successRate*(1-latencyWeight) + latencyScore*latencyWeight
 			}
+			// B3：成本因子——价格目录有数据（AutoPriceFunc 非 nil 且返回 >0）时，
+			// 按价格评分做第二轮混合；未注入/无价格数据时保持原评分。
+			if priceWeight > 0 && AutoPriceFunc != nil {
+				if priceScore := AutoPriceFunc(item.ModelName); priceScore > 0 {
+					scored[i].score = scored[i].score*(1-priceWeight) + priceScore*priceWeight
+				}
+			}
 		}
-
 		// #133: 全熔断的渠道降权排末尾，不剔除（保留 HalfOpen 探测能力）。
 		// 只读查询不触发 Open->HalfOpen 转换；SkipCircuitBreak 仍是最终硬过滤。
 		if IsChannelAllKeysTripped(item.ChannelID, item.ModelName) {
@@ -177,6 +198,12 @@ func (b *Auto) Candidates(items []model.GroupItem) []model.GroupItem {
 	for i, s := range scored {
 		result[i] = s.item
 	}
+
+	// 利用阶段后处理（探索阶段排序保持确定性，不受影响）：
+	// a) 同分桶打散：评分差在 bucketTolerance 内的相邻候选划为同桶，桶内随机洗牌，
+	//    消除「同分渠道轮流垄断流量」的确定性偏差（B2）。
+	// b) softmax 探索：exploreRate>0 时按概率对整体做一次温度采样重排（B2）。
+	autoPostSortShuffle(scored, result)
 	return result
 }
 
@@ -237,28 +264,5 @@ func normalizeLatency(latencyMs float64) float64 {
 	return math.Max(0, 1-latencyMs/maxLatency)
 }
 
-func sortByWeight(items []model.GroupItem) []model.GroupItem {
-	sorted := make([]model.GroupItem, len(items))
-	copy(sorted, items)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		leftWeight := sorted[i].Weight
-		if leftWeight <= 0 {
-			leftWeight = 1
-		}
-		rightWeight := sorted[j].Weight
-		if rightWeight <= 0 {
-			rightWeight = 1
-		}
-		if leftWeight != rightWeight {
-			return leftWeight > rightWeight
-		}
-		if sorted[i].Priority != sorted[j].Priority {
-			return sorted[i].Priority < sorted[j].Priority
-		}
-		if sorted[i].ChannelID != sorted[j].ChannelID {
-			return sorted[i].ChannelID < sorted[j].ChannelID
-		}
-		return sorted[i].ModelName < sorted[j].ModelName
-	})
-	return sorted
-}
+// sortByWeight 已被 smoothWRRSequence 取代（B1）：旧实现只做权重降序排序，
+// 高权重渠道吃满 100% 流量直到挂掉，低权重仅做备胎。删除避免死代码告警。

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Prevent process termination when the relay log queue is full with the `disabled` drop policy.
+- Ensure singleflight leaders write responses and record metrics only once, including failed requests.
+- Clean up group caches and runtime state for all channel deletion paths.
+- Periodically persist site-model hourly statistics, retain failed batches for retry, and invalidate bindings after projection.
+- Continue saving independent caches after an earlier save failure.
+- Abort release builds on platform or artifact failures, freeze frontend dependencies, and test release failure handling in CI.
+
 ## [v2.6.1] - 2026-09-28
 
 ### 🎨 UI/UX

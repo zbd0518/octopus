@@ -218,7 +218,7 @@ build_frontend() {
 
     # Install dependencies
     log_info "Installing frontend dependencies..."
-    if ! pnpm install; then
+    if ! pnpm install --frozen-lockfile; then
         log_error "Failed to install frontend dependencies"
         cd ..
         return 1
@@ -367,7 +367,11 @@ create_archives() {
     local archives_dir="${OUTPUT_DIR}/archives"
 
     # Copy documentation files to archives directory
-    cp README.md LICENSE "${archives_dir}/" 2>/dev/null || log_info "Documentation files not found, skipping"
+    if ! cp README.md LICENSE "${archives_dir}/"; then
+        log_error "Failed to copy distribution documentation"
+        return 1
+    fi
+    local archived_count=0
 
     # Archive all binaries (zip format for all platforms)
     while IFS= read -r -d '' file; do
@@ -383,23 +387,25 @@ create_archives() {
 
         if ! cp "$file" "${archives_dir}/${APP_NAME}${extension}" 2>/dev/null; then
             log_error "Failed to copy $file to ${archives_dir}/${APP_NAME}${extension}"
-            continue
+            return 1
         fi
 
         if archive_zip "${archives_dir}" "${archive_basename}.zip" "${APP_NAME}${extension}" README.md LICENSE; then
             rm -f "${archives_dir}/${APP_NAME}${extension}"
+            archived_count=$((archived_count + 1))
             log_success "Archived: archives/${archive_basename}.zip"
         else
             log_error "Failed to create archive: ${archive_basename}.zip"
             rm -f "${archives_dir}/${APP_NAME}${extension}"
+            return 1
         fi
     done < <(find "${OUTPUT_DIR}/bin/" -name "${APP_NAME}-*" -type f -print0 2>/dev/null)
 
     # Cleanup documentation files from archives directory
     rm -f "${archives_dir}/README.md" "${archives_dir}/LICENSE"
 
-    if ! cd .. 2>/dev/null; then
-        log_error "Failed to return to parent directory"
+    if [ "$archived_count" -eq 0 ]; then
+        log_error "No binaries were archived"
         return 1
     fi
 
@@ -417,9 +423,9 @@ generate_checksums() {
     fi
 
     if ! find . -maxdepth 1 -name "${APP_NAME}-*" -type f | head -1 | grep -q .; then
-        log_info "No build artifacts found in bin directory, skipping checksums"
+        log_error "No build artifacts found in bin directory"
         cd ../.. 2>/dev/null || true
-        return 0
+        return 1
     fi
 
     # Use appropriate checksum command based on OS
@@ -480,19 +486,21 @@ prepare_docker_binaries() {
         if ! mkdir -p "${platform_dir}"; then
             log_error "Failed to create directory: ${platform_dir}"
             log_error "Docker platform: ${docker_platform}"
-            continue
+            return 1
         fi
 
         # Try to copy from binary file first
         if [ -f "${OUTPUT_DIR}/bin/${binary_name}" ]; then
             if cp "${OUTPUT_DIR}/bin/${binary_name}" "${platform_dir}/${APP_NAME}" 2>/dev/null; then
                 log_success "Copied bin/${binary_name} → docker/${docker_platform}/${APP_NAME}"
-                ((copied_count++))
+                copied_count=$((copied_count + 1))
             else
                 log_error "Failed to copy bin/${binary_name} to ${platform_dir}/${APP_NAME}"
+                return 1
             fi
         else
-            log_warning "Binary not found: bin/${binary_name}"
+            log_error "Binary not found: bin/${binary_name}"
+            return 1
         fi
     done
 
@@ -636,42 +644,32 @@ main() {
         log_step "Building binaries"
 
         # Standard builds (pure Go, static binaries)
-        if ! build_standard linux x86_64; then
-            log_error "Failed to build Linux x86_64"
-        fi
-        if ! build_standard linux arm64; then
-            log_error "Failed to build Linux arm64"
-        fi
-        if ! build_standard linux armv7; then
-            log_error "Failed to build Linux armv7"
-        fi
-        if ! build_standard linux x86; then
-            log_error "Failed to build Linux x86"
-        fi
-        if ! build_standard windows x86_64; then
-            log_error "Failed to build Windows x86_64"
-        fi
-        if ! build_standard windows x86; then
-            log_error "Failed to build Windows x86"
-        fi
-        if ! build_standard darwin arm64; then
-            log_error "Failed to build Darwin arm64"
-        fi
-        if ! build_standard darwin x86_64; then
-            log_error "Failed to build Darwin arm64"
-        fi
+        local platforms=(
+            "linux:x86_64" "linux:arm64" "linux:armv7" "linux:x86"
+            "windows:x86_64" "windows:x86" "darwin:arm64" "darwin:x86_64"
+        )
+        local platform
+        for platform in "${platforms[@]}"; do
+            if ! build_standard "${platform%%:*}" "${platform#*:}"; then
+                log_error "Failed to build ${platform}; release aborted"
+                return 1
+            fi
+        done
 
         # Post-processing
         if ! prepare_docker_binaries; then
-            log_warning "Failed to prepare Docker binaries, but continuing..."
+            log_error "Failed to prepare Docker binaries; release aborted"
+            return 1
         fi
 
         if ! generate_checksums; then
-            log_warning "Failed to generate checksums, but continuing..."
+            log_error "Failed to generate checksums; release aborted"
+            return 1
         fi
 
         if ! create_archives; then
-            log_warning "Failed to create archives, but continuing..."
+            log_error "Failed to create archives; release aborted"
+            return 1
         fi
 
         log_step "Build completed"
@@ -696,4 +694,6 @@ main() {
     esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

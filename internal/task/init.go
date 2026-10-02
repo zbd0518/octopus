@@ -6,6 +6,7 @@ import (
 
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/op"
 	"github.com/lingyuins/octopus/internal/op/backup"
 	"github.com/lingyuins/octopus/internal/op/errorlog"
 	porop "github.com/lingyuins/octopus/internal/op/pool"
@@ -39,6 +40,17 @@ const (
 	TaskReportGenerate    = "report_generate"
 	TaskErrorLogCleanup   = "error_log_cleanup"
 )
+
+func statsSaveTask() {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := stats.SaveDB(ctx); err != nil {
+		log.Errorf("stats save db error: %v", err)
+	}
+	if err := op.StatsSiteModelHourlySaveDB(ctx); err != nil {
+		log.Errorf("site model hourly stats save db error: %v", err)
+	}
+}
 
 func Init() {
 	if db.IsSQLite() {
@@ -95,7 +107,7 @@ func Init() {
 		if db.IsSQLite() {
 			Register(TaskStatsSave, statsSaveInterval, false, func() {
 				db.EnqueueWrite(db.WriteJob{Name: "stats_save", Fn: func(_ context.Context) error {
-					stats.SaveDBTask()
+					statsSaveTask()
 					return nil
 				}})
 			})
@@ -106,7 +118,7 @@ func Init() {
 				}})
 			})
 		} else {
-			Register(TaskStatsSave, statsSaveInterval, false, stats.SaveDBTask)
+			Register(TaskStatsSave, statsSaveInterval, false, statsSaveTask)
 			Register(TaskRuntimeState, statsSaveInterval, false, balancer.RuntimeStateSaveDBTask)
 		}
 	}

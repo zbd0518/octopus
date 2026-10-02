@@ -372,44 +372,47 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 	maxTotalAttempts := getMaxTotalAttempts()
 
 	if inflightEnabled {
-		result, sfErr, shared := relayInflightGroup.Do(inflightKey, func() (any, error) {
+		executed := false
+		result, sfErr, _ := relayInflightGroup.Do(inflightKey, func() (any, error) {
+			executed = true
 			return executeRelay(req, group, requestModel, maxKeyRetriesPerRoute, maxRouteRetries, ratelimitCooldown, maxTotalAttempts)
 		})
+		// The leader has already written its response and saved its metrics, even on failure.
+		if executed {
+			return
+		}
 		if sfErr == nil {
 			if outcome, ok := result.(*inflightRelayResult); ok && outcome != nil {
-				if shared {
-					if outcome.namespace != "" && outcome.requestText != "" {
-						cfg, ok := semanticCacheRuntimeConfig()
-						if ok {
-							embedding, _, embErr := lookupSemanticEmbeddingWithCache(req.operationCtx, req, cfg, outcome.namespace, outcome.requestText)
-							if embErr == nil {
-								if payload, found := semantic_cache.Lookup(outcome.namespace, embedding); found {
-									normalizedPayload := semanticCacheHitPayload(payload, internalRequest)
-									c.Data(http.StatusOK, "application/json", normalizedPayload)
-									if internalResponse, parseErr := buildSemanticCacheHitInternalResponse(internalRequest, normalizedPayload); parseErr == nil {
-										metrics.SetInternalResponse(internalResponse, outcome.actualModel)
-									}
-									metrics.Save(true, nil, nil)
-									return
+				if outcome.namespace != "" && outcome.requestText != "" {
+					cfg, ok := semanticCacheRuntimeConfig()
+					if ok {
+						embedding, _, embErr := lookupSemanticEmbeddingWithCache(req.operationCtx, req, cfg, outcome.namespace, outcome.requestText)
+						if embErr == nil {
+							if payload, found := semantic_cache.Lookup(outcome.namespace, embedding); found {
+								normalizedPayload := semanticCacheHitPayload(payload, internalRequest)
+								c.Data(http.StatusOK, "application/json", normalizedPayload)
+								if internalResponse, parseErr := buildSemanticCacheHitInternalResponse(internalRequest, normalizedPayload); parseErr == nil {
+									metrics.SetInternalResponse(internalResponse, outcome.actualModel)
 								}
+								metrics.Save(true, nil, nil)
+								return
 							}
 						}
 					}
-					if resp := cloneInternalResponse(outcome.internalResp); resp != nil {
-						metrics.SetInternalResponse(resp, outcome.actualModel)
-						// Cache miss: the leader already wrote its own response.
-						// Transform the internal response to the inbound format and
-						// write it to the shared caller's context so the client
-						// receives a complete body instead of an empty 200 (4C-01).
-						if inResponse, terr := req.inAdapter.TransformResponse(req.clientCtx, resp); terr == nil && len(inResponse) > 0 {
-							c.Data(http.StatusOK, "application/json", inResponse)
-						} else if terr != nil {
-							logRelayErrorfByContext(terr, "shared caller transform response: %v", terr)
-						}
-					}
-					metrics.Save(true, nil, outcome.attempts)
-					return
 				}
+				if resp := cloneInternalResponse(outcome.internalResp); resp != nil {
+					metrics.SetInternalResponse(resp, outcome.actualModel)
+					// Cache miss: the leader already wrote its own response.
+					// Transform the internal response to the inbound format and
+					// write it to the shared caller's context so the client
+					// receives a complete body instead of an empty 200 (4C-01).
+					if inResponse, terr := req.inAdapter.TransformResponse(req.clientCtx, resp); terr == nil && len(inResponse) > 0 {
+						c.Data(http.StatusOK, "application/json", inResponse)
+					} else if terr != nil {
+						logRelayErrorfByContext(terr, "shared caller transform response: %v", terr)
+					}
+				}
+				metrics.Save(true, nil, outcome.attempts)
 				return
 			}
 		}
@@ -513,6 +516,11 @@ func (ra *relayAttempt) attempt() attemptResult {
 		balancer.RecordAutoSuccess(ra.channel.ID, ra.internalRequest.Model)
 		// Auto策略：记录延迟（毫秒）
 		balancer.RecordAutoLatency(ra.channel.ID, ra.internalRequest.Model, span.Duration().Milliseconds())
+		// Auto策略：记录首 Token 延迟（TTFT，毫秒）。仅流式请求有 FirstTokenTime；
+		// 非流式请求无首 token 概念，IsZero()==true 时自然跳过不记录（issue #183）。
+		if !ra.metrics.FirstTokenTime.IsZero() {
+			balancer.RecordAutoTTFT(ra.channel.ID, ra.internalRequest.Model, ra.metrics.FirstTokenTime.Sub(ra.metrics.StartTime).Milliseconds())
+		}
 		// 可用度：成功加分（上限 100），仅 availability 策略生效。
 		balancer.RecordKeyAvailability(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, statusCode, true)
 		// 速度策略：记录 EMA 平滑 TPS（output_tokens / duration_seconds），仅 speed 策略生效。

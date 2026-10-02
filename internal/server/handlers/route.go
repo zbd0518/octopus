@@ -57,8 +57,10 @@ func generateAIRoute(c *gin.Context) {
 
 	progress, err := helper.StartGenerateAIRoute(req)
 	if err != nil {
-		resp.Error(c, http.StatusBadRequest, err.Error())
-		return
+		// StartGenerateAIRoute 的错误可能是结构化 *apperror.Error（airoute 包的
+		// errAIRoute* 系列），ErrorWithAppError 会透传 Code 作为 message_key、
+		// Params 作为 message_args，前端按 locale 渲染（A3 同步路径补全）。
+		resp.ErrorWithAppError(c, http.StatusBadRequest, err)
 	}
 
 	resp.Success(c, progress)

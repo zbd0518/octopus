@@ -280,7 +280,6 @@ func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) error {
 		case "disabled":
 			// 阻塞触发刷盘（旧行为：满 200 触发异步 flush，本次直接返回）
 			if enabled {
-				relayLogCacheLock.Unlock()
 				triggerFlush()
 				return nil
 			}

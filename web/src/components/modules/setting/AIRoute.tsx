@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState, type MutableRefObject } from 'react';
-import { Bot, Clock3, KeyRound, Link2, Sparkles } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import { Bot, Clock3, KeyRound, Link2, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { Hint } from '@/components/ui/hint';
 import {
     Select,
@@ -15,6 +17,11 @@ import {
 import { useGroupList } from '@/api/endpoints/group';
 import { SettingKey, useSetSetting, useSettingList } from '@/api/endpoints/setting';
 import { toast } from '@/components/common/Toast';
+import {
+    parseServicesJSON,
+    serializeServicesRows,
+    type AIRouteServiceRow,
+} from './ai-route-services';
 
 export function SettingAIRoute() {
     const t = useTranslations('setting');
@@ -28,7 +35,10 @@ export function SettingAIRoute() {
     const [model, setModel] = useState('');
     const [timeoutSeconds, setTimeoutSeconds] = useState('180');
     const [parallelism, setParallelism] = useState('3');
-    const [servicesJSON, setServicesJSON] = useState('[]');
+    const [maxModels, setMaxModels] = useState('120');
+    const [serviceRows, setServiceRows] = useState<AIRouteServiceRow[]>([]);
+    const [servicesJSONInvalid, setServicesJSONInvalid] = useState(false);
+    const [servicesRawFallback, setServicesRawFallback] = useState('');
 
     const initialGroupID = useRef('0');
     const initialBaseURL = useRef('');
@@ -36,6 +46,7 @@ export function SettingAIRoute() {
     const initialModel = useRef('');
     const initialTimeoutSeconds = useRef('180');
     const initialParallelism = useRef('3');
+    const initialMaxModels = useRef('120');
     const initialServicesJSON = useRef('[]');
 
     useEffect(() => {
@@ -73,10 +84,24 @@ export function SettingAIRoute() {
             queueMicrotask(() => setParallelism(parallelismSetting.value || '3'));
             initialParallelism.current = parallelismSetting.value || '3';
         }
+        const maxModelsSetting = settings.find((item) => item.key === SettingKey.AIRouteMaxModelsPerRequest);
+        if (maxModelsSetting) {
+            queueMicrotask(() => setMaxModels(maxModelsSetting.value || '120'));
+            initialMaxModels.current = maxModelsSetting.value || '120';
+        }
         if (servicesSetting) {
-            const nextValue = servicesSetting.value || '[]';
-            queueMicrotask(() => setServicesJSON(nextValue));
-            initialServicesJSON.current = nextValue;
+            const raw = servicesSetting.value || '[]';
+            const { rows, invalid } = parseServicesJSON(raw);
+            if (invalid) {
+                // 兼容回退：存量非法 JSON 时展示原文并允许手动修复，而不是只弹错误。
+                setServicesJSONInvalid(true);
+                queueMicrotask(() => setServicesRawFallback(raw));
+            } else if (rows) {
+                queueMicrotask(() => setServiceRows(rows));
+                setServicesJSONInvalid(false);
+                setServicesRawFallback('');
+            }
+            initialServicesJSON.current = raw;
         }
     }, [settings]);
 
@@ -94,31 +119,55 @@ export function SettingAIRoute() {
         );
     };
 
-    const saveServicesSetting = () => {
-        const normalizedValue = servicesJSON.trim() === '' ? '[]' : servicesJSON;
-        if (normalizedValue === initialServicesJSON.current) {
-            if (normalizedValue !== servicesJSON) {
-                setServicesJSON(normalizedValue);
-            }
-            return;
-        }
+    const enabledServiceCount = useMemo(
+        () => serviceRows.filter((row) => row.enabled).length,
+        [serviceRows],
+    );
 
-        try {
-            const parsed = JSON.parse(normalizedValue);
-            if (!Array.isArray(parsed)) {
-                throw new Error('not-array');
-            }
-        } catch {
+    const updateServiceRow = (index: number, patch: Partial<AIRouteServiceRow>) => {
+        setServiceRows((prev) => {
+            const next = prev.map((row, i) => (i === index ? { ...row, ...patch } : row));
+            return next;
+        });
+    };
+
+    const addServiceRow = () => {
+        setServiceRows((prev) => [...prev, { name: '', baseUrl: '', apiKey: '', model: '', enabled: true }]);
+    };
+
+    const removeServiceRow = (index: number) => {
+        const next = serviceRows.filter((_, i) => i !== index);
+        setServiceRows(next);
+        saveServicesRows(next);
+    };
+
+    const saveServicesRows = (rows: AIRouteServiceRow[]) => {
+        const normalized = serializeServicesRows(rows);
+        if (normalized === initialServicesJSON.current) return;
+        setSetting.mutate(
+            { key: SettingKey.AIRouteServices, value: normalized },
+            {
+                onSuccess: () => {
+                    toast.success(t('saved'));
+                    initialServicesJSON.current = normalized;
+                },
+            },
+        );
+    };
+
+    // 手动修复回退：尝试重新解析 textarea 中的原文，合法则切回结构化编辑器并保存。
+    const retryParseServicesFallback = () => {
+        const raw = servicesRawFallback.trim();
+        const { rows, invalid } = parseServicesJSON(raw === '' ? '[]' : raw);
+        if (invalid || !rows) {
             toast.error(t('aiRoute.services.invalid'));
             return;
         }
-
-        if (normalizedValue !== servicesJSON) {
-            setServicesJSON(normalizedValue);
-        }
-        saveSetting(SettingKey.AIRouteServices, normalizedValue, initialServicesJSON);
+        setServiceRows(rows);
+        setServicesJSONInvalid(false);
+        setServicesRawFallback('');
+        saveServicesRows(rows);
     };
-
     return (
         <div className="relative overflow-hidden rounded-xl border-border/35 bg-card p-6 text-card-foreground shadow-md ">
             <div className="space-y-5">
@@ -251,23 +300,143 @@ export function SettingAIRoute() {
                             className="w-full rounded-lg"
                         />
                     </div>
+
+                    <div className="space-y-3 rounded-lg border-border/30 bg-card p-4 shadow-sm">
+                        <div className="flex items-center gap-3">
+                            <Sparkles className="h-5 w-5 text-muted-foreground" />
+                            <span className="text-sm font-medium">
+                                {t('aiRoute.maxModels.label')}
+                                <Hint text={t('aiRoute.maxModels.hint')} />
+                            </span>
+                        </div>
+                        <Input
+                            type="number"
+                            min="1"
+                            value={maxModels}
+                            onChange={(event) => setMaxModels(event.target.value)}
+                            onBlur={() => saveSetting(SettingKey.AIRouteMaxModelsPerRequest, maxModels, initialMaxModels)}
+                            placeholder={t('aiRoute.maxModels.placeholder')}
+                            className="w-full rounded-lg"
+                        />
+                    </div>
                 </div>
 
                 <div className="space-y-3 rounded-lg border-border/30 bg-card p-4 shadow-sm">
-                    <div className="flex items-center gap-3">
-                        <Link2 className="h-5 w-5 text-muted-foreground" />
-                        <span className="text-sm font-medium">
-                            {t('aiRoute.services.label')}
-                            <Hint text={t('aiRoute.services.hint')} />
-                        </span>
+                    <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                            <Link2 className="h-5 w-5 text-muted-foreground" />
+                            <span className="text-sm font-medium">
+                                {t('aiRoute.services.label')}
+                                <Hint text={t('aiRoute.services.hint')} />
+                            </span>
+                        </div>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={addServiceRow}
+                            disabled={servicesJSONInvalid}
+                        >
+                            <Plus className="h-4 w-4" />
+                            {t('aiRoute.services.add')}
+                        </Button>
                     </div>
-                    <textarea
-                        value={servicesJSON}
-                        onChange={(event) => setServicesJSON(event.target.value)}
-                        onBlur={saveServicesSetting}
-                        placeholder={t('aiRoute.services.placeholder')}
-                        className=" min-h-44 w-full rounded-lg border border-border/35 bg-card px-4 py-3 font-mono text-sm text-foreground shadow-inner outline-none transition-[border-color,box-shadow] duration-300 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20"
-                    />
+
+                    {servicesJSONInvalid ? (
+                        <div className="space-y-2.5">
+                            <p className="text-sm text-destructive">{t('aiRoute.services.invalidStored')}</p>
+                            <textarea
+                                value={servicesRawFallback}
+                                onChange={(event) => setServicesRawFallback(event.target.value)}
+                                spellCheck={false}
+                                className="min-h-44 w-full rounded-lg border border-border/35 bg-card px-4 py-3 font-mono text-sm text-foreground shadow-inner outline-none transition-[border-color,box-shadow] duration-300 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20"
+                            />
+                            <div className="flex items-center justify-end gap-2">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={retryParseServicesFallback}
+                                >
+                                    {t('aiRoute.services.retryParse')}
+                                </Button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            {serviceRows.length === 0 && (
+                                <p className="text-sm text-muted-foreground">{t('aiRoute.services.empty')}</p>
+                            )}
+                            {serviceRows.map((row, index) => (
+                                <div
+                                    key={index}
+                                    className="space-y-2.5 rounded-lg border border-border/30 bg-card p-3.5 shadow-sm"
+                                >
+                                    <div className="flex items-center justify-between gap-3">
+                                        <span className="text-xs font-medium text-muted-foreground">
+                                            {t('aiRoute.services.serviceIndex', { index: index + 1 })}
+                                            {row.enabled ? '' : ` · ${t('aiRoute.services.disabledTag')}`}
+                                        </span>
+                                        <div className="flex items-center gap-2">
+                                            <Switch
+                                                checked={row.enabled}
+                                                onCheckedChange={(checked) => updateServiceRow(index, { enabled: checked })}
+                                            />
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                onClick={() => removeServiceRow(index)}
+                                            >
+                                                <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                    <div className="grid gap-2.5 sm:grid-cols-2">
+                                        <Input
+                                            value={row.name}
+                                            onChange={(event) => updateServiceRow(index, { name: event.target.value })}
+                                            placeholder={t('aiRoute.services.namePlaceholder')}
+                                            className="w-full rounded-lg"
+                                        />
+                                        <Input
+                                            value={row.model}
+                                            onChange={(event) => updateServiceRow(index, { model: event.target.value })}
+                                            placeholder={t('aiRoute.services.modelPlaceholder')}
+                                            className="w-full rounded-lg"
+                                        />
+                                        <Input
+                                            value={row.baseUrl}
+                                            onChange={(event) => updateServiceRow(index, { baseUrl: event.target.value })}
+                                            placeholder={t('aiRoute.services.baseUrlPlaceholder')}
+                                            className="w-full rounded-lg sm:col-span-2"
+                                        />
+                                        <Input
+                                            type="password"
+                                            value={row.apiKey}
+                                            onChange={(event) => updateServiceRow(index, { apiKey: event.target.value })}
+                                            placeholder={t('aiRoute.services.apiKeyPlaceholder')}
+                                            className="w-full rounded-lg sm:col-span-2"
+                                        />
+                                    </div>
+                                </div>
+                            ))}
+                            {serviceRows.length > 0 && (
+                                <div className="flex items-center justify-between gap-3 pt-1">
+                                    <span className="text-xs text-muted-foreground">
+                                        {t('aiRoute.services.enabledCount', {
+                                            enabled: enabledServiceCount,
+                                            total: serviceRows.length,
+                                        })}
+                                    </span>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => saveServicesRows(serviceRows)}
+                                    >
+                                        {t('aiRoute.services.save')}
+                                    </Button>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

@@ -92,6 +92,8 @@ go run main.go start
 
 If `static/out/` already contains built frontend assets, the Go binary serves the management UI directly. Otherwise, Octopus still starts normally and exposes the API endpoints, but the management UI is unavailable until you build the frontend and place the exported assets under `static/out/` before running `go build` / `go run`.
 
+Release builds (`bash scripts/build.sh release`) use `--frozen-lockfile` and abort on any platform build or artifact preparation failure. Run `bash scripts/build_test.sh` to verify failure handling without a full build.
+
 **Build frontend assets for the embedded management UI**
 
 ```bash

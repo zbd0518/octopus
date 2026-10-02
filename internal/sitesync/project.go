@@ -17,6 +17,7 @@ import (
 )
 
 func ProjectAccount(ctx context.Context, accountID int) ([]int, error) {
+	defer op.InvalidateSiteBindingCache()
 	siteRecord, account, err := loadSiteAccount(ctx, accountID)
 	if err != nil {
 		return nil, err

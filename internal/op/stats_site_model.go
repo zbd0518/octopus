@@ -37,6 +37,8 @@ type siteModelHourlyKey struct {
 
 var siteModelHourlyCache = make(map[siteModelHourlyKey]*model.StatsSiteModelHourly)
 var siteModelHourlyCacheLock sync.Mutex
+var siteModelHourlyFlushLock sync.Mutex
+var siteBindingCacheLock sync.Mutex
 
 // StatsSiteModelHourlyUpdate 记录一次站点渠道请求到对应小时桶。
 // 非站点渠道（无绑定）会被静默忽略。
@@ -113,6 +115,8 @@ func StatsSiteModelHourlyRecordAttempts(attempts []model.ChannelAttempt, fallbac
 // StatsSiteModelHourlySaveDB 把内存桶批量 upsert 入库。
 // 由 stats 后台任务调用。
 func StatsSiteModelHourlySaveDB(ctx context.Context) error {
+	siteModelHourlyFlushLock.Lock()
+	defer siteModelHourlyFlushLock.Unlock()
 	siteModelHourlyCacheLock.Lock()
 	if len(siteModelHourlyCache) == 0 {
 		siteModelHourlyCacheLock.Unlock()
@@ -126,22 +130,42 @@ func StatsSiteModelHourlySaveDB(ctx context.Context) error {
 	siteModelHourlyCacheLock.Unlock()
 
 	dbConn := db.GetDB().WithContext(ctx)
-	return dbConn.Clauses(clause.OnConflict{
+	assignments := make(map[string]any)
+	for _, column := range []string{"input_token", "output_token", "input_cost", "output_cost", "wait_time", "request_success", "request_failed", "last_request_at"} {
+		current := "stats_site_model_hourlies." + column
+		incoming := "EXCLUDED." + column
+		if dbConn.Dialector.Name() == "mysql" {
+			incoming = "VALUES(" + column + ")"
+		}
+		if column == "last_request_at" {
+			assignments[column] = gorm.Expr("CASE WHEN " + current + " > " + incoming + " THEN " + current + " ELSE " + incoming + " END")
+		} else {
+			assignments[column] = gorm.Expr(current + " + " + incoming)
+		}
+	}
+	err := dbConn.Clauses(clause.OnConflict{
 		Columns: []clause.Column{
 			{Name: "hour"}, {Name: "site_account_id"}, {Name: "group_key"}, {Name: "model_name"},
 		},
-		DoUpdates: clause.Assignments(map[string]interface{}{
-			"date":            clause.Column{Name: "date"},
-			"input_token":     gorm.Expr("stats_site_model_hourlies.input_token + EXCLUDED.input_token"),
-			"output_token":    gorm.Expr("stats_site_model_hourlies.output_token + EXCLUDED.output_token"),
-			"input_cost":      gorm.Expr("stats_site_model_hourlies.input_cost + EXCLUDED.input_cost"),
-			"output_cost":     gorm.Expr("stats_site_model_hourlies.output_cost + EXCLUDED.output_cost"),
-			"wait_time":       gorm.Expr("stats_site_model_hourlies.wait_time + EXCLUDED.wait_time"),
-			"request_success": gorm.Expr("stats_site_model_hourlies.request_success + EXCLUDED.request_success"),
-			"request_failed":  gorm.Expr("stats_site_model_hourlies.request_failed + EXCLUDED.request_failed"),
-			"last_request_at": gorm.Expr("MAX(stats_site_model_hourlies.last_request_at, EXCLUDED.last_request_at)"),
-		}),
+		DoUpdates: clause.Assignments(assignments),
 	}).Create(&rows).Error
+	if err != nil {
+		siteModelHourlyCacheLock.Lock()
+		defer siteModelHourlyCacheLock.Unlock()
+		for _, row := range rows {
+			key := siteModelHourlyKey{Hour: row.Hour, SiteAccountID: row.SiteAccountID, GroupKey: row.GroupKey, ModelName: row.ModelName}
+			if pending, ok := siteModelHourlyCache[key]; ok {
+				pending.StatsMetrics.Add(row.StatsMetrics)
+				if row.LastRequestAt > pending.LastRequestAt {
+					pending.LastRequestAt = row.LastRequestAt
+				}
+			} else {
+				copy := row
+				siteModelHourlyCache[key] = &copy
+			}
+		}
+	}
+	return err
 }
 
 const siteChannelModelHistoryWindow = 90 * 24 * time.Hour
@@ -342,6 +366,8 @@ func chooseBucketSpan(spanSeconds int64) int {
 
 // lookupChannelSiteBinding 查询并缓存 channelID → 站点绑定信息。
 func lookupChannelSiteBinding(channelID int) (channelSiteBinding, error) {
+	siteBindingCacheLock.Lock()
+	defer siteBindingCacheLock.Unlock()
 	if cached, ok := siteBindingByChannelCache.Get(channelID); ok {
 		return cached, nil
 	}
@@ -385,5 +411,12 @@ func deleteSiteModelHourlyCacheForAccounts(accountIDs []int) {
 
 // invalidateSiteBindingCache 在站点账号变更时清理映射缓存。
 func invalidateSiteBindingCache() {
+	InvalidateSiteBindingCache()
+}
+
+// InvalidateSiteBindingCache clears bindings after projection or account changes.
+func InvalidateSiteBindingCache() {
+	siteBindingCacheLock.Lock()
+	defer siteBindingCacheLock.Unlock()
 	siteBindingByChannelCache.Clear()
 }

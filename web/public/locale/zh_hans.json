@@ -1604,6 +1604,26 @@
         "label": "延迟权重（0-100）",
         "hint": "值越大，自动策略越偏向低延迟渠道；值越小，越偏向成功率。",
         "placeholder": "30"
+      },
+      "ttftWeight": {
+        "label": "TTFT 权重（0-100）",
+        "hint": "首 Token 时间权重。大于 0 且渠道有 TTFT 样本时，延迟评分改用首 Token 时间（流式体感优先）；无样本自动回退总延迟。",
+        "placeholder": "0"
+      },
+      "priceWeight": {
+        "label": "成本权重（0-100）",
+        "hint": "大于 0 时按价格目录的模型单价对评分降权，让便宜且健康的渠道优先出场；无价格数据的渠道不受影响。",
+        "placeholder": "0"
+      },
+      "exploreRate": {
+        "label": "探索概率（0-100）",
+        "hint": "大于 0 时按评分 softmax 概率随机化候选顺序，避免单一渠道垄断流量；0 保持纯贪心（旧行为）。",
+        "placeholder": "0"
+      },
+      "bucketTolerance": {
+        "label": "同分桶容差（0-100）",
+        "hint": "评分差在该容差内的渠道视为同分，桶内随机打散顺序，消除轮流垄断。0 关闭打散。",
+        "placeholder": "5"
       }
     },
     "aiRoute": {
@@ -1636,11 +1656,28 @@
         "placeholder": "请输入大于 0 的整数",
         "hint": "控制 AI 路由 bucket 的最大并发分析数。默认 3，可自定义更高并发；实际执行不会超过当前任务批次数。"
       },
+      "maxModels": {
+        "label": "单批次最大模型数",
+        "placeholder": "请输入大于 0 的整数",
+        "hint": "超过该数量的模型列表会按模型家族切分成多个分析批次。上下文窗口大的分析模型可调高（如 200）以获得更完整的跨家族归一；模型经常被拆散漏归类时可尝试调大。"
+      },
       "services": {
-        "label": "AI 服务池（JSON）",
+        "label": "AI 服务池",
         "placeholder": "请输入 AI 服务配置 JSON 数组",
-        "hint": "留空或 [] 时继续使用上面的单服务配置；填写 JSON 数组后会启用多服务池和失败切换。",
-        "invalid": "AI 服务池 JSON 必须是数组"
+        "hint": "留空或 [] 时继续使用上面的单服务配置；配置服务后启用多服务池和失败切换。",
+        "invalid": "AI 服务池 JSON 必须是数组",
+        "add": "添加服务",
+        "empty": "当前没有配置任何 AI 路由分析服务。",
+        "invalidStored": "存量 AI 服务池配置不是合法的 JSON 数组。请在下方修正原文后重试，即可回到结构化编辑。",
+        "retryParse": "重新解析",
+        "serviceIndex": "服务 {index}",
+        "disabledTag": "已停用",
+        "enabledCount": "已启用 {enabled}/{total}",
+        "save": "保存服务池",
+        "namePlaceholder": "服务名称（可选）",
+        "baseUrlPlaceholder": "Base URL（OpenAI 兼容）",
+        "apiKeyPlaceholder": "API Key",
+        "modelPlaceholder": "模型名称"
       }
     },
     "semanticCache": {
@@ -2476,7 +2513,14 @@
           "channelFailedWithReason": "渠道处理失败：{reason}",
           "partialFailure": "AI 路由部分失败，但已保留成功写入的 {success_groups} 个分组：{cause}",
           "channelFailed": "当前渠道处理失败。",
-          "batchFailed": "当前批次失败。"
+          "batchFailed": "当前批次失败。",
+          "noService": "没有可用的 AI 路由分析服务（第 {batch_index} 批）。",
+          "emptyResult": "AI返回结果为空。",
+          "invalidJSON": "AI返回结果不是合法JSON。",
+          "rateLimited": "AI 分析服务触发限流，正在尝试切换其他服务{body_suffix}",
+          "upstreamTimeout": "AI 分析服务响应超时，请更换更快的 AI 模型，或减少待分析模型数量后重试{body_suffix}",
+          "unavailable": "AI 分析服务暂时不可用，请稍后重试{body_suffix}",
+          "upstreamStatus": "AI 分析失败：上游状态 {status}{body_suffix}"
         }
       }
     },
@@ -2519,6 +2563,14 @@
         "resultPassed": "通过",
         "resultFailed": "失败",
         "resultAttempts": "重试 {count} 次",
+        "toggleDetails": "展开或收起错误详情",
+        "waitingResults": "等待检测结果…",
+        "noResults": "暂无检测结果",
+        "passedCount": "通过 {count} 个",
+        "failedCount": "失败 {count} 个",
+        "testing": "检测中",
+        "viewLabel": "分组编辑视图",
+        "resultsTab": "检测结果",
         "removeFailedConfirm": "移除后需要重新检测才能恢复，确定继续吗？"
       },
       "actions": {
