@@ -23,6 +23,7 @@ import (
 	"github.com/lingyuins/octopus/internal/server/auth"
 	"github.com/lingyuins/octopus/internal/server/middleware"
 	"github.com/lingyuins/octopus/internal/server/router"
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
@@ -556,7 +557,7 @@ type tokenExchangeResponse struct {
 }
 
 func exchangeCode(ctx context.Context, tokenURL string, form url.Values) (*tokenExchangeResponse, error) {
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := &http.Client{Timeout: 20 * time.Second, Transport: httpx.WithUserAgent(nil)}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err

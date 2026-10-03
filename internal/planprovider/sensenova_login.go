@@ -26,6 +26,7 @@ import (
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/utils/crypto"
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
@@ -119,8 +120,9 @@ func senseNovaOIDCLogin(ctx context.Context, username, password string) (*senseN
 		return nil, fmt.Errorf("sensenova_login: create cookie jar: %w", err)
 	}
 	client := &http.Client{
-		Timeout: requestTimeout,
-		Jar:     jar,
+		Timeout:   requestTimeout,
+		Jar:       jar,
+		Transport: httpx.WithUserAgent(nil),
 	}
 	// 2. 打开授权页（跟随重定向到登录页，解析 login_challenge）
 	authURL := fmt.Sprintf("%s?response_type=code&client_id=%s&code_challenge_method=S256&code_challenge=%s&redirect_uri=%s&scope=%s&state=%s&lang=zh-CN",
@@ -257,7 +259,7 @@ func senseNovaExchangeCode(ctx context.Context, client *http.Client, code, codeV
 
 // senseNovaRefreshAccessToken 用 refresh_token 续期 access_token。
 func senseNovaRefreshAccessToken(ctx context.Context, refreshToken string) (*senseNovaSession, error) {
-	client := &http.Client{Timeout: requestTimeout}
+	client := &http.Client{Timeout: requestTimeout, Transport: httpx.WithUserAgent(nil)}
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)

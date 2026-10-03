@@ -18,6 +18,7 @@ import (
 
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/setting"
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 )
 
 func notifyHTTPClient() *http.Client {
@@ -25,7 +26,7 @@ func notifyHTTPClient() *http.Client {
 	if v, err := setting.GetInt(model.SettingKeyNotifyHTTPTimeoutSeconds); err == nil && v > 0 {
 		timeout = time.Duration(v) * time.Second
 	}
-	return &http.Client{Timeout: timeout}
+	return &http.Client{Timeout: timeout, Transport: httpx.WithUserAgent(nil)}
 }
 
 // AlertWebhookPayload is the JSON body sent to webhook endpoints on alert state changes.

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 )
 
 type EmbeddingClient struct {
@@ -34,7 +36,8 @@ func NewEmbeddingClient(cfg RuntimeConfig) *EmbeddingClient {
 		apiKey:  cfg.EmbeddingAPIKey,
 		model:   cfg.EmbeddingModel,
 		httpClient: &http.Client{
-			Timeout: timeout,
+			Timeout:   timeout,
+			Transport: httpx.WithUserAgent(nil),
 		},
 	}
 }

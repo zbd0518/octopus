@@ -15,6 +15,7 @@ import (
 
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/utils/crypto"
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
@@ -99,7 +100,7 @@ func deepseekPlatformLogin(ctx context.Context, username, password string) (stri
 	req.Header.Set("Referer", "https://platform.deepseek.com/")
 	req.Header.Set("Origin", "https://platform.deepseek.com")
 
-	resp, err := (&http.Client{Timeout: requestTimeout}).Do(req)
+	resp, err := (&http.Client{Timeout: requestTimeout, Transport: httpx.WithUserAgent(nil)}).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("deepseek_login: login request: %w", err)
 	}
@@ -215,7 +216,7 @@ func queryDeepSeekUsage(ctx context.Context, token string, now time.Time) (*deep
 	req.Header.Set("x-client-timezone-offset", "28800")
 	req.Header.Set("x-client-version", "1.0.0")
 
-	resp, err := (&http.Client{Timeout: requestTimeout}).Do(req)
+	resp, err := (&http.Client{Timeout: requestTimeout, Transport: httpx.WithUserAgent(nil)}).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("deepseek_usage: request: %w", err)
 	}

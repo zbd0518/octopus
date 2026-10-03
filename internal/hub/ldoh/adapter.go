@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 )
 
 // DiscoveredSite represents a site found via public directory.
@@ -28,7 +29,7 @@ func DiscoverSites(ctx context.Context) ([]DiscoveredSite, error) {
 
 	var allSites []DiscoveredSite
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{Timeout: 15 * time.Second, Transport: httpx.WithUserAgent(nil)}
 	for _, dirURL := range directories {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, dirURL, nil)
 		if err != nil {

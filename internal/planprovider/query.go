@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 )
 
 const requestTimeout = 15 * time.Second
@@ -41,7 +42,7 @@ func planQueryHTTPClient(mode model.ProxyUsageMode, configID *int) (*http.Client
 		}
 		cloned := transport.Clone()
 		cloned.Proxy = http.ProxyFromEnvironment
-		return &http.Client{Timeout: requestTimeout, Transport: cloned}, nil
+		return &http.Client{Timeout: requestTimeout, Transport: httpx.WithUserAgent(cloned)}, nil
 	case model.ProxyUsageModePool:
 		if configID == nil || *configID <= 0 {
 			return nil, fmt.Errorf("proxy config id is required when proxy mode is pool")
@@ -63,9 +64,9 @@ func planQueryHTTPClient(mode model.ProxyUsageMode, configID *int) (*http.Client
 		}
 		cloned := transport.Clone()
 		cloned.Proxy = http.ProxyURL(proxyURL)
-		return &http.Client{Timeout: requestTimeout, Transport: cloned}, nil
+		return &http.Client{Timeout: requestTimeout, Transport: httpx.WithUserAgent(cloned)}, nil
 	default:
-		return &http.Client{Timeout: requestTimeout}, nil
+		return &http.Client{Timeout: requestTimeout, Transport: httpx.WithUserAgent(nil)}, nil
 	}
 }
 
@@ -573,7 +574,7 @@ func queryStepFunPlanTokenPlan(ctx context.Context, oasisToken string) (*TokenPl
 	req.Header.Set("Referer", "https://platform.stepfun.com/plan-subscribe")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36")
 
-	client := &http.Client{Timeout: requestTimeout}
+	client := &http.Client{Timeout: requestTimeout, Transport: httpx.WithUserAgent(nil)}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("stepfun_plan: http request: %w", err)
@@ -714,7 +715,7 @@ func querySenseNovaPlanTokenPlan(ctx context.Context, token string) (*TokenPlanR
 	req.Header.Set("Referer", "https://platform.sensenova.cn/console")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36")
 
-	client := &http.Client{Timeout: requestTimeout}
+	client := &http.Client{Timeout: requestTimeout, Transport: httpx.WithUserAgent(nil)}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("sensenova_plan: http request: %w", err)
@@ -969,7 +970,8 @@ func mimoFollowRedirect(ctx context.Context, reqURL, cookie string) (string, err
 	req.Header.Set("Referer", "https://platform.xiaomimimo.com/")
 
 	client := &http.Client{
-		Timeout: requestTimeout,
+		Timeout:   requestTimeout,
+		Transport: httpx.WithUserAgent(nil),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -1002,7 +1004,8 @@ func mimoGetServiceCookie(ctx context.Context, stsURL, passTokenCookie string) (
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36")
 
 	client := &http.Client{
-		Timeout: requestTimeout,
+		Timeout:   requestTimeout,
+		Transport: httpx.WithUserAgent(nil),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -1070,7 +1073,7 @@ func doMiMoGet(ctx context.Context, url, cookie string) ([]byte, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36")
 
-	client := &http.Client{Timeout: requestTimeout}
+	client := &http.Client{Timeout: requestTimeout, Transport: httpx.WithUserAgent(nil)}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http request: %w", err)
@@ -1471,7 +1474,7 @@ func bailianGatewayPost(ctx context.Context, cookie, apiPath, dataJSON string) (
 	req.Header.Set("Referer", "https://bailian.console.aliyun.com/")
 	req.Header.Set("Origin", "https://bailian.console.aliyun.com")
 
-	client := &http.Client{Timeout: requestTimeout}
+	client := &http.Client{Timeout: requestTimeout, Transport: httpx.WithUserAgent(nil)}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http post: %w", err)
@@ -1525,7 +1528,7 @@ func queryVolcenginePlanTokenPlan(ctx context.Context, credential string) (*Toke
 	req.Header.Set("Referer", "https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan")
 	req.Header.Set("Origin", "https://console.volcengine.com")
 
-	client := &http.Client{Timeout: requestTimeout}
+	client := &http.Client{Timeout: requestTimeout, Transport: httpx.WithUserAgent(nil)}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http post: %w", err)
@@ -1630,7 +1633,7 @@ func doGet(ctx context.Context, url, apiKey string) ([]byte, error) {
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: requestTimeout}
+	client := &http.Client{Timeout: requestTimeout, Transport: httpx.WithUserAgent(nil)}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http get %s: %w", url, err)
@@ -1696,7 +1699,7 @@ func queryZhipuTeamTokenPlan(ctx context.Context, apiKey, organizationID, projec
 	req.Header.Set("bigmodel-project", projectID)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: requestTimeout}
+	client := &http.Client{Timeout: requestTimeout, Transport: httpx.WithUserAgent(nil)}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http get %s: %w", reqURL, err)
@@ -1932,7 +1935,7 @@ func volcengineOpenAPICall(ctx context.Context, ak, sk, action string) ([]volcen
 	req.Header.Set("Content-Type", volcengineContentType)
 	req.Header.Set("Authorization", authorization)
 
-	client := &http.Client{Timeout: requestTimeout}
+	client := &http.Client{Timeout: requestTimeout, Transport: httpx.WithUserAgent(nil)}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("http post: %w", err)

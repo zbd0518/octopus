@@ -11,6 +11,7 @@ import (
 
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 )
 
 // makeTestCodexOAuthKey 构造合法的 Codex OAuth JSON 凭据（测试用）。
@@ -184,9 +185,8 @@ func TestPlanQueryHTTPClient_Direct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("planQueryHTTPClient() error = %v", err)
 	}
-	// direct 模式 Transport 为 nil（使用 http.DefaultTransport，无自定义代理）
-	if client.Transport != nil {
-		t.Errorf("direct mode Transport = %T, want nil (default transport)", client.Transport)
+	if client.Transport == nil || httpx.BaseTransport(client.Transport) != http.DefaultTransport {
+		t.Errorf("direct mode Transport = %T, want wrapped http.DefaultTransport", client.Transport)
 	}
 	if client.Timeout != requestTimeout {
 		t.Errorf("Timeout = %v, want %v", client.Timeout, requestTimeout)
@@ -198,9 +198,9 @@ func TestPlanQueryHTTPClient_System(t *testing.T) {
 	if err != nil {
 		t.Fatalf("planQueryHTTPClient() error = %v", err)
 	}
-	transport, ok := client.Transport.(*http.Transport)
+	transport, ok := httpx.BaseTransport(client.Transport).(*http.Transport)
 	if !ok {
-		t.Fatalf("Transport is %T, want *http.Transport", client.Transport)
+		t.Fatalf("BaseTransport(Transport) is %T, want *http.Transport", httpx.BaseTransport(client.Transport))
 	}
 	if transport.Proxy == nil {
 		t.Fatal("system mode should have proxy func set")
@@ -232,9 +232,9 @@ func TestPlanQueryHTTPClient_Pool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("planQueryHTTPClient() error = %v", err)
 	}
-	transport, ok := client.Transport.(*http.Transport)
+	transport, ok := httpx.BaseTransport(client.Transport).(*http.Transport)
 	if !ok {
-		t.Fatalf("Transport is %T, want *http.Transport", client.Transport)
+		t.Fatalf("BaseTransport(Transport) is %T, want *http.Transport", httpx.BaseTransport(client.Transport))
 	}
 	if transport.Proxy == nil {
 		t.Fatal("pool mode should have proxy func set")

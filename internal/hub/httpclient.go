@@ -12,12 +12,14 @@ import (
 
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/utils/crypto"
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 	"github.com/lingyuins/octopus/internal/utils/xurl"
 )
 
 var httpClient = &http.Client{
 	Timeout:       30 * time.Second,
 	CheckRedirect: xurl.CheckRedirectSafe(5),
+	Transport:     httpx.WithUserAgent(nil),
 }
 
 // AdapterHTTPClient is a shared HTTP client with a 30-second timeout,
@@ -26,6 +28,7 @@ var httpClient = &http.Client{
 var AdapterHTTPClient = &http.Client{
 	Timeout:       30 * time.Second,
 	CheckRedirect: xurl.CheckRedirectSafe(5),
+	Transport:     httpx.WithUserAgent(nil),
 }
 
 // apiResponse is the generic envelope returned by One API / New API compatible backends.

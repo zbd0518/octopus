@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 	"github.com/lingyuins/octopus/internal/utils/xurl"
 )
 
@@ -78,7 +79,7 @@ func detectByPageTitle(ctx context.Context, baseURL string) (model.SitePlatform,
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Octopus/1.0)")
 	req.Header.Set("Accept", "text/html, */*")
 
-	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: xurl.CheckRedirectSafe(5)}
+	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: xurl.CheckRedirectSafe(5), Transport: httpx.WithUserAgent(nil)}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -104,7 +105,7 @@ func detectByStatusEndpoint(ctx context.Context, baseURL string) (model.SitePlat
 	}
 	req.Header.Set("Accept", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: xurl.CheckRedirectSafe(5)}
+	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: xurl.CheckRedirectSafe(5), Transport: httpx.WithUserAgent(nil)}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err

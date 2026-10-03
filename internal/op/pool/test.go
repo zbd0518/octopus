@@ -13,6 +13,7 @@ import (
 	"github.com/lingyuins/octopus/internal/helper"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 )
 
 // testTimeout 账号连通性测试超时。
@@ -87,7 +88,7 @@ func TestAccount(poolID, accountID int, modelName string) (*AccountTestResult, e
 	}
 
 	// HTTP client（含账号级代理）。
-	client := &http.Client{Timeout: testTimeout}
+	client := &http.Client{Timeout: testTimeout, Transport: httpx.WithUserAgent(nil)}
 	if pc, perr := helper.PoolAccountHttpClient(acct.ProxyConfigID); perr == nil && pc != nil {
 		// pc 是 client 包按 (bucket, proxyURL) 缓存的共享单例：直接写 pc.Timeout 会永久
 		// 污染转发链路（relay 的 sendRequest 用同一指针），导致该代理的流式请求在

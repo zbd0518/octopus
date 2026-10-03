@@ -23,6 +23,7 @@ import (
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/pool"
 	"github.com/lingyuins/octopus/internal/relay/poolscheduler"
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 	"github.com/lingyuins/octopus/internal/utils/log"
 	"golang.org/x/sync/singleflight"
 )
@@ -136,7 +137,7 @@ func computeNextBackoff(failureCount int, now time.Time) int64 {
 
 // refreshByPlatform 按 platform 路由到对应刷新逻辑，返回新凭据与过期时间戳。
 func refreshByPlatform(ctx context.Context, platform string, cred model.PoolCredential) (model.PoolCredential, int64, error) {
-	client := &http.Client{Timeout: refreshHTTPTimeout}
+	client := &http.Client{Timeout: refreshHTTPTimeout, Transport: httpx.WithUserAgent(nil)}
 
 	switch platform {
 	case model.PoolPlatformAnthropic:
