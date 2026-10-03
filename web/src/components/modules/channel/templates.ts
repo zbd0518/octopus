@@ -163,21 +163,4 @@ export const channelTemplates: ChannelTemplate[] = [
             match_regex: '',
         }),
     },
-    {
-        key: 'cloudflare',
-        name: 'Cloudflare',
-        descriptionKey: 'template.descriptions.cloudflare',
-        apply: (current) => createTemplatePatch(current, {
-            name: current.name || 'Cloudflare',
-            type: ChannelType.Cloudflare,
-            base_urls: [{ url: 'https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}', delay: 0, suffix_mode: 'auto' }],
-            custom_header: [],
-            channel_proxy: '',
-            param_override: '',
-            model: '',
-            custom_model: '',
-            auto_group: AutoGroupType.None,
-            match_regex: '',
-        }),
-    },
 ];

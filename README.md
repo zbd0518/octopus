@@ -49,6 +49,8 @@
 
 ### 🐳 Docker
 
+The examples below use `latest`. For a pinned version, use the image tag recorded in `docker-compose.yml` after that image has been published.
+
 Run directly:
 
 ```bash

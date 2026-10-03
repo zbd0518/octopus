@@ -16,6 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Continue saving independent caches after an earlier save failure.
 - Abort release builds on platform or artifact failures, freeze frontend dependencies, and test release failure handling in CI.
 
+## [v2.6.2-fix5] - 2026-10-03
+
+### Fixed
+
+- Restore scrolling in channel detail and edit dialogs by constraining the dialog height.
+- Prevent group creation and editing model panels from collapsing or overlapping at intermediate viewport widths.
+- Correct the group creation dialog width when opened from the empty state.
+
+### Changed
+
+- Remove the Cloudflare quick-start template from channel forms.
+- Align application, frontend package, and Docker Compose versions to v2.6.2-fix5.
+
 ## [v2.6.1] - 2026-09-28
 
 ### 🎨 UI/UX

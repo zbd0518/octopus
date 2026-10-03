@@ -73,5 +73,9 @@ octopus
 
 # local workflow/agent cache
 .workflow/
+
+# ad-hoc scroll/layout debug harness (not for CI)
+web/scroll-test*.html
+web/test-server*.js
 # Reasonix tooling
 .reasonix/

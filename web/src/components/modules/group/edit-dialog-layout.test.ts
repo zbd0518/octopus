@@ -6,6 +6,7 @@ const card = readFileSync(new URL('./Card.tsx', import.meta.url), 'utf8');
 const list = readFileSync(new URL('./GroupListItem.tsx', import.meta.url), 'utf8');
 const panel = readFileSync(new URL('./AvailabilityResultsPanel.tsx', import.meta.url), 'utf8');
 const shared = readFileSync(new URL('./EditDialogContent.tsx', import.meta.url), 'utf8');
+const editor = readFileSync(new URL('./Editor.tsx', import.meta.url), 'utf8');
 
 test('availability results use a full flexible editor area instead of a narrow side rail', () => {
     for (const source of [card, list]) {
@@ -47,6 +48,28 @@ test('group editor actions wrap below the title on mobile and leave a separate c
         assert.match(header, /sm:right-auto sm:top-auto/);
         assert.match(header, /truncate[^\n]*title=\{group.name\}/);
     }
+});
+
+test('model picker bounds its own scroll area in stacked layouts', () => {
+    const picker = editor.slice(editor.indexOf('function ModelPickerSection'), editor.indexOf('function SortSection'));
+    const scrollClasses = picker.match(/<div className="([^"]*overflow-y-auto[^"]*)">/)?.[1].split(/\s+/);
+
+    assert.ok(scrollClasses, 'model picker must have an internal scroll area');
+    assert.ok(scrollClasses.includes('max-h-[28rem]'), 'stacked desktop and mobile layouts need a height limit');
+    assert.ok(scrollClasses.includes('2xl:max-h-none'), 'side-by-side layout must fill the height set by the configuration panel');
+    assert.ok(scrollClasses.includes('min-h-0'));
+    assert.ok(scrollClasses.includes('flex-1'));
+    assert.match(picker, /flex min-h-\[22rem\] flex-col/);
+    assert.doesNotMatch(picker, /\b(?:lg|xl):(?:h-full|min-h-0)/);
+});
+
+test('wide model panels stretch to the configuration panel without sizing the grid row from their contents', () => {
+    assert.match(editor, /2xl:items-stretch/);
+    assert.match(editor, /2xl:min-h-0 2xl:flex-1 2xl:\[contain:size\]/);
+    assert.match(editor, /bg-card shadow-sm 2xl:min-h-0/);
+    assert.match(editor, /min-h-\[28rem\][^"\n]*2xl:min-h-0/);
+    assert.match(editor, /min-h-\[34rem\][^"\n]*2xl:min-h-0/);
+    assert.doesNotMatch(editor, /\b(?:lg|xl):(?:h-full|min-h-0|flex-1)/);
 });
 
 test('shared editor view keeps form mounted while switching to results', () => {
