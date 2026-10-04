@@ -54,11 +54,10 @@ export function Group() {
     const groupCardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
     const { data: modelChannels = [] } = useModelChannelList();
 
-
     // 重新构造 pending，使 type guard 收窄到 GroupJumpTarget
     const pendingGroupJump =
         pendingJump && isGroupJumpTarget(pendingJump.target)
-            ? { requestId: pendingJump.requestId, target: pendingGroupJump.target }
+            ? { requestId: pendingJump.requestId, target: pendingJump.target }
             : null;
     const forcedGroupId = pendingGroupJump?.target.groupId ?? autoOpenGroupId;
 
