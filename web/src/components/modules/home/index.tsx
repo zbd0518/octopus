@@ -29,12 +29,14 @@ export function Home() {
             <Suspense fallback={<ChartSkeleton />}>
                 <StatsChart />
             </Suspense>
-            <div className="grid items-start gap-4 md:gap-5 xl:grid-cols-[auto_minmax(320px,1fr)]">
+            <div className="grid items-stretch gap-4 md:gap-5 xl:grid-cols-[minmax(0,3fr)_minmax(26rem,2fr)]">
                 <div className="min-w-0">
                     <Activity />
                 </div>
-                <div className="min-w-0">
-                    <Rank />
+                <div className="relative min-h-0 min-w-0">
+                    <div className="xl:absolute xl:inset-0">
+                        <Rank />
+                    </div>
                 </div>
             </div>
         </PageWrapper>

@@ -81,7 +81,7 @@ export function Rank() {
             );
         }
         return (
-            <div className="max-h-[280px] space-y-2.5 overflow-y-auto pr-1 [scrollbar-width:thin]">
+            <div className="space-y-2.5">
                 {channels.map((channel, index) => {
                     const rank = index + 1;
 
@@ -97,7 +97,7 @@ export function Rank() {
                             </div>
 
                             <div className="min-w-0 flex-1">
-                                <p className="truncate text-sm font-semibold">{channel.channel_name}</p>
+                                <p className="break-all whitespace-normal text-sm font-semibold">{channel.channel_name}</p>
                                 {mode === 'count' && (() => {
                                     const successCount = channel.request_success.raw;
                                     const failedCount = channel.request_failed.raw;
@@ -173,7 +173,7 @@ export function Rank() {
         }
 
         return (
-            <div className="max-h-[280px] space-y-2.5 overflow-y-auto pr-1 [scrollbar-width:thin]">
+            <div className="space-y-2.5">
                 {apiKeys.map((apiKey, index) => {
                     const rank = index + 1;
                     const successCount = apiKey.request_success.raw;
@@ -193,7 +193,7 @@ export function Rank() {
                             </div>
 
                             <div className="min-w-0 flex-1">
-                                <p className="truncate text-sm font-semibold">{apiKey.name}</p>
+                                <p className="break-all whitespace-normal text-sm font-semibold">{apiKey.name}</p>
                                 <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
                                     <span>{t('successRate')}:</span>
                                     <span>{successRate.toFixed(1)}%</span>
@@ -223,28 +223,27 @@ export function Rank() {
     };
 
     return (
-        <div className="relative h-full rounded-lg border border-border bg-card p-3.5 text-card-foreground md:p-4">
+        <div className="relative flex h-full min-h-0 flex-col rounded-xl border border-border bg-card p-3.5 text-card-foreground md:p-4">
             <Tabs
+                className="min-h-0 flex-1"
                 value={rankSortMode}
                 onValueChange={(value) => {
                     setRankSortMode(value as RankSortMode);
                 }}
             >
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <div className="inline-flex w-max items-center gap-2 rounded-md border border-primary/10 bg-card px-2.5 py-1 text-xs font-medium text-primary">
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
+                    <div className="inline-flex w-max shrink-0 items-center gap-2 whitespace-nowrap rounded-md border border-primary/10 bg-card px-2.5 py-1 text-xs font-medium text-primary">
                         <Leaf className="h-3.5 w-3.5" strokeWidth={1.5} />
                         <span>{t('title')}</span>
                     </div>
-                    <div className="w-full overflow-x-auto lg:w-auto">
-                        <TabsList className="flex min-w-full flex-nowrap justify-center rounded-lg border border-border bg-card p-1 lg:min-w-0">
-                            <TabsTrigger value="cost" className="w-auto flex-none min-w-fit">{t('sortByCost')}</TabsTrigger>
-                            <TabsTrigger value="count" className="w-auto flex-none min-w-fit">{t('sortByCount')}</TabsTrigger>
-                            <TabsTrigger value="tokens" className="w-auto flex-none min-w-fit">{t('sortByTokens')}</TabsTrigger>
-                            <TabsTrigger value="key-usage" className="w-auto flex-none min-w-fit">{t('sortByKeyUsage')}</TabsTrigger>
-                        </TabsList>
-                    </div>
+                    <TabsList className="ml-auto flex h-auto max-w-full flex-wrap justify-end rounded-lg border border-border bg-card p-1">
+                        <TabsTrigger value="cost" className="h-7 w-auto flex-none min-w-fit text-xs">{t('sortByCost')}</TabsTrigger>
+                        <TabsTrigger value="count" className="h-7 w-auto flex-none min-w-fit text-xs">{t('sortByCount')}</TabsTrigger>
+                        <TabsTrigger value="tokens" className="h-7 w-auto flex-none min-w-fit text-xs">{t('sortByTokens')}</TabsTrigger>
+                        <TabsTrigger value="key-usage" className="h-7 w-auto flex-none min-w-fit text-xs">{t('sortByKeyUsage')}</TabsTrigger>
+                    </TabsList>
                 </div>
-                <TabsContents className="relative mt-4">
+                <TabsContents className="relative mt-2 min-h-0 max-h-[280px] overflow-y-auto pr-1 [scrollbar-width:thin] xl:max-h-none xl:flex-1">
                     <TabsContent value="cost">
                         {renderChannelList(rankedByCost, 'cost', isChannelListLoading)}
                     </TabsContent>

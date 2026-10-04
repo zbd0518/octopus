@@ -16,6 +16,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Continue saving independent caches after an earlier save failure.
 - Abort release builds on platform or artifact failures, freeze frontend dependencies, and test release failure handling in CI.
 
+## [v2.6.2-fix7] - 2026-10-04
+
+### Fixed
+
+- Show the deduplicated union of models from all enabled keys in the channel model picker, preserving successful results when another key fails.
+- Keep model refresh loading indicators and result counts consistent with per-key fetching.
+- Widen the home ranking panel and align its height with the activity heatmap, with internal list scrolling and fully visible long names and sorting tabs.
+
+### Changed
+
+- Add per-key select-all and deselect-all controls to the channel model picker, sharing selection state with the all-models view.
+- Align Base URL, model, and API key actions with their section headings in channel creation and editing forms.
+- Align application, frontend package, and Docker Compose versions to v2.6.2-fix7.
+
+## [v2.6.2-fix6] - 2026-10-03
+
+### Fixed
+
+- Align wide-screen group model panels with the configuration section while keeping stacked model lists height-limited and internally scrollable.
+- Use a versioned `octopus-ly/<version>` default User-Agent for outbound requests, including channel connectivity checks and model tests, while preserving explicit upstream headers.
+- Correct account expiry editing to use the configured time zone consistently, including daylight-saving transitions.
+- Preserve custom upstream URLs when switching account platforms, retain custom header drafts during editing, and provide a repair path for invalid account extras JSON.
+- Update cooldown and temporary-pause indicators over time and prevent stale account selections from reaching batch operations.
+- Correct account-pool translation placeholders and empty-value platform selectors.
+
+### Changed
+
+- Refresh account-pool management with searchable pool cards, pool editing, account filters, desktop tables, mobile cards, and per-account action menus.
+- Standardize pool and account dialogs with accessible controls, independent content scrolling, fixed actions, validation, and pending-state protection.
+- Require confirmation for pool and account deletion and warn that exported account files contain credentials.
+- Align application, frontend package, and Docker Compose versions to v2.6.2-fix6.
+
 ## [v2.6.2-fix5] - 2026-10-03
 
 ### Fixed

@@ -1,4 +1,4 @@
-# Relay Endpoints, Proxy Pool & Model Mapping
+# Relay Endpoints, Proxy Pool, Account Pools & Model Mapping
 
 ### 🌐 Public Relay Endpoints
 
@@ -42,6 +42,18 @@ A shared proxy configuration pool accessible from the app shell toolbar:
 - **Reference tree** showing which sites, site accounts, managed channels, and channels use each proxy
 - Jump-to-reference navigation that deep-links to the referencing entity
 - Deletion protection when a proxy has active references
+
+---
+
+### 👥 Account Pools
+
+A top-level module for managing upstream accounts (Anthropic, OpenAI, Gemini, Grok, Volcengine, custom) that relay requests can be scheduled through:
+
+- Pool list with keyword search; the create/edit dialog covers name, description, scheduling strategy, default concurrency, cooldown, and enabled state; deleting a pool asks for confirmation
+- The pool detail view shows summary stats and filters accounts by keyword, platform, and status — rendered as a table on desktop and cards on mobile
+- Accounts support per-platform credential types (OAuth / API key / cookie / upstream / setup token); supported platforms can authorize an account directly via the OAuth login flow
+- Selected accounts support batch token refresh, error clearing, and connectivity tests; individual accounts can be paused from scheduling temporarily
+- Account credentials can be imported in bulk or exported to a file — the export dialog warns that the output contains live credentials
 
 ---
 
