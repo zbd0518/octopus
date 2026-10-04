@@ -95,7 +95,7 @@ export const OVERVIEW_METRIC_KEYS: readonly OverviewMetricKey[] = [
     'fallbackRate',
 ];
 
-function normalizeOverviewMetricOrder(value: unknown): OverviewMetricKey[] {
+export function normalizeOverviewMetricOrder(value: unknown): OverviewMetricKey[] {
     const seen = new Set<OverviewMetricKey>();
     const result: OverviewMetricKey[] = [];
     if (Array.isArray(value)) {
@@ -233,6 +233,7 @@ export const useHomeViewStore = create<HomeViewState>()(
                     chartMetrics: metrics,
                     chartPeriod: normalizeChartPeriod(typed?.chartPeriod),
                     overviewRange: normalizeOverviewRange(typed?.overviewRange),
+                    overviewMetricOrder: normalizeOverviewMetricOrder(typed?.overviewMetricOrder),
                     overviewHiddenMetrics: normalizeOverviewHiddenMetrics(typed?.overviewHiddenMetrics),
                     overviewCountMode: normalizeOverviewCountMode(typed?.overviewCountMode),
                     statsRefreshInterval: normalizeStatsRefreshInterval(typed?.statsRefreshInterval),

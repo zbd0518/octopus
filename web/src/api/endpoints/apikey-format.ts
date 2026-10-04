@@ -14,6 +14,17 @@ export interface APIKeyStatsResponseFormatted<TInfo> {
     info: TInfo;
 }
 
+export function getAPIKeyCostProgress(
+    usedDisplayCost: number,
+    maxCostUSD: number,
+    chinaMode: boolean,
+    exchangeRate: number,
+): number {
+    const maxCost = maxCostUSD * (chinaMode ? exchangeRate : 1);
+    if (!Number.isFinite(maxCost) || maxCost <= 0 || !Number.isFinite(usedDisplayCost)) return 0;
+    return Math.min(100, Math.max(0, (usedDisplayCost / maxCost) * 100));
+}
+
 export function formatAPIKeyStatsResponse<TInfo>(
     data: APIKeyStatsResponse<TInfo>,
 ): APIKeyStatsResponseFormatted<TInfo> {

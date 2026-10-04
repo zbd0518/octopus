@@ -4,6 +4,7 @@ import { useTranslations } from 'next-intl';
 import { useTheme } from 'next-themes';
 import { toast } from '@/components/common/Toast';
 import { useAPIKeyDashboardStats } from '@/api/endpoints/apikey';
+import { getAPIKeyCostProgress } from '@/api/endpoints/apikey-format';
 import { useAuthStore } from '@/api/endpoints/user';
 import { useSettingStore } from '@/stores/setting';
 import { AnimatedNumber } from '@/components/common/AnimatedNumber';
@@ -180,7 +181,7 @@ export function APIKeyDashboard() {
                                 </div>
                                 {maxCost > 0 && (
                                     <div className="mt-3 sm:mt-4">
-                                        <Progress value={Math.min(100, (usedCost / maxCost) * 100)} className="h-3 sm:h-4 *:data-[slot=progress-indicator]:bg-chart-1" />
+                                        <Progress value={getAPIKeyCostProgress(usedCost, maxCost, chinaMode, exchangeRate)} className="h-3 sm:h-4 *:data-[slot=progress-indicator]:bg-chart-1" />
                                         <div className="flex justify-between text-xs sm:text-sm text-muted-foreground mt-1">
                                             <span>0</span>
                                             <span>{chinaMode ? `${(maxCost * exchangeRate).toFixed(2)} ¥` : `${maxCost.toFixed(2)} $`}</span>

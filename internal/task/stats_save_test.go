@@ -47,8 +47,10 @@ func TestStatsSaveTaskPersistsSiteModelHourly(t *testing.T) {
 
 func TestStatsSaveTaskRegisteredForBothDatabasePaths(t *testing.T) {
 	source := loadInitSource(t)
+	// init.go 的注册已扁平化到 Init 顶层，SQLite 队列分支里 statsSaveTask()
+	// 位于 4 层缩进（Register 1 层 -> 闭包 2 层 -> EnqueueWrite 3 层 -> Fn 4 层）。
 	if !strings.Contains(source, "Register(TaskStatsSave, statsSaveInterval, false, statsSaveTask)") ||
-		!strings.Contains(source, "statsSaveTask()\n\t\t\t\t\treturn nil") {
+		!strings.Contains(source, "statsSaveTask()\n\t\t\t\treturn nil") {
 		t.Fatal("both direct and SQLite queued stats tasks must invoke statsSaveTask")
 	}
 }

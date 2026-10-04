@@ -109,7 +109,9 @@
     "endpointCount": "{count, plural, =0 {No endpoints} one {# endpoint} other {# endpoints}}",
     "modelCount": "{count, plural, =0 {No models} one {# model} other {# models}}",
     "empty": "No available endpoints",
-    "noMatch": "No endpoints or models match your search"
+    "noMatch": "No endpoints or models match your search",
+    "showLessModels": "Show fewer models",
+    "showMoreModels": "Show {count} more models"
   },
   "hub": {
     "tabs": {
@@ -1424,7 +1426,7 @@
     },
     "pool": {
       "title": "Pool",
-      "description": "Account health check and layered filtering for pool scheduling.",
+      "description": "Account health check, layered filtering, sticky escape, and scheduler weights for pool scheduling.",
       "healthCheckEnabled": "Enable health check",
       "healthCheckEnabledHint": "Periodically probes accounts via TestAccount; SetError after N consecutive failures.",
       "healthCheckInterval": "Interval (minutes)",
@@ -1432,7 +1434,17 @@
       "layeredFilterEnabled": "Enable layered filter",
       "layeredFilterEnabledHint": "Only pick accounts with priority >= min_priority.",
       "minPriority": "Min priority (default -9999 = off)",
-      "minPriorityHint": "Accounts with lower priority are skipped by the scheduler."
+      "minPriorityHint": "Accounts with lower priority are skipped by the scheduler.",
+      "stickyEscapeEnabled": "Enable sticky escape",
+      "stickyEscapeEnabledHint": "Temporarily bypass the sticky binding when an account's EWMA error rate or TTFT exceeds thresholds. Off by default (sub2api defaults to on). The original binding is kept and the session returns once stats recover.",
+      "stickyEscapeErrorRate": "Escape error rate threshold",
+      "stickyEscapeErrorRateHint": "Escape when the account's EWMA error rate exceeds this value (0-1].",
+      "stickyEscapeTTFTMs": "Escape TTFT threshold (ms)",
+      "stickyEscapeTTFTMsHint": "Escape when the account's EWMA TTFT exceeds this value. 0 disables the TTFT dimension.",
+      "schedulerWeightReset": "Scheduler weight: reset readiness",
+      "schedulerWeightResetHint": "Off by default (0). When > 0, accounts whose quota/reset window renews sooner are preferred, normalized over a 7-day horizon.",
+      "schedulerWeightQuota": "Scheduler weight: quota headroom",
+      "schedulerWeightQuotaHint": "Off by default (0). When > 0, accounts with more remaining quota are preferred. Requires a synced quota snapshot."
     },
     "proxyPool": {
       "title": "Proxy Pool"
@@ -2801,7 +2813,9 @@
       "cacheWrite": "Cache Write",
       "submit": "Create",
       "submitting": "Creating...",
-      "priceHint": "Price unit: USD / 1M tokens"
+      "priceHint": "Price unit: USD / 1M tokens",
+      "nameRequired": "Enter a model name",
+      "priceInvalid": "Enter a valid non-negative price in every field. Use 0 for free pricing."
     },
     "summary": {
       "title": "Model Market",
@@ -2822,7 +2836,8 @@
       "updated": "Model price updated",
       "updateFailed": "Update failed",
       "deleted": "Model deleted",
-      "deleteFailed": "Delete failed"
+      "deleteFailed": "Delete failed",
+      "created": "Model created"
     },
     "card": {
       "inputCache": "Input/Cache",
@@ -2861,7 +2876,10 @@
       "cacheWrite": "Cache Write",
       "save": "Save",
       "priceHint": "Price unit: USD / 1M tokens",
-      "peakBillingHint": "Above are PEAK prices. Off-peak (9–12 / 14–18 outside) is charged at half."
+      "peakBillingHint": "Above are PEAK prices. Off-peak (9–12 / 14–18 outside) is charged at half.",
+      "priceInvalid": "Enter a valid non-negative price in every field. Use 0 for free pricing.",
+      "deleteTitle": "Delete model",
+      "deleteDescription": "Delete the price record for “{name}”? This action cannot be undone."
     },
     "capabilities": {
       "title": "Model Capabilities",
@@ -2969,6 +2987,19 @@
       "actions": "Actions",
       "cancel": "Cancel",
       "toastError": "Operation failed"
+    },
+    "priceRule": {
+      "nameRequired": "Name is required",
+      "ruleValueRequired": "Rule value is required",
+      "invalidNumber": "Enter a valid number. Use 0 for zero pricing.",
+      "nonNegativeRequired": "Value must be non-negative",
+      "invalidInteger": "Enter a valid integer",
+      "windowIncomplete": "Fill both start and end, or leave both empty to disable the window. End may be 24:00.",
+      "windowInverted": "Start cannot be later than end. Equal times disable the window.",
+      "windowOverlapWarn": "The windows overlap; the overlap is billed as peak.",
+      "disabled": "Disabled",
+      "loadFailed": "Failed to load. Please retry.",
+      "retry": "Retry"
     }
   },
   "log": {
@@ -3026,6 +3057,17 @@
       "semanticCacheHit": "Semantic Cache Hit",
       "cost": "Cost",
       "requestContent": "Request Content",
+      "groupCandidates": "Group",
+      "requestBody": "Request Body",
+      "candidateHistoryHint": "Statuses are from this log; unrecorded entries are from the current same-name group",
+      "recordedCooldown": "Cooldown {seconds}s",
+      "notRecorded": "Not recorded",
+      "channelKey": "Key #{id}",
+      "stickyAttempt": "Sticky session",
+      "noCandidates": "No candidate records. Switch to the request body to inspect this request.",
+      "loadingCandidates": "Loading group candidates…",
+      "candidateLoadFailed": "Group unavailable; showing recorded attempts instead",
+      "retryLoad": "Retry",
       "responseContent": "Response Content",
       "noRequestContent": "(No request content)",
       "noResponseContent": "(No response content)",
@@ -3592,7 +3634,9 @@
     "filterTitle": "Filter",
     "filterExpand": "Expand filter",
     "filterCollapse": "Collapse filter",
-    "filterSummary": "{count, plural, =0 {No filters} one {# filter} other {# filters}} active"
+    "filterSummary": "{count, plural, =0 {No filters} one {# filter} other {# filters}} active",
+    "reset": "Reset filters",
+    "resultCount": "{visible} / {total} models"
   },
   "notification": {
     "title": "Notification Center",

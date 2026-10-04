@@ -9,11 +9,12 @@ import { LogCard } from './Item';
 import { ErrorLogView } from './ErrorLogView';
 import { Loader2, X, Columns3, Check, ChevronsUpDown, Search } from 'lucide-react';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
-import { useLogFieldVisibilityStore, useLogModelSearchStore, useLogAutoRefreshStore, type LogFieldName } from './ui-store';
+import { useLogFieldVisibilityStore, useLogModelSearchStore, useLogAutoRefreshStore, shouldAutoRefreshLogs, type LogFieldName } from './ui-store';
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
 import { useNavHandoff } from '@/lib/nav-handoff';
+import { useNavStore } from '@/components/modules/navbar/nav-store';
 import {
     Select,
     SelectContent,
@@ -347,16 +348,16 @@ export function Log() {
     const { data: channels = [] } = useChannelList();
 
     // 自动刷新：按用户在设置中选择的间隔轮询日志列表（0 = 关闭）。
-    // 页面不可见时暂停轮询，避免后台标签页空转。
     const autoRefreshInterval = useLogAutoRefreshStore((s) => s.interval);
+    const activeItem = useNavStore((s) => s.activeItem);
     useEffect(() => {
-        if (!autoRefreshInterval) return;
+        if (!shouldAutoRefreshLogs(autoRefreshInterval, activeItem, view, 'visible')) return;
         const timer = window.setInterval(() => {
-            if (document.visibilityState !== 'visible') return;
+            if (!shouldAutoRefreshLogs(autoRefreshInterval, useNavStore.getState().activeItem, view, document.visibilityState)) return;
             void refresh();
         }, autoRefreshInterval * 1000);
         return () => window.clearInterval(timer);
-    }, [autoRefreshInterval, refresh]);
+    }, [autoRefreshInterval, activeItem, view, refresh]);
 
     // 消费来自其它模块（分析/分组健康）的待处理筛选，实现"点击失败渠道 → 跳转日志并预填"。
     const pendingLogFilter = useNavHandoff((s) => s.pendingLogFilter);

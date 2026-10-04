@@ -30,6 +30,25 @@ export const DEFAULT_LOG_FIELD_VISIBILITY: LogFieldVisibility = {
     reasoningTokens: true,
 };
 
+export function normalizeLogFieldVisibility(value: unknown): LogFieldVisibility {
+    const visibility = { ...DEFAULT_LOG_FIELD_VISIBILITY };
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return visibility;
+    const persisted = value as Partial<LogFieldVisibility>;
+    for (const field of Object.keys(visibility) as LogFieldName[]) {
+        if (typeof persisted[field] === 'boolean') visibility[field] = persisted[field];
+    }
+    return visibility;
+}
+
+export function shouldAutoRefreshLogs(
+    interval: number,
+    activeItem: string,
+    view: 'relay' | 'error',
+    visibility: string,
+): boolean {
+    return interval > 0 && activeItem === 'log' && view === 'relay' && visibility === 'visible';
+}
+
 type LogFieldVisibilityState = {
     visibility: LogFieldVisibility;
     toggleField: (field: LogFieldName) => void;
@@ -52,6 +71,12 @@ export const useLogFieldVisibilityStore = create<LogFieldVisibilityState>()(
         }),
         {
             name: 'log-field-visibility-storage',
+            merge: (persistedState, currentState) => ({
+                ...currentState,
+                visibility: normalizeLogFieldVisibility(
+                    (persistedState as Partial<LogFieldVisibilityState> | null)?.visibility,
+                ),
+            }),
             partialize: (state) => ({
                 visibility: state.visibility,
             }),

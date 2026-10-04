@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -57,6 +59,11 @@ type poolReportJob struct {
 	accountID    int
 	success      bool
 	outputTokens int64
+	// authErrorCount / authErrorWindowStart 是成功上报瞬间内存鉴权错误计数器的
+	// 快照（B1-#7）：worker 清 DB 镜像前按快照做条件更新，防止"延迟到达的成功
+	// 任务"擦掉快照之后新产生的 401/403 证据。
+	authErrorCount       int
+	authErrorWindowStart int64
 }
 
 type accountStats struct {
@@ -87,9 +94,17 @@ func stickyKey(poolID int, sessionHash string) string {
 // 返回选中的账号（已 acquire 并发槽位），调用方完成后必须调用 ReleaseSlot。
 func SelectAccount(poolID int, sessionHash string, excludeIDs []int, poolDefaultConcurrency int, modelName string) (*model.PoolAccount, error) {
 	// L1: 粘性会话
+	escapedStickyID := 0
 	if sessionHash != "" {
-		if acct, ok := trySticky(poolID, sessionHash, excludeIDs, poolDefaultConcurrency, modelName); ok {
+		acct, ok, escapedID := trySticky(poolID, sessionHash, excludeIDs, poolDefaultConcurrency, modelName)
+		if ok {
 			return acct, nil
+		}
+		if escapedID > 0 {
+			// B1-#9 粘性逃逸：本次选号排除逃逸账号（避免 round_robin/ewma 立刻
+			// 再选中它），但保留原粘性条目不改绑——统计恢复后会话回归原绑定。
+			escapedStickyID = escapedID
+			excludeIDs = append(append([]int(nil), excludeIDs...), escapedID)
 		}
 	}
 
@@ -119,7 +134,8 @@ func SelectAccount(poolID int, sessionHash string, excludeIDs []int, poolDefault
 
 	// L5: acquire 槽位 + 绑定粘性
 	acquireSlot(poolID, selected.ID)
-	if sessionHash != "" {
+	// B1-#9：逃逸会话本次不改绑（保留原粘性条目，统计恢复后回归原账号）。
+	if sessionHash != "" && escapedStickyID == 0 {
 		globalPoolSticky.Store(stickyKey(poolID, sessionHash), &stickyEntry{
 			AccountID:    selected.ID,
 			LastActivity: time.Now(),
@@ -150,13 +166,17 @@ func ReportResult(poolID, accountID int, success bool, ttftMs float64, outputTok
 	stats.mu.Unlock()
 
 	// 成功请求后清零鉴权错误计数（等价 sub2api clear-error 于测试成功）。
+	job := poolReportJob{poolID: poolID, accountID: accountID, success: success, outputTokens: outputTokens}
 	if success {
+		// B1-#7：先抓镜像快照再清内存。ResetAuthError 会把窗口起点刷成本次
+		// 成功时刻，因此其后新 401/403 的镜像写入必然携带更新的 window_start，
+		// worker 的条件清除会识别为"更新证据"而跳过。
+		job.authErrorCount, job.authErrorWindowStart = authErrorSnapshot(poolID, accountID)
 		ResetAuthError(poolID, accountID)
 	}
 
 	// 异步更新 DB 累计（best-effort，不阻塞请求路径）。经有界 worker pool 执行，
 	// 入队非阻塞，队列满则丢弃当前 job（计数降级，下次请求会再累积）。
-	job := poolReportJob{poolID: poolID, accountID: accountID, success: success, outputTokens: outputTokens}
 	select {
 	case poolReportCh <- job:
 	default:
@@ -177,11 +197,10 @@ func applyReportToDB(job poolReportJob) {
 	}
 	_ = pool.UpdateAccount(job.poolID, job.accountID, updates)
 	if job.success {
-		// 同步清零 auth_error_count 窗口数据库列，供恢复面板与统计查看。
-		_ = pool.UpdateAccount(job.poolID, job.accountID, map[string]interface{}{
-			"auth_error_count":        0,
-			"auth_error_window_start": int64(0),
-		})
+		// B1-#7：条件清零鉴权错误镜像——仅当 DB 证据不新于成功上报时的快照
+		//（单条原子 UPDATE）。防延迟成功擦新证据：快照之后的新 401/403 镜像
+		// 写入会携带更大的 count 或更新的 window_start，条件不满足则保持不动。
+		_ = pool.ClearAuthErrorMirrorIfNotNewer(job.poolID, job.accountID, job.authErrorCount, job.authErrorWindowStart)
 	}
 }
 
@@ -250,11 +269,27 @@ func ClearTempUnsched(poolID, accountID int) {
 	SetTempUnsched(poolID, accountID, time.Time{}, "")
 }
 
-// ReportAuthErrorCount 上报当前鉴权错误计数到 DB（供管理员查看当前窗口计数）。
-// 同时刷新窗口起点 best-effort（本身不明示窗口起点，仅写入计数）。
+// ClearTempUnschedIfTrigger 仅当 DB 中 temp_unsched_reason 仍携带指定 trigger
+// 标记时原子清除临时不可调度（B1-#4）。用于"条件清理自己写的块"：
+// 并发来源（401 窗口 / 403 冷却 / 管理员手动块）持有的块不会被擦掉。
+// cleared=false 表示当前块不属于该 trigger（或已清空）。
+func ClearTempUnschedIfTrigger(poolID, accountID int, trigger string) (cleared bool, err error) {
+	return pool.ClearTempUnschedIfTrigger(poolID, accountID, trigger)
+}
+
+// ReportAuthErrorCount 上报当前鉴权错误计数到 DB 镜像（供管理员查看当前窗口
+// 计数，并在进程重启后由 IncrementAuthError 懒加载播种继承，B1-#7）。
+// 同时写入窗口起点：取内存计数器条目的 windowStart（条目不存在时取 now），
+// 该值同时是延迟成功清除的证据新旧判定依据。
 func ReportAuthErrorCount(poolID, accountID int, count int) error {
+	windowStart := time.Now().Unix()
+	if val, ok := globalAuthErrors.Load(authErrorKey(poolID, accountID)); ok {
+		entry := val.(*authErrorEntry)
+		windowStart = atomic.LoadInt64(&entry.windowStart)
+	}
 	return pool.UpdateAccount(poolID, accountID, map[string]interface{}{
-		"auth_error_count": count,
+		"auth_error_count":        count,
+		"auth_error_window_start": windowStart,
 	})
 }
 
@@ -357,41 +392,103 @@ func PurgeStaleSticky(idleThreshold time.Duration) int {
 	return removed
 }
 
-func trySticky(poolID int, sessionHash string, excludeIDs []int, poolDefaultConcurrency int, modelName string) (*model.PoolAccount, bool) {
+// trySticky 命中粘性会话时返回 (account, true, 0)。未命中返回 (nil, false, 0)；
+// 粘性账号因 EWMA 统计劣化被逃逸时返回 (nil, false, escapedID>0)——此时粘性条目
+// 保留（与 excludeIDs 命中 / ModelMatches 不匹配分支同样不 Delete），会话在账号
+// 统计恢复后重新回归原绑定。
+func trySticky(poolID int, sessionHash string, excludeIDs []int, poolDefaultConcurrency int, modelName string) (*model.PoolAccount, bool, int) {
 	key := stickyKey(poolID, sessionHash)
 	val, ok := globalPoolSticky.Load(key)
 	if !ok {
-		return nil, false
+		return nil, false, 0
 	}
 	entry, ok := val.(*stickyEntry)
 	if !ok {
 		globalPoolSticky.Delete(key)
-		return nil, false
+		return nil, false, 0
 	}
 	accountID := entry.AccountID
 	for _, id := range excludeIDs {
 		if id == accountID {
-			return nil, false
+			return nil, false, 0
 		}
 	}
 	acct, err := pool.GetAccount(poolID, accountID)
 	if err != nil || !acct.IsSchedulable() {
 		globalPoolSticky.Delete(key)
-		return nil, false
+		return nil, false, 0
 	}
 	if !model.ModelMatches(acct.Models, modelName) {
-		return nil, false
+		return nil, false, 0
+	}
+	// B1-#9 粘性逃逸：EWMA 统计劣化（错误率 / TTFT 超阈值）时临时绕过粘性绑定。
+	// 条目保留，不改绑；逃逸开关默认关闭，关闭时行为与之前逐字节一致。
+	if shouldEscapeStickyAccount(poolID, accountID) {
+		return nil, false, accountID
 	}
 	limit := acct.EffectiveLoadFactor()
 	if limit <= 0 {
 		limit = acct.EffectiveConcurrency(poolDefaultConcurrency)
 	}
 	if !tryAcquireSlot(poolID, accountID, limit) {
-		return nil, false
+		return nil, false, 0
 	}
 	// 粘性命中，刷新 LastActivity（活跃会话续期，与 balancer.SetSticky 一致）。
 	entry.LastActivity = time.Now()
-	return acct, true
+	return acct, true, 0
+}
+
+// shouldEscapeStickyAccount 判断账号 EWMA 统计是否劣化到需要临时逃逸粘性绑定
+//（B1-#9，对齐 sub2api openai_account_scheduler.go shouldEscapeStickyAccount：
+// TTFT 维度优先，其次错误率；两阈值均取严格大于）。
+// 统计缺失（账号从无 ReportResult 记录）或开关关闭时不逃逸，行为与禁用一致。
+func shouldEscapeStickyAccount(poolID, accountID int) bool {
+	enabled, err := setting.GetBool(model.SettingKeyPoolStickyEscapeEnabled)
+	if err != nil || !enabled {
+		return false
+	}
+	errorRateThreshold, ttftThresholdMs, err := stickyEscapeThresholds()
+	if err != nil {
+		return false
+	}
+	val, ok := globalPoolStats.Load(statsKey(poolID, accountID))
+	if !ok {
+		return false
+	}
+	stats := val.(*accountStats)
+	stats.mu.Lock()
+	errorRate, ttftMs := stats.errorRate, stats.ttftMs
+	stats.mu.Unlock()
+	// ttftMs==0 表示尚无 TTFT 样本；阈值 <=0 表示管理员禁用 TTFT 维度。
+	if ttftMs > 0 && ttftThresholdMs > 0 && ttftMs > ttftThresholdMs {
+		return true
+	}
+	if errorRate > errorRateThreshold {
+		return true
+	}
+	return false
+}
+
+// stickyEscapeThresholds 读取逃逸阈值（设置走进程内缓存，与
+// filterLayeredByPriority 的 SettingKeyPoolLayeredFilterEnabled 读取同模式）。
+func stickyEscapeThresholds() (errorRate float64, ttftThresholdMs float64, err error) {
+	rawRate, err := setting.GetString(model.SettingKeyPoolStickyEscapeErrorRate)
+	if err != nil {
+		return 0, 0, err
+	}
+	errorRate, err = strconv.ParseFloat(strings.TrimSpace(rawRate), 64)
+	if err != nil || errorRate <= 0 || errorRate > 1 {
+		return 0, 0, fmt.Errorf("invalid pool_sticky_escape_error_rate: %q", rawRate)
+	}
+	rawTTFT, err := setting.GetString(model.SettingKeyPoolStickyEscapeTTFTMs)
+	if err != nil {
+		return 0, 0, err
+	}
+	ttftThresholdMs, err = strconv.ParseFloat(strings.TrimSpace(rawTTFT), 64)
+	if err != nil || ttftThresholdMs < 0 {
+		return 0, 0, fmt.Errorf("invalid pool_sticky_escape_ttft_ms: %q", rawTTFT)
+	}
+	return errorRate, ttftThresholdMs, nil
 }
 
 // filterByModel 按账号绑定的模型列表过滤候选。models 为空表示不限。
@@ -539,7 +636,42 @@ func selectByLeastLoaded(candidates []model.PoolAccount, poolID int) model.PoolA
 	return candidates[bestIdx]
 }
 
+// B1-#8 调度因子（镜像 sub2api GatewayOpenAIWSSchedulerScoreWeights 的
+// "默认 0 不改变现有行为"策略，config.go:1362-1382）。
+const (
+	// resetFactorHorizon 归一化地平线：reset 剩余时长按 7 天折算为逆就绪因子。
+	resetFactorHorizon = 7 * 24 * time.Hour
+)
+
+// quotaSnapshotParser 允许测试注入观测点（golden 测试断言权重为 0 时不触发
+// 解密）；生产指向 pool.ParseQuotaSnapshot。
+var quotaSnapshotParser = pool.ParseQuotaSnapshot
+
+// loadSchedulerFactorWeights 读取两个因子权重（每次 selectByEWMA 调用读取一次，
+// 设置走进程内缓存；读取失败按 0=关闭处理）。
+func loadSchedulerFactorWeights() (wReset, wQuota float64) {
+	return schedulerFactorWeight(model.SettingKeyPoolSchedulerWeightReset),
+		schedulerFactorWeight(model.SettingKeyPoolSchedulerWeightQuota)
+}
+
+func schedulerFactorWeight(key model.SettingKey) float64 {
+	raw, err := setting.GetString(key)
+	if err != nil {
+		return 0
+	}
+	w, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || w < 0 {
+		return 0
+	}
+	return w
+}
+
 func selectByEWMA(candidates []model.PoolAccount, poolID int) model.PoolAccount {
+	// B1-#8：两权重均为 0（默认）时在入口短路——不做任何因子计算，不触发
+	// quota 快照解密，不产生额外 DB 访问，行为与旧实现逐字节一致（golden 测试锁定）。
+	wReset, wQuota := loadSchedulerFactorWeights()
+	factorsEnabled := wReset > 0 || wQuota > 0
+
 	bestIdx := 0
 	bestScore := math.MaxFloat64
 	for i := range candidates {
@@ -553,6 +685,18 @@ func selectByEWMA(candidates []model.PoolAccount, poolID int) model.PoolAccount 
 			score = stats.errorRate*0.7 + (stats.ttftMs/10000.0)*0.3
 			stats.mu.Unlock()
 		}
+		if factorsEnabled {
+			// 因子为减分项（分数越低越优）：reset 越近（逆就绪因子越高）与
+			// 额度余量越大（headroom 越高）的候选得分越低、越优先。
+			// 各因子按自身权重独立守卫：wQuota=0 时绝不解密额度快照，
+			// wReset=0 时不做 reset 计算。
+			if wReset > 0 {
+				score -= wReset * resetReadinessFactor(&candidates[i])
+			}
+			if wQuota > 0 {
+				score -= wQuota * quotaHeadroomFactor(&candidates[i])
+			}
+		}
 		// weight 先于 priority 作为 tiebreaker：权重越高得分越低（越容易选中）。
 		score -= float64(candidates[i].Weight) * 0.001
 		// priority 作为第二 tiebreaker：高优先级减分。
@@ -563,6 +707,48 @@ func selectByEWMA(candidates []model.PoolAccount, poolID int) model.PoolAccount 
 		}
 	}
 	return candidates[bestIdx]
+}
+
+// resetReadinessFactor 逆就绪因子（B1-#8）：
+// 取候选在未来最近一次 reset 时刻（ExpiresAt / RateLimitResetAt 的最小正差；
+// 刻意不纳入 TokenExpiresAt——token 过期已有独立的调度排除与刷新路径）的剩余
+// 时长，剩余越短因子越高（减分越多、越优先），按 resetFactorHorizon 归一化。
+// 无未来 reset（未设置 0 或已过期）→ 中性 0，不参与因子比较。
+func resetReadinessFactor(a *model.PoolAccount) float64 {
+	now := time.Now().Unix()
+	remaining := int64(0)
+	for _, t := range []int64{a.ExpiresAt, a.RateLimitResetAt} {
+		if d := t - now; d > 0 && (remaining == 0 || d < remaining) {
+			remaining = d
+		}
+	}
+	if remaining == 0 {
+		return 0
+	}
+	factor := 1 - float64(remaining)/float64(int64(resetFactorHorizon/time.Second))
+	if factor < 0 {
+		return 0
+	}
+	return factor
+}
+
+// quotaHeadroomFactor 额度余量因子（B1-#8）：解密并解析账号缓存额度快照
+//（QuotaResult used/total/reset_at 形状），返回 1-used/total 的 [0,1] 截断值。
+// 快照缺失/解析失败/total<=0 → 中性 0。仅在 quota 权重非 0 时才会走到这里
+//（selectByEWMA 入口短路），默认路径无任何解密开销。
+func quotaHeadroomFactor(a *model.PoolAccount) float64 {
+	used, total, ok := quotaSnapshotParser(a)
+	if !ok || total <= 0 {
+		return 0
+	}
+	headroom := 1 - used/total
+	if headroom < 0 {
+		return 0
+	}
+	if headroom > 1 {
+		return 1
+	}
+	return headroom
 }
 
 func acquireSlot(poolID, accountID int) {

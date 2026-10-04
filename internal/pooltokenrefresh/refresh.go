@@ -47,6 +47,21 @@ const (
 	failureBackoffMax  = 2 * time.Hour
 )
 
+// refreshUnschedTrigger 是刷新在途期间写入 temp_unsched_reason 的 trigger 标记
+//（B1-#4：token 刷新进行中临时不可调度，留出刷新窗口）。
+const refreshUnschedTrigger = "token_refresh_inflight"
+
+// refreshUnschedBlockState 刷新在途块的 reason JSON 形状。与 relay 包私有
+// tempUnschedState（status_code/trigger/at，无 ruleID）保持兼容——只携带
+// 刷新语义所需的 trigger + at；条件清除按 "trigger" 字段匹配。
+type refreshUnschedBlockState struct {
+	Trigger string `json:"trigger"`
+	At      int64  `json:"at"`
+}
+
+// refreshByPlatformFunc 允许测试替换平台刷新实现（观察刷新在途窗口）。
+var refreshByPlatformFunc = refreshByPlatform
+
 func init() {
 	// 注入选号触发刷新 + 手动刷新入口。
 	poolscheduler.TriggerRefreshAsync = func(poolID, accountID int) {
@@ -82,10 +97,27 @@ func refreshAccountImpl(ctx context.Context, poolID, accountID int) error {
 	_ = pool.DecryptAccountCredentials(acct)
 	cred := model.ParsePoolCredential(acct.Credentials)
 	if cred.RefreshToken == "" {
+		// 无 refresh_token 的早返回发生在设块之前，不会留下孤儿块。
 		return fmt.Errorf("account %d has no refresh_token", accountID)
 	}
 
-	newCred, expiresAt, err := refreshByPlatform(ctx, acct.Platform, cred)
+	// B1-#4：刷新在途期间临时不可调度（refreshLeadTime + 1min 余量）。
+	// 仅在账号当前未被临时禁用时设块——避免覆盖并发的 401 窗口 / 403 冷却 /
+	// 管理员手动块（那类块应在自身到期前保持语义）。
+	if !acct.IsTempUnsched() {
+		now := time.Now()
+		b, _ := json.Marshal(refreshUnschedBlockState{Trigger: refreshUnschedTrigger, At: now.Unix()})
+		poolscheduler.SetTempUnsched(poolID, accountID, now.Add(refreshLeadTime+time.Minute), string(b))
+	}
+	// 条件清除：仅当 reason 仍是本流程写入的 token_refresh_inflight 时才清，
+	// defer 保证成功/失败路径都会清；不会擦掉并发 401/403/手动块。
+	defer func() {
+		if _, err := poolscheduler.ClearTempUnschedIfTrigger(poolID, accountID, refreshUnschedTrigger); err != nil {
+			log.Warnf("pooltokenrefresh: clear temp-unsched block %d/%d failed: %v", poolID, accountID, err)
+		}
+	}()
+
+	newCred, expiresAt, err := refreshByPlatformFunc(ctx, acct.Platform, cred)
 	now := time.Now()
 	if err != nil {
 		// 失败：写入 error_message + 退避窗口（供 RefreshLoop/triggerRefresh 跳过）。

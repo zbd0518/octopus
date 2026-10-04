@@ -109,7 +109,9 @@
     "endpointCount": "{count, plural, =0 {暫無端點} other {# 個端點}}",
     "modelCount": "{count, plural, =0 {暫無模型} other {# 個模型}}",
     "empty": "暫無可用端點",
-    "noMatch": "沒有符合搜尋條件的端點或模型"
+    "noMatch": "沒有符合搜尋條件的端點或模型",
+    "showLessModels": "收起模型",
+    "showMoreModels": "展開其餘 {count} 個模型"
   },
   "hub": {
     "tabs": {
@@ -1380,7 +1382,7 @@
     },
     "pool": {
       "title": "號池配置",
-      "description": "號池賬號健康巡檢與分層調度過濾。",
+      "description": "號池賬號健康巡檢、分層調度過濾、黏性逃逸與調度權重。",
       "healthCheckEnabled": "啟用健康巡檢",
       "healthCheckEnabledHint": "定期調用 TestAccount 探測賬號連通性，連續失敗後自動 SetError。",
       "healthCheckInterval": "巡檢間隔（分鐘）",
@@ -1388,7 +1390,17 @@
       "layeredFilterEnabled": "啟用分層過濾",
       "layeredFilterEnabledHint": "僅選擇 priority ≥ min_priority 的賬號。",
       "minPriority": "最小優先級（默認 -9999 關閉）",
-      "minPriorityHint": "優先級低於該值的賬號被調度跳過。"
+      "minPriorityHint": "優先級低於該值的賬號被調度跳過。",
+      "stickyEscapeEnabled": "啟用黏性逃逸",
+      "stickyEscapeEnabledHint": "帳號 EWMA 錯誤率或 TTFT 超過閾值時暫時繞過黏性綁定（預設關閉，sub2api 預設開啟）。原綁定保留，統計恢復後會話自動回歸原帳號。",
+      "stickyEscapeErrorRate": "逃逸錯誤率閾值",
+      "stickyEscapeErrorRateHint": "帳號 EWMA 錯誤率超過該值（0-1] 時觸發逃逸。",
+      "stickyEscapeTTFTMs": "逃逸 TTFT 閾值（毫秒）",
+      "stickyEscapeTTFTMsHint": "帳號 EWMA TTFT 超過該值時觸發逃逸，0 表示停用該維度。",
+      "schedulerWeightReset": "調度權重：重置就緒",
+      "schedulerWeightResetHint": "預設 0 關閉。大於 0 時，額度/重置窗口更快到來的賬號更優先，按 7 天地平線歸一化。",
+      "schedulerWeightQuota": "調度權重：額度餘量",
+      "schedulerWeightQuotaHint": "預設 0 關閉。大於 0 時，剩餘額度佔比更高的賬號更優先，需要已同步額度快照。"
     },
     "proxyPool": {
       "title": "代理池"
@@ -2757,7 +2769,9 @@
       "cacheWrite": "快取寫入",
       "submit": "建立",
       "submitting": "建立中...",
-      "priceHint": "價格單位：美元 / 百萬 tokens"
+      "priceHint": "價格單位：美元 / 百萬 tokens",
+      "nameRequired": "請輸入模型名稱",
+      "priceInvalid": "價格不能為空，請輸入非負的有效數字，免費價格請填寫 0"
     },
     "summary": {
       "title": "模型廣場",
@@ -2778,7 +2792,8 @@
       "updated": "模型價格已更新",
       "updateFailed": "更新失敗",
       "deleted": "模型已刪除",
-      "deleteFailed": "刪除失敗"
+      "deleteFailed": "刪除失敗",
+      "created": "模型已建立"
     },
     "card": {
       "inputCache": "輸入/快取",
@@ -2817,7 +2832,10 @@
       "cacheWrite": "快取寫入",
       "save": "儲存",
       "priceHint": "價格單位：美元 / 百萬 tokens",
-      "peakBillingHint": "以上為高峰價，北京 9–12 / 14–18 按此計費，其餘時段減半。"
+      "peakBillingHint": "以上為高峰價，北京 9–12 / 14–18 按此計費，其餘時段減半。",
+      "priceInvalid": "價格不能為空，請輸入非負的有效數字，免費價格請填寫 0",
+      "deleteTitle": "刪除模型",
+      "deleteDescription": "確認刪除模型「{name}」的價格記錄？此操作無法復原。"
     },
     "capabilities": {
       "title": "模型能力",
@@ -2925,6 +2943,19 @@
       "actions": "操作",
       "cancel": "取消",
       "toastError": "操作失敗"
+    },
+    "priceRule": {
+      "nameRequired": "名稱不能為空",
+      "ruleValueRequired": "規則值不能為空",
+      "invalidNumber": "請輸入有效數字，零價格請填寫 0",
+      "nonNegativeRequired": "數值不能為負",
+      "invalidInteger": "請輸入有效整數",
+      "windowIncomplete": "請同時填寫開始與結束時間，或同時留空以關閉時段；結束可填 24:00",
+      "windowInverted": "開始時間不能晚於結束時間，相同時間表示關閉該時段",
+      "windowOverlapWarn": "兩個時段存在重疊，重疊部分按高峰計費",
+      "disabled": "停用",
+      "loadFailed": "載入失敗，請重試",
+      "retry": "重試"
     }
   },
   "log": {
@@ -2982,6 +3013,17 @@
       "output": "輸出",
       "cost": "費用",
       "requestContent": "請求內容",
+      "groupCandidates": "分組",
+      "requestBody": "請求體",
+      "candidateHistoryHint": "狀態來自本次日誌；未記錄項來自目前同名分組",
+      "recordedCooldown": "冷卻 {seconds}s",
+      "notRecorded": "未記錄",
+      "channelKey": "金鑰 #{id}",
+      "stickyAttempt": "工作階段保持",
+      "noCandidates": "無候選記錄，可切換檢視請求體",
+      "loadingCandidates": "載入分組候選…",
+      "candidateLoadFailed": "分組載入失敗，仍顯示日誌中的嘗試記錄",
+      "retryLoad": "重試",
       "responseContent": "響應內容",
       "noRequestContent": "(無請求內容)",
       "noResponseContent": "(無響應內容)",
@@ -3548,7 +3590,9 @@
     "filterTitle": "篩選",
     "filterExpand": "展開篩選",
     "filterCollapse": "收起篩選",
-    "filterSummary": "已選 {count} 項"
+    "filterSummary": "已選 {count} 項",
+    "reset": "重設篩選",
+    "resultCount": "{visible} / {total} 個模型"
   },
   "report": {
     "title": "使用報表",

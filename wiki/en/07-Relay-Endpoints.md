@@ -18,6 +18,10 @@ JSON media endpoints can also proxy upstream SSE streams when the provider suppo
 
 Semantic cache is currently evaluated for non-streaming and streaming OpenAI Chat and OpenAI Responses text requests (streaming cache hits replay from the SSE session buffer). Anthropic, embeddings, and media / utility requests bypass the cache and continue through the normal relay flow.
 
+**Relay log details:**
+
+The Log module opens a two-panel detail view: Group / Request Body tabs on the left and the response JSON on the right, with usage, timing, and cost in the footer. Candidate rows show model logos, channel/key names, and recorded success / failure / skip / circuit-break statuses. Expand a row to inspect individual retries and their messages. Cooldown seconds are shown only when explicitly recorded in the log; they are not a live countdown. Current items from an exact-name group supplement recorded candidates and are marked as unrecorded. Deleted, renamed, or mapped groups may only show the recorded candidates. Narrow screens stack the panels vertically.
+
 **Zen Direct Model Routing:**
 
 Requests with model name prefixed `zen/<model>` bypass group model mapping and route directly to the upstream model. Octopus performs smart channel-type detection based on the model name (e.g., Claude → Anthropic, Gemini → Gemini, GPT → OpenAI).

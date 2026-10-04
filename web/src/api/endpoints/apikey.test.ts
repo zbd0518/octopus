@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { formatAPIKeyStatsResponse } from './apikey-format.ts';
+import { formatAPIKeyStatsResponse, getAPIKeyCostProgress } from './apikey-format.ts';
+import { formatMoney, registerSettingStoreGetter } from '../../lib/utils.ts';
 
 test('formatAPIKeyStatsResponse formats nested stats response without flattening info', () => {
     const formatted = formatAPIKeyStatsResponse({
@@ -43,4 +44,25 @@ test('formatAPIKeyStatsResponse formats nested stats response without flattening
     assert.equal(formatted.stats.request_count.formatted.unit, '');
     assert.equal(formatted.info.name, 'dashboard key');
     assert.equal(formatted.info.supported_models, 'gpt-4o');
+});
+
+test('API Key quota progress uses matching currency units at any exchange rate', () => {
+    try {
+        for (const [chinaMode, exchangeRate] of [[false, 7.2], [true, 7.2], [true, 6.5]] as const) {
+            registerSettingStoreGetter(() => ({ chinaMode, exchangeRate }));
+            const usedCost = formatMoney(14).raw;
+            assert.ok(Math.abs(getAPIKeyCostProgress(usedCost, 100, chinaMode, exchangeRate) - 14) < 1e-10);
+        }
+    } finally {
+        registerSettingStoreGetter(() => ({ chinaMode: false, exchangeRate: 7.2 }));
+    }
+});
+
+test('API Key quota progress handles unlimited quotas and clamps to its range', () => {
+    assert.equal(getAPIKeyCostProgress(50, 0, false, 7.2), 0);
+    assert.equal(getAPIKeyCostProgress(150, 100, false, 7.2), 100);
+    assert.equal(getAPIKeyCostProgress(150 * 6.5, 100, true, 6.5), 100);
+    assert.equal(getAPIKeyCostProgress(-1, 100, false, 7.2), 0);
+    assert.equal(getAPIKeyCostProgress(Number.NaN, 100, false, 7.2), 0);
+    assert.equal(getAPIKeyCostProgress(50, 100, true, 0), 0);
 });

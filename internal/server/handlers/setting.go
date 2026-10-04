@@ -108,7 +108,7 @@ func setSetting(c *gin.Context) {
 		return
 	}
 	if err := setting.Validate(); err != nil {
-		resp.Error(c, http.StatusBadRequest, err.Error())
+		resp.ErrorWithKey(c, http.StatusBadRequest, err.Error(), "errors.inputValidationFailed", nil)
 		return
 	}
 	if err := stg.SetString(setting.Key, setting.Value); err != nil {
@@ -150,6 +150,39 @@ func setSetting(c *gin.Context) {
 			break
 		}
 		task.Update(string(setting.Key), time.Duration(hours)*time.Hour)
+	case model.SettingKeySiteSyncInterval, model.SettingKeySiteCheckinInterval:
+		// Validate 已保证该值为可解析的正整数且不溢出；Atoi 仅作防御。
+		hours, err := strconv.Atoi(setting.Value)
+		if err != nil {
+			log.Warnf("invalid %s value %q after persist: %v", setting.Key, setting.Value, err)
+			break
+		}
+		task.Update(string(setting.Key), time.Duration(hours)*time.Hour)
+	case model.SettingKeyKeyHealthCheckInterval:
+		minutes, err := strconv.Atoi(setting.Value)
+		if err != nil {
+			log.Warnf("invalid key_health_check_interval value %q after persist: %v", setting.Value, err)
+			break
+		}
+		task.Update(task.TaskKeyHealthCheck, time.Duration(minutes)*time.Minute)
+	case model.SettingKeyPoolTokenRefreshInterval, model.SettingKeyPoolQuotaSyncInterval, model.SettingKeyPoolHealthCheckInterval:
+		minutes, err := strconv.Atoi(setting.Value)
+		if err != nil {
+			log.Warnf("invalid %s value %q after persist: %v", setting.Key, setting.Value, err)
+			break
+		}
+		task.Update(string(setting.Key), time.Duration(minutes)*time.Minute)
+	case model.SettingKeyWebDAVConfig:
+		// 通用保存路径（与专用 /backup/webdav/config 端点一致）也要同步更新
+		// 备份任务周期。Validate 已保证 interval_hours 为 1..168 的数字。
+		var cfg struct {
+			IntervalHours int `json:"interval_hours"`
+		}
+		if err := utilsjson.Unmarshal([]byte(setting.Value), &cfg); err != nil || cfg.IntervalHours < 1 {
+			log.Warnf("invalid webdav_config after persist: interval_hours=%d err=%v", cfg.IntervalHours, err)
+			break
+		}
+		task.Update(task.TaskWebDAVBackup, time.Duration(cfg.IntervalHours)*time.Hour)
 	case model.SettingKeyLogLevel:
 		log.SetLevel(setting.Value)
 	case model.SettingKeyRelayLogKeepEnabled:

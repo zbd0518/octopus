@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -279,6 +280,14 @@ type relayAttempt struct {
 	// poolAccount 号池账号指针（号池模式时使用），供 applyPoolCredentialHeaders 读取 extra。
 	poolAccount *dbmodel.PoolAccount
 
+	// respHeaders 上游响应头快照（B1-#1）。forward() 在 sendRequest 成功后捕获，
+	// 附着到 RetryDecision.Headers，供 429 reset 头解析使用。nil 表示无上游响应
+	// （如连接失败、请求构建失败）。
+	respHeaders http.Header
+	// errBodySnippet 上游错误响应体前 2KB 截断（B1-#1，B4-#12 规则匹配复用）。
+	// 仅在 handleForwardResponse 读取错误体时从已读内存截取，不额外消费 response.Body。
+	errBodySnippet string
+
 	// filterCfg 缓存本次尝试的响应关键词过滤配置，避免在流式响应的每个
 	// chunk 上重复读取 setting 并解析关键词 JSON。通过 getResponseFilterConfig
 	// 懒加载，仅在首次需要时计算一次。
@@ -344,6 +353,14 @@ type RetryDecision struct {
 	// 契约由 attempt() 声明（见 relay.go 的 client disconnected / response filter 分支），
 	// 由 executeRelay 的熔断守卫执行。零值 false 保持全部现存构造点语义不变。
 	SkipFailureAccounting bool
+
+	// Headers 上游响应头快照（B1-#1），供 429 分支解析 reset 头
+	//（x-codex-* / Retry-After / anthropic-ratelimit-unified-reset）。
+	// 零值 nil 表示无上游响应证据，反馈段回落池级基础冷却，行为与旧硬编码一致。
+	Headers http.Header
+	// BodySnippet 上游错误响应体前 2KB 截断（B1-#1 捕获，B4-#12 TempUnsched
+	// 规则按关键词匹配时复用）。零值空串表示无错误体证据。
+	BodySnippet string
 }
 
 // String 返回决策的描述字符串，用于日志

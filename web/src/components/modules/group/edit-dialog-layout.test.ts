@@ -7,6 +7,9 @@ const list = readFileSync(new URL('./GroupListItem.tsx', import.meta.url), 'utf8
 const panel = readFileSync(new URL('./AvailabilityResultsPanel.tsx', import.meta.url), 'utf8');
 const shared = readFileSync(new URL('./EditDialogContent.tsx', import.meta.url), 'utf8');
 const editor = readFileSync(new URL('./Editor.tsx', import.meta.url), 'utf8');
+const create = readFileSync(new URL('./Create.tsx', import.meta.url), 'utf8');
+const index = readFileSync(new URL('./index.tsx', import.meta.url), 'utf8');
+const toolbar = readFileSync(new URL('../toolbar/index.tsx', import.meta.url), 'utf8');
 
 test('availability results use a full flexible editor area instead of a narrow side rail', () => {
     for (const source of [card, list]) {
@@ -70,6 +73,21 @@ test('wide model panels stretch to the configuration panel without sizing the gr
     assert.match(editor, /min-h-\[28rem\][^"\n]*2xl:min-h-0/);
     assert.match(editor, /min-h-\[34rem\][^"\n]*2xl:min-h-0/);
     assert.doesNotMatch(editor, /\b(?:lg|xl):(?:h-full|min-h-0|flex-1)/);
+});
+
+test('wide dialogs hug the editor content instead of reserving viewport-height whitespace', () => {
+    for (const source of [card, list, index]) {
+        const dialogClasses = source.match(/<MorphingDialogContent className="([^"]*)"/)?.[1].split(/\s+/);
+        assert.ok(dialogClasses?.includes('2xl:h-auto'), 'wide dialog must size itself to its content');
+    }
+    const groupCreateClasses = toolbar.match(/if \(activeItem === 'group'\) \{\s*return '([^']*)'/)?.[1].split(/\s+/);
+    assert.ok(groupCreateClasses?.includes('2xl:h-auto'), 'toolbar group creation must also hug its content');
+    for (const source of [card, list, create]) {
+        assert.match(source, /max-w-full flex-1 flex-col 2xl:h-auto/);
+    }
+    assert.match(editor, /overflow-hidden 2xl:h-auto/);
+    assert.doesNotMatch(editor, /min-h-full|mt-auto/);
+    assert.match(editor, /shrink-0 pr-1 pt-4/);
 });
 
 test('shared editor view keeps form mounted while switching to results', () => {

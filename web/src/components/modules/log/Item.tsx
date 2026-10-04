@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useMemo, useState, useEffect } from 'react';
-import { Clock, Cpu, Gauge, Zap, AlertCircle, ArrowDownToLine, ArrowUpFromLine, DollarSign, JapaneseYen, ArrowRight, ArrowDown, Send, MessageSquare, Loader2, Percent, RotateCw, ChevronDown, ChevronUp, Pin, KeyRound, Globe, ChevronsDownUp, ChevronsUpDown, TestTube2, Sigma, Brain, Type } from 'lucide-react';
+import { Clock, Cpu, Gauge, Zap, ArrowDownToLine, ArrowUpFromLine, DollarSign, JapaneseYen, ArrowRight, ArrowDown, Send, MessageSquare, Loader2, Percent, RotateCw, Pin, KeyRound, Globe, ChevronsDownUp, ChevronsUpDown, TestTube2, Sigma, Brain, Type } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'motion/react';
 import JsonView from '@uiw/react-json-view';
@@ -9,14 +9,14 @@ import { githubDarkTheme } from '@uiw/react-json-view/githubDark';
 import { githubLightTheme } from '@uiw/react-json-view/githubLight';
 import { useTheme } from 'next-themes';
 import { type RelayLog, type ChannelAttempt, useLogDetail } from '@/api/endpoints/log';
-import { brandBadgeStyle } from '@/lib/brand-badge-style';
-import { getModelIcon } from '@/lib/model-icons';
+import { getModelIcon, resolveBrandColor } from '@/lib/model-icons';
 import { Badge } from '@/components/ui/badge';
 import { cn, formatCount, formatMoney } from '@/lib/utils';
 import { formatUnixSeconds } from '@/lib/time';
 import { endpointTypeLabelKey } from '@/components/modules/group/utils';
 import { resolveLogDisplayFields, formatJsonForCopy } from './display';
 import { useLogFieldVisibility } from './ui-store';
+import { LogCandidatesPanel } from './LogCandidatesPanel';
 import { useSettingStore } from '@/stores/setting';
 import { CopyIconButton } from '@/components/common/CopyButton';
 import {
@@ -93,7 +93,7 @@ function formatCacheHitRate(cacheRead: number, total: number): string {
  */
 function attemptStatusBadge(status: ChannelAttempt['status']): {
     className: string;
-    labelKey: 'success' | 'failed' | 'skipped' | 'circuitBreak' | 'clientClosed';
+    labelKey: 'success' | 'failed' | 'skipped' | 'circuitBreak';
 } {
     switch (status) {
         case 'success':
@@ -101,36 +101,10 @@ function attemptStatusBadge(status: ChannelAttempt['status']): {
         case 'circuit_break':
             return { className: 'bg-amber-500/15 text-amber-600 dark:text-amber-400', labelKey: 'circuitBreak' };
         case 'skipped':
-        case 'client_closed':
-            // 客户端断开不是渠道故障，与 skipped 同级 muted，避免红墙误导。
-            return { className: 'bg-muted text-muted-foreground', labelKey: status === 'client_closed' ? 'clientClosed' : 'skipped' };
+            return { className: 'bg-muted text-muted-foreground', labelKey: 'skipped' };
         case 'failed':
         default:
             return { className: 'bg-destructive/15 text-destructive', labelKey: 'failed' };
-    }
-}
-
-/** Resolve the detail-card container and message accent for a single attempt status.
- *
- * Only real upstream failures use the destructive red accent. Skipped and
- * circuit-break attempts use muted/amber tones so cooldown-only requests don't
- * paint the whole diagnostic panel red (issue #95 改动6).
- */
-function attemptStatusCard(status: ChannelAttempt['status']): {
-    card: string;
-    msg: string;
-} {
-    switch (status) {
-        case 'success':
-            return { card: 'bg-primary/5 border-primary/20 hover:bg-primary/10', msg: 'text-foreground/80 border-foreground/20' };
-        case 'circuit_break':
-            return { card: 'bg-amber-500/5 border-amber-500/20 hover:bg-amber-500/10', msg: 'text-amber-700 dark:text-amber-300 border-amber-500/30' };
-        case 'skipped':
-        case 'client_closed':
-            return { card: 'bg-muted/40 border-border/50 hover:bg-muted/60', msg: 'text-muted-foreground border-border/40' };
-        case 'failed':
-        default:
-            return { card: 'bg-destructive/5 border-destructive/20 hover:bg-destructive/10', msg: 'text-destructive/90 border-destructive/30' };
     }
 }
 
@@ -144,18 +118,18 @@ interface RetryBadgeWithTooltipProps {
 function RetryBadgeWithTooltip({ channelName, brandColor, attempts, channelNameById }: RetryBadgeWithTooltipProps) {
     const t = useTranslations('log.card');
     const { resolvedTheme } = useTheme();
-    const badgeStyle = brandBadgeStyle(brandColor, resolvedTheme === 'dark');
+    const badgeColor = resolveBrandColor(brandColor, resolvedTheme === 'dark');
 
     return (
         <Tooltip>
             <TooltipTrigger asChild>
                 <Badge
                     variant="secondary"
-                    className="shrink-0 text-xs px-1.5 py-0.5 cursor-help font-medium"
-                    style={badgeStyle}
+                    className="min-w-0 max-w-full text-xs px-1.5 py-0.5 cursor-help font-medium"
+                    style={{ backgroundColor: `${badgeColor}15`, color: badgeColor }}
                 >
                     <RotateCw className="size-3 mr-1 opacity-80" />
-                    {channelName}
+                    <span className="max-w-[12rem] truncate sm:max-w-[18rem]" title={channelName}>{channelName}</span>
                 </Badge>
             </TooltipTrigger>
             <TooltipContent className="border bg-card p-2 min-w-[280px] max-w-[calc(100vw-2rem)] rounded-xl flex flex-col gap-1">
@@ -290,19 +264,10 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
     const t = useTranslations('log.card');
     const tCommon = useTranslations('common');
     const tGroup = useTranslations('group');
-    const { resolvedTheme } = useTheme();
     const { detail, isLoading: isDetailLoading, fetchDetail, reset: resetDetail } = useLogDetail();
     const hasError = !!log.error;
     const hasMultipleAttempts = log.attempts && log.attempts.length > 1;
-    // forwardedCount 统计真实发往上游的尝试次数（成功+失败），排除冷却跳过与熔断跳过。
-    // 当它小于总尝试次数时，单独展示以便区分「实际请求报错」与「冷却中未请求」
-    // （issue #95 改动6）。
-    const forwardedCount = useMemo(
-        // 与后端 countForwardedAttempts 一致：排除 skipped / circuit_break，计入 client_closed。
-        () => (log.attempts ?? []).filter((a) => a.status !== 'skipped' && a.status !== 'circuit_break').length,
-        [log.attempts],
-    );
-    const [isDiagnosticExpanded, setIsDiagnosticExpanded] = useState(false);
+    const [leftView, setLeftView] = useState<'group' | 'request'>('group');
     const [requestJsonCollapsed, setRequestJsonCollapsed] = useState(false);
     const [responseJsonCollapsed, setResponseJsonCollapsed] = useState(false);
     const displayFields = useMemo(() => resolveLogDisplayFields(log, detail, channelNameById), [channelNameById, detail, log]);
@@ -312,11 +277,10 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
         () => getModelIcon(displayFields.actualModelName),
         [displayFields.actualModelName]
     );
-    // 渠道名称 / 渠道类型 Badge 使用品牌色；Grok/Kimi 等近黑色在夜间模式下需提亮文字色
-    const channelBadgeStyle = useMemo(
-        () => brandBadgeStyle(brandColor, resolvedTheme === 'dark'),
-        [brandColor, resolvedTheme],
-    );
+    // 深色模式下黑/深色系品牌色（Grok/Kimi/Replicate/MiniMax/Yi 等）直接用作
+    // Badge 文字会「黑字+透明黑底」看不清，按主题解析为可读颜色（issue: 日志深色模式对比度）
+    const { resolvedTheme } = useTheme();
+    const badgeColor = resolveBrandColor(brandColor, resolvedTheme === 'dark');
     const requestAPIKeyName = displayFields.requestAPIKeyName;
 	const clientIP = log.client_ip || '';
     const cacheReadTokens = displayFields.cacheReadTokens;
@@ -392,7 +356,15 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
         // provider creates many parallel global tooltip singletons — each with its
         // own layoutId animation + useFloating autoUpdate listeners — which spirals
         // into a layout-animation loop and OOMs the tab on hover. Reuse the global one.
-        <MorphingDialog onOpen={() => fetchDetail(log.id)} onClose={resetDetail}>
+        <MorphingDialog
+            onOpen={() => {
+                setLeftView('group');
+                setRequestJsonCollapsed(false);
+                setResponseJsonCollapsed(false);
+                fetchDetail(log.id);
+            }}
+            onClose={resetDetail}
+        >
                 <MorphingDialogTrigger
                     className={cn(
                         "rounded-xl border bg-card w-full text-left",
@@ -422,7 +394,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                     <Badge
                                         variant="secondary"
                                         className="max-w-full shrink-0 text-xs px-1.5 py-0"
-                                        style={channelBadgeStyle}
+                                        style={{ backgroundColor: `${badgeColor}15`, color: badgeColor }}
                                         title={displayEndpointType}
                                     >
                                         <span className="block max-w-[10rem] truncate">{displayEndpointType}</span>
@@ -442,7 +414,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                             <Badge
                                                 variant="secondary"
                                                 className="max-w-full shrink-0 text-xs px-1.5 py-0"
-                                                style={channelBadgeStyle}
+                                                style={{ backgroundColor: `${badgeColor}15`, color: badgeColor }}
                                                 title={displayChannelName}
                                             >
                                                 <span className="block max-w-[18rem] truncate">{displayChannelName}</span>
@@ -461,7 +433,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                             </div>
                             <div className="grid grid-cols-2 md:grid-cols-7 gap-x-4 gap-y-1.5 text-xs tabular-nums text-muted-foreground">
                                 <div className="flex items-center gap-1.5">
-                                    <Clock className="size-3.5 shrink-0" style={{ color: channelBadgeStyle.color }} />
+                                    <Clock className="size-3.5 shrink-0" style={{ color: badgeColor }} />
                                     <span>{formatTime(log.time)}</span>
                                 </div>
                                 {vis.apiKeyName && requestAPIKeyName && (
@@ -577,11 +549,11 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                 </MorphingDialogTrigger>
 
                 <MorphingDialogContainer>
-                    <MorphingDialogContent className="relative flex max-h-[calc(100dvh-2rem)] min-h-0 w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl bg-card px-6 py-4 text-card-foreground md:w-[95vw] md:max-w-7xl">
+                    <MorphingDialogContent className="relative flex h-[calc(100dvh-2rem)] max-h-[calc(100dvh-2rem)] min-h-0 w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl bg-card p-3 text-card-foreground sm:h-[min(840px,90dvh)] sm:max-h-[min(840px,90dvh)] sm:max-w-7xl sm:rounded-3xl sm:p-6 md:w-[95vw]">
                         <MorphingDialogClose className="top-4 right-5 text-muted-foreground hover:text-foreground transition-colors" />
-                        <MorphingDialogTitle className="flex items-center gap-2 mb-3 text-sm">
+                        <MorphingDialogTitle className="flex min-w-0 flex-wrap items-center gap-2 mb-3 pr-8 text-sm">
                             <ModelAvatar size={28} />
-                            <span className="font-semibold text-card-foreground">{displayRequestModelName}</span>
+                            <span className="min-w-0 max-w-full truncate font-semibold text-card-foreground" title={displayRequestModelName}>{displayRequestModelName}</span>
                             {log.is_test && (
                                 <Badge
                                     variant="outline"
@@ -596,7 +568,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                 <Badge
                                     variant="secondary"
                                     className="max-w-full shrink-0 text-xs px-1.5 py-0"
-                                    style={channelBadgeStyle}
+                                    style={{ backgroundColor: `${badgeColor}15`, color: badgeColor }}
                                     title={displayEndpointType}
                                 >
                                     <span className="block max-w-[10rem] truncate">{displayEndpointType}</span>
@@ -613,14 +585,14 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                             channelNameById={channelNameById}
                                         />
                                     ) : (
-                                        <Badge
-                                            variant="secondary"
-                                            className="max-w-full text-xs px-1.5 py-0"
-                                            style={channelBadgeStyle}
-                                            title={displayChannelName}
-                                        >
-                                            <span className="block max-w-[18rem] truncate">{displayChannelName}</span>
-                                        </Badge>
+                                    <Badge
+                                        variant="secondary"
+                                        className="max-w-full text-xs px-1.5 py-0"
+                                        style={{ backgroundColor: `${badgeColor}15`, color: badgeColor }}
+                                        title={displayChannelName}
+                                    >
+                                        <span className="block max-w-[12rem] truncate sm:max-w-[18rem]">{displayChannelName}</span>
+                                    </Badge>
                                     )}
                                 </>
                             )}
@@ -632,173 +604,83 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                             )}
                         </MorphingDialogTitle>
 
-                        <MorphingDialogDescription className="flex min-h-0 flex-1 overflow-hidden">
-                            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
-                                {(hasError || hasMultipleAttempts) && (
-                                    <div className={cn(
-                                        "flex-initial min-h-0 flex flex-col rounded-2xl border overflow-hidden max-h-[40%]",
-                                        hasError
-                                            ? "bg-destructive/5 border-destructive/20"
-                                            : "bg-secondary/30 border-border/50"
-                                    )}>
-                                        <div
-                                            className={cn(
-                                                "flex items-center gap-2 px-3 py-2.5 shrink-0 cursor-pointer select-none hover:bg-muted/50 transition-colors",
-                                                hasError && "hover:bg-destructive/10"
-                                            )}
-                                            onClick={() => setIsDiagnosticExpanded(!isDiagnosticExpanded)}
-                                        >
-                                            {hasError ? (
-                                                <AlertCircle className="size-4 text-destructive" />
-                                            ) : (
-                                                <RotateCw className="size-4 text-muted-foreground" />
-                                            )}
-                                            <span className={cn(
-                                                "text-sm font-medium",
-                                                hasError ? "text-destructive" : "text-secondary-foreground"
-                                            )}>
-                                                {hasError ? t('errorInfo') : t('retryDetails')}
-                                            </span>
-                                            <div className="ml-auto flex items-center gap-2">
-                                                {hasMultipleAttempts && (
-                                                    <Badge
-                                                        variant="outline"
-                                                        className={cn(
-                                                            "text-xs border-0",
-                                                            hasError
-                                                                ? "bg-destructive/10 text-destructive"
-                                                                : "bg-secondary text-secondary-foreground"
-                                                        )}
-                                                    >
-                                                        {log.total_attempts || log.attempts!.length} {t('attempts')}
-                                                    </Badge>
-                                                )}
-                                                {hasMultipleAttempts && forwardedCount < (log.total_attempts || log.attempts!.length) && (
-                                                    <Badge
-                                                        variant="outline"
-                                                        className="text-xs border-0 bg-muted/50 text-muted-foreground"
-                                                        title={t('forwardedAttempts', { count: forwardedCount })}
-                                                    >
-                                                        {t('forwardedAttempts', { count: forwardedCount })}
-                                                    </Badge>
-                                                )}
-                                                {isDiagnosticExpanded ? (
-                                                    <ChevronUp className="size-4 text-muted-foreground" />
-                                                ) : (
-                                                    <ChevronDown className="size-4 text-muted-foreground" />
-                                                )}
-                                            </div>
+                        <MorphingDialogDescription className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+                            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden">
+                                {hasError && (
+                                    <div className="relative flex-initial rounded-2xl border border-destructive/20 bg-destructive/5 px-3 py-2.5">
+                                        <div className="absolute right-2 top-2">
+                                            <CopyIconButton
+                                                text={log.error ?? ''}
+                                                className="p-1 rounded-md text-destructive/60 hover:text-destructive hover:bg-destructive/10 transition-colors"
+                                                copyIconClassName="size-4"
+                                                checkIconClassName="size-4"
+                                            />
                                         </div>
-
-                                        <AnimatePresence initial={false}>
-                                            {isDiagnosticExpanded && (
-                                                <motion.div
-                                                    initial={{ height: 0, opacity: 0 }}
-                                                    animate={{ height: "auto", opacity: 1 }}
-                                                    exit={{ height: 0, opacity: 0 }}
-                                                    transition={{ duration: 0.2, ease: "easeInOut" }}
-                                                    className="overflow-hidden flex flex-col min-h-0"
-                                                >
-                                                    <div className="flex-1 overflow-auto p-2.5 md:p-3 flex flex-col gap-4">
-                                                        {hasError && (
-                                                            <div className="relative pl-1">
-                                                                <div className="absolute right-0 top-0">
-                                                                    <CopyIconButton
-                                                                        text={log.error ?? ''}
-                                                                        className="p-1 rounded-md text-destructive/60 hover:text-destructive hover:bg-destructive/10 transition-colors"
-                                                                        copyIconClassName="size-4"
-                                                                        checkIconClassName="size-4"
-                                                                    />
-                                                                </div>
-                                                                <p className="text-sm text-destructive whitespace-pre-wrap wrap-break-word pr-8 leading-relaxed">
-                                                                    {log.error}
-                                                                </p>
-                                                            </div>
-                                                        )}
-
-                                                        {hasMultipleAttempts && (
-                                                            <div className="flex flex-col gap-2">
-                                                                {log.attempts!.map((attempt, idx) => {
-                                                                    const statusBadge = attemptStatusBadge(attempt.status);
-                                                                    const statusCard = attemptStatusCard(attempt.status);
-                                                                    return (
-                                                                    <div
-                                                                        key={idx}
-                                                                        className={cn(
-                                                                            "text-xs p-2.5 rounded-xl border transition-colors flex flex-col gap-2",
-                                                                            statusCard.card
-                                                                        )}
-                                                                    >
-                                                                        <div className="flex items-center gap-2">
-                                                                            <Badge
-                                                                                className={cn(
-                                                                                    "h-5 shrink-0 px-1.5 text-[10px] font-bold uppercase shadow-none border-0",
-                                                                                    statusBadge.className
-                                                                                )}
-                                                                            >
-                                                                                {t(statusBadge.labelKey)}
-                                                                            </Badge>
-                                                                            <span className="font-semibold text-foreground">
-                                                                                {attempt.channel_name?.trim() || channelNameById?.get(attempt.channel_id) || `Channel #${attempt.channel_id}`}
-                                                                            </span>
-                                                                            <span className="text-muted-foreground">
-                                                                                ({attempt.model_name})
-                                                                            </span>
-                                                                            {attempt.adapter_type && (
-                                                                                <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground font-medium">
-                                                                                    {attempt.adapter_type}
-                                                                                </span>
-                                                                            )}
-                                                                            <span className="ml-auto text-muted-foreground tabular-nums font-mono">
-                                                                                {formatDuration(attempt.duration)}
-                                                                            </span>
-                                                                        </div>
-                                                                        {attempt.msg && (
-                                                                            <div className={cn(
-                                                                                "pl-2 border-l-2 text-[11px] leading-relaxed",
-                                                                                statusCard.msg
-                                                                            )}>
-                                                                                {attempt.msg}
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                    );
-                                                                })}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </motion.div>
-                                            )}
-                                        </AnimatePresence>
+                                        <p className="max-h-24 overflow-auto overscroll-contain pr-8 text-xs leading-relaxed whitespace-pre-wrap wrap-break-word text-destructive">
+                                            {log.error}
+                                        </p>
                                     </div>
                                 )}
-                                <div className="min-h-0 flex-1 overflow-hidden pb-1">
-                                    <div className="grid h-full min-h-0 grid-cols-1 gap-4 md:grid-cols-2">
-                                        <div className="flex min-h-0 flex-col rounded-2xl border border-border bg-muted/30 overflow-hidden">
-                                            <div className="flex items-center gap-2 px-3 md:px-4 py-2.5 md:py-3 border-b border-border bg-muted/50 shrink-0">
+                                <div className="min-h-0 min-w-0 flex-1 overflow-hidden pb-1">
+                                    <div className="grid h-full min-h-0 grid-cols-1 grid-rows-2 gap-4 md:grid-cols-2 md:grid-rows-1">
+                                        <div className="flex min-h-0 min-w-0 flex-col rounded-2xl border border-border bg-muted/30 overflow-hidden">
+                                            <div className="flex flex-wrap items-center gap-2 px-3 md:px-4 py-2.5 md:py-3 border-b border-border bg-muted/50 shrink-0">
                                                 <Send className="size-4 text-green-500" />
-                                                <span className="text-sm font-medium text-card-foreground">{t('requestContent')}</span>
+                                                <button
+                                                    type="button"
+                                                    aria-pressed={leftView === 'group'}
+                                                    onClick={() => setLeftView('group')}
+                                                    className={cn(
+                                                        "rounded-md px-1.5 py-0.5 text-sm transition-colors",
+                                                        leftView === 'group'
+                                                            ? "bg-background font-medium text-foreground shadow-sm"
+                                                            : "text-muted-foreground hover:text-foreground"
+                                                    )}
+                                                >
+                                                    {t('groupCandidates')}
+                                                </button>
+                                                <span className="text-xs text-muted-foreground/50">/</span>
+                                                <button
+                                                    type="button"
+                                                    aria-pressed={leftView === 'request'}
+                                                    onClick={() => setLeftView('request')}
+                                                    className={cn(
+                                                        "rounded-md px-1.5 py-0.5 text-sm transition-colors",
+                                                        leftView === 'request'
+                                                            ? "bg-background font-medium text-foreground shadow-sm"
+                                                            : "text-muted-foreground hover:text-foreground"
+                                                    )}
+                                                >
+                                                    {t('requestBody')}
+                                                </button>
                                                 <div className="ml-auto flex items-center gap-1">
-                                                    <Badge variant="secondary" className="text-xs">
-                                                        {usageKnown ? `${fmt(formatCount(log.input_tokens).formatted)} ${t('tokens')}` : tCommon('unknown')}
-                                                    </Badge>
-                                                    {requestContent && (
+                                                    {leftView === 'request' && (
                                                         <>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setRequestJsonCollapsed((v) => !v)}
-                                                                className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                                                                title={requestJsonCollapsed ? t('expandAll') : t('collapseAll')}
-                                                            >
-                                                                {requestJsonCollapsed ? <ChevronsUpDown className="size-3.5" /> : <ChevronsDownUp className="size-3.5" />}
-                                                            </button>
-                                                            <CopyIconButton text={requestCopyText} className="text-muted-foreground hover:text-foreground" />
+                                                            <Badge variant="secondary" className="text-xs">
+                                                                {usageKnown ? `${fmt(formatCount(log.input_tokens).formatted)} ${t('tokens')}` : tCommon('unknown')}
+                                                            </Badge>
+                                                            {requestContent && (
+                                                                <>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setRequestJsonCollapsed((v) => !v)}
+                                                                        className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                                                                        title={requestJsonCollapsed ? t('expandAll') : t('collapseAll')}
+                                                                        aria-label={requestJsonCollapsed ? t('expandAll') : t('collapseAll')}
+                                                                    >
+                                                                        {requestJsonCollapsed ? <ChevronsUpDown className="size-3.5" /> : <ChevronsDownUp className="size-3.5" />}
+                                                                    </button>
+                                                                    <CopyIconButton text={requestCopyText} className="text-muted-foreground hover:text-foreground" />
+                                                                </>
+                                                            )}
                                                         </>
                                                     )}
                                                 </div>
                                             </div>
-                                            <div className="min-h-0 flex-1 overflow-hidden">
-                                                {isDetailLoading ? (
+                                            <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+                                                {leftView === 'group' ? (
+                                                    <LogCandidatesPanel log={detail ?? log} channelNameById={channelNameById} />
+                                                ) : isDetailLoading ? (
                                                     <div className="p-4 flex items-center justify-center h-full">
                                                         <Loader2 className="h-5 w-5 text-muted-foreground animate-spin" />
                                                     </div>
@@ -807,8 +689,8 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                                 )}
                                             </div>
                                         </div>
-                                        <div className="flex min-h-0 flex-col rounded-2xl border border-border bg-muted/30 overflow-hidden">
-                                            <div className="flex items-center gap-2 px-3 md:px-4 py-2.5 md:py-3 border-b border-border bg-muted/50 shrink-0">
+                                        <div className="flex min-h-0 min-w-0 flex-col rounded-2xl border border-border bg-muted/30 overflow-hidden">
+                                            <div className="flex flex-wrap items-center gap-2 px-3 md:px-4 py-2.5 md:py-3 border-b border-border bg-muted/50 shrink-0">
                                                 <MessageSquare className="size-4 text-purple-500" />
                                                 <span className="text-sm font-medium text-card-foreground">{t('responseContent')}</span>
                                                 <div className="ml-auto flex items-center gap-1">
@@ -822,6 +704,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                                                 onClick={() => setResponseJsonCollapsed((v) => !v)}
                                                                 className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                                                                 title={responseJsonCollapsed ? t('expandAll') : t('collapseAll')}
+                                                                aria-label={responseJsonCollapsed ? t('expandAll') : t('collapseAll')}
                                                             >
                                                                 {responseJsonCollapsed ? <ChevronsUpDown className="size-3.5" /> : <ChevronsDownUp className="size-3.5" />}
                                                             </button>
@@ -830,7 +713,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                                     )}
                                                 </div>
                                             </div>
-                                            <div className="min-h-0 flex-1 overflow-hidden">
+                                            <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
                                                 {isDetailLoading ? (
                                                     <div className="p-4 flex items-center justify-center h-full">
                                                         <Loader2 className="h-5 w-5 text-muted-foreground animate-spin" />
@@ -848,7 +731,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                         <div className="shrink-0 border-t border-border/50 pt-3 text-xs text-muted-foreground">
                             <div className="flex flex-wrap items-center gap-3 md:gap-4">
                             <div className="flex items-center gap-1.5">
-                                <Clock className="size-3.5" style={{ color: channelBadgeStyle.color }} />
+                                <Clock className="size-3.5" style={{ color: badgeColor }} />
                                 <span className="tabular-nums">{formatTime(log.time)}</span>
                             </div>
                             {vis.apiKeyName && requestAPIKeyName && (
@@ -879,6 +762,14 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                     <span>{t('cacheHitRate')}: {formatCacheHitRate(cacheReadTokens, totalTokens)}</span>
                                 </div>
                             )}
+                            <div className="flex items-center gap-1.5">
+                                <ArrowDownToLine className="size-3.5 text-green-500" />
+                                <span>{inputLabel}: {inputTokenDisplay}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                                <ArrowUpFromLine className="size-3.5 text-purple-500" />
+                                <span>{t('output')}: {outputTokenDisplay}</span>
+                            </div>
                             <div className="flex items-center gap-1.5">
                                 <Sigma className="size-3.5 text-rose-500" />
                                 <span className="font-medium text-rose-600 dark:text-rose-400">{t('totalTokens')}: {totalTokenDisplay}</span>

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTheme } from 'next-themes';
+import { createSettingSaveQueue, type SettingSaveOutcome, type SettingSaveQueue } from './setting-save-queue';
 import { SettingOrder } from './SettingOrder';
 import { useTranslations } from 'next-intl';
 import { Bell, Clock3, GripVertical, Layers, Languages, ListOrdered, Monitor, Moon, RotateCcw, Sun, Landmark } from 'lucide-react';
@@ -77,47 +78,90 @@ function reorderList<T>(list: readonly T[], startIndex: number, endIndex: number
     return result;
 }
 
-function NavigationPreferences() {
+/** 导航偏好保存共用：按 key 串行回滚的队列 + 「保存中」锁。 */
+interface NavigationSaver {
+    queue: SettingSaveQueue;
+    pending: boolean;
+    /** handler 必须经 run 检查锁，disabled UI 不是守卫；保存中返回 null。 */
+    run: <T>(task: () => Promise<T>) => Promise<T | null>;
+}
+
+function useNavigationSaver(): NavigationSaver {
+    const [queue] = useState(() => createSettingSaveQueue());
+    const [pending, setPending] = useState(false);
+    const pendingRef = useRef(false);
+
+    const run = useCallback(<T,>(task: () => Promise<T>): Promise<T | null> => {
+        if (pendingRef.current) {
+            return Promise.resolve(null);
+        }
+        pendingRef.current = true;
+        setPending(true);
+        return task().finally(() => {
+            pendingRef.current = false;
+            setPending(false);
+        });
+    }, []);
+
+    return { queue, pending, run };
+}
+
+function NavigationPreferences({ saver }: { saver: NavigationSaver }) {
     const t = useTranslations('setting');
     const navT = useTranslations('navbar');
     const setSetting = useSetSetting();
+    const { queue, pending, run } = saver;
     const orderedItems = useNavStore((state) => state.orderedItems);
     const visibleItems = useNavStore((state) => state.visibleItems);
     const setOrderedItems = useNavStore((state) => state.setOrderedItems);
     const setItemVisible = useNavStore((state) => state.setItemVisible);
+    const setVisibleItems = useNavStore((state) => state.setVisibleItems);
     const resetPreferences = useNavStore((state) => state.resetPreferences);
     const visibleItemSet = useMemo(() => new Set(visibleItems), [visibleItems]);
     const visibleCount = visibleItems.length;
 
-    const persistNavOrder = useCallback((items: readonly NavItem[], onSuccess?: () => void) => {
-        setSetting.mutate(
-            {
-                key: SettingKey.NavOrder,
-                value: serializeNavOrder(items),
-            },
-            {
-                onSuccess,
-                onError: () => {
-                    toast.error(t('saveFailed'));
+    // 回滚必须按字段经 store setter；不得改为整体快照恢复。
+    const persistNavOrder = useCallback((next: readonly NavItem[], confirmedSnapshot: readonly NavItem[]): Promise<SettingSaveOutcome> => {
+        return queue
+            .save(
+                {
+                    key: SettingKey.NavOrder,
+                    next,
+                    confirmedSnapshot,
+                    rollback: (confirmed) => setOrderedItems([...confirmed]),
                 },
-            }
-        );
-    }, [setSetting, t]);
+                async (value) => {
+                    await setSetting.mutateAsync({ key: SettingKey.NavOrder, value: serializeNavOrder(value) });
+                }
+            )
+            .then((outcome) => {
+                if (!outcome.ok) {
+                    toast.error(t('saveFailed'));
+                }
+                return outcome;
+            });
+    }, [queue, setOrderedItems, setSetting, t]);
 
-    const persistNavVisible = useCallback((items: readonly NavItem[], onSuccess?: () => void) => {
-        setSetting.mutate(
-            {
-                key: SettingKey.NavVisible,
-                value: serializeNavVisible(items),
-            },
-            {
-                onSuccess,
-                onError: () => {
-                    toast.error(t('saveFailed'));
+    const persistNavVisible = useCallback((next: readonly NavItem[], confirmedSnapshot: readonly NavItem[]): Promise<SettingSaveOutcome> => {
+        return queue
+            .save(
+                {
+                    key: SettingKey.NavVisible,
+                    next,
+                    confirmedSnapshot,
+                    rollback: (confirmed) => setVisibleItems([...confirmed]),
                 },
-            }
-        );
-    }, [setSetting, t]);
+                async (value) => {
+                    await setSetting.mutateAsync({ key: SettingKey.NavVisible, value: serializeNavVisible(value) });
+                }
+            )
+            .then((outcome) => {
+                if (!outcome.ok) {
+                    toast.error(t('saveFailed'));
+                }
+                return outcome;
+            });
+    }, [queue, setVisibleItems, setSetting, t]);
 
     const handleDragEnd = useCallback((result: DropResult) => {
         const { destination, source } = result;
@@ -125,34 +169,48 @@ function NavigationPreferences() {
             return;
         }
 
-        const nextOrder = reorderList(orderedItems, source.index, destination.index);
-        setOrderedItems(nextOrder);
-        persistNavOrder(nextOrder);
-    }, [orderedItems, persistNavOrder, setOrderedItems]);
+        void run(async () => {
+            const state = useNavStore.getState();
+            const confirmedSnapshot = state.orderedItems;
+            const nextOrder = reorderList(state.orderedItems, source.index, destination.index);
+            setOrderedItems(nextOrder);
+            await persistNavOrder(nextOrder, confirmedSnapshot);
+        });
+    }, [persistNavOrder, run, setOrderedItems]);
 
     const handleVisibleChange = useCallback((item: NavItem, checked: boolean) => {
         if (!checked && isFixedVisibleNavItem(item)) {
             return;
         }
-        if (!checked && visibleItemSet.has(item) && visibleCount <= MIN_VISIBLE_NAV_ITEMS) {
+        const currentVisible = useNavStore.getState().visibleItems;
+        if (!checked && currentVisible.includes(item) && currentVisible.length <= MIN_VISIBLE_NAV_ITEMS) {
             toast.error(t('navOrder.minimumVisibleError', { count: MIN_VISIBLE_NAV_ITEMS }));
             return;
         }
 
-        const nextVisible = checked
-            ? Array.from(new Set([...visibleItems, item]))
-            : visibleItems.filter((visibleItem) => visibleItem !== item);
-        setItemVisible(item, checked);
-        persistNavVisible(nextVisible);
-    }, [persistNavVisible, setItemVisible, t, visibleCount, visibleItemSet, visibleItems]);
+        void run(async () => {
+            const confirmedSnapshot = useNavStore.getState().visibleItems;
+            setItemVisible(item, checked);
+            const nextVisible = useNavStore.getState().visibleItems;
+            await persistNavVisible(nextVisible, confirmedSnapshot);
+        });
+    }, [persistNavVisible, run, setItemVisible, t]);
 
     const handleReset = useCallback(() => {
-        resetPreferences();
-        persistNavOrder(DEFAULT_NAV_ORDER, () => {
-            toast.success(t('navOrder.resetSuccess'));
+        void run(async () => {
+            const state = useNavStore.getState();
+            const confirmedOrder = state.orderedItems;
+            const confirmedVisible = state.visibleItems;
+            resetPreferences();
+            const [orderOutcome, visibleOutcome] = await Promise.all([
+                persistNavOrder(DEFAULT_NAV_ORDER, confirmedOrder),
+                persistNavVisible(DEFAULT_NAV_ORDER, confirmedVisible),
+            ]);
+            if (orderOutcome.ok && visibleOutcome.ok) {
+                toast.success(t('navOrder.resetSuccess'));
+            }
         });
-        persistNavVisible(DEFAULT_NAV_ORDER);
-    }, [persistNavOrder, persistNavVisible, resetPreferences, t]);
+    }, [persistNavOrder, persistNavVisible, resetPreferences, run, t]);
 
     return (
         <div className="space-y-4 rounded-lg border-border/30 bg-card p-4 shadow-sm ">
@@ -173,6 +231,7 @@ function NavigationPreferences() {
                     variant="outline"
                     size="sm"
                     onClick={handleReset}
+                    disabled={pending}
                     className="shrink-0 rounded-xl"
                 >
                     <RotateCcw className="mr-1.5 size-3.5" />
@@ -195,7 +254,7 @@ function NavigationPreferences() {
                                     const disableToggle = isFixed || (isVisible && visibleCount <= MIN_VISIBLE_NAV_ITEMS);
 
                                     return (
-                                        <Draggable key={item} draggableId={item} index={index}>
+                                        <Draggable key={item} draggableId={item} index={index} isDragDisabled={pending}>
                                             {(draggableProvided, snapshot) => (
                                                 <div
                                                     ref={draggableProvided.innerRef}
@@ -236,7 +295,7 @@ function NavigationPreferences() {
                                                         <Switch
                                                             checked={isVisible}
                                                             onCheckedChange={(checked) => handleVisibleChange(item, checked)}
-                                                            disabled={disableToggle}
+                                                            disabled={disableToggle || pending}
                                                             aria-label={t('navOrder.toggleAriaLabel', { page: navT(item) })}
                                                         />
                                                     </div>
@@ -282,18 +341,20 @@ const OPS_TAB_LABEL_KEY: Record<OpsTab, string> = {
     audit: 'tabs.audit',
 };
 
-function SubTabPreferences() {
+function SubTabPreferences({ saver }: { saver: NavigationSaver }) {
     const t = useTranslations('setting');
     const hubT = useTranslations('hub');
     const analyticsT = useTranslations('analytics');
     const opsT = useTranslations('ops');
     const setSetting = useSetSetting();
+    const { queue, pending, run } = saver;
 
     const hubTabs = useSubTabStore((s) => s.hub);
     const analyticsTabs = useSubTabStore((s) => s.analytics);
     const opsTabs = useSubTabStore((s) => s.ops);
     const setOrderedTabs = useSubTabStore((s) => s.setOrderedTabs);
     const setTabVisible = useSubTabStore((s) => s.setTabVisible);
+    const setVisibleTabs = useSubTabStore((s) => s.setVisibleTabs);
     const resetModule = useSubTabStore((s) => s.resetModule);
 
     const MODULES = [
@@ -306,24 +367,62 @@ function SubTabPreferences() {
         { id: 'ops' as ModuleId, label: t('subTab.ops'), state: opsTabs, tabs: DEFAULT_OPS_TABS, getLabel: (tab: string) => opsT(OPS_TAB_LABEL_KEY[tab as OpsTab] ?? tab) },
     ];
 
-    const persistOrder = useCallback((module: ModuleId, items: readonly SubTab[]) => {
+    const persistOrder = useCallback((module: ModuleId, next: readonly SubTab[], confirmedSnapshot: readonly SubTab[]): Promise<SettingSaveOutcome> => {
         const key = module === 'hub' ? SettingKey.HubTabOrder : module === 'analytics' ? SettingKey.AnalyticsTabOrder : SettingKey.OpsTabOrder;
-        setSetting.mutate({ key, value: serializeSubTabOrder(module, items) }, { onError: () => toast.error(t('saveFailed')) });
-    }, [setSetting, t]);
+        return queue
+            .save(
+                {
+                    key,
+                    next,
+                    confirmedSnapshot,
+                    rollback: (confirmed) => setOrderedTabs(module, [...confirmed]),
+                },
+                async (value) => {
+                    await setSetting.mutateAsync({ key, value: serializeSubTabOrder(module, value) });
+                }
+            )
+            .then((outcome) => {
+                if (!outcome.ok) {
+                    toast.error(t('saveFailed'));
+                }
+                return outcome;
+            });
+    }, [queue, setOrderedTabs, setSetting, t]);
 
-    const persistVisible = useCallback((module: ModuleId, items: readonly SubTab[]) => {
+    const persistVisible = useCallback((module: ModuleId, next: readonly SubTab[], confirmedSnapshot: readonly SubTab[]): Promise<SettingSaveOutcome> => {
         const key = module === 'hub' ? SettingKey.HubTabVisible : module === 'analytics' ? SettingKey.AnalyticsTabVisible : SettingKey.OpsTabVisible;
-        setSetting.mutate({ key, value: serializeSubTabVisible(module, items) }, { onError: () => toast.error(t('saveFailed')) });
-    }, [setSetting, t]);
+        return queue
+            .save(
+                {
+                    key,
+                    next,
+                    confirmedSnapshot,
+                    rollback: (confirmed) => setVisibleTabs(module, [...confirmed]),
+                },
+                async (value) => {
+                    await setSetting.mutateAsync({ key, value: serializeSubTabVisible(module, value) });
+                }
+            )
+            .then((outcome) => {
+                if (!outcome.ok) {
+                    toast.error(t('saveFailed'));
+                }
+                return outcome;
+            });
+    }, [queue, setVisibleTabs, setSetting, t]);
 
     const handleDragEnd = useCallback((module: ModuleId, result: DropResult) => {
         const { destination, source } = result;
         if (!destination || destination.index === source.index) return;
-        const state = useSubTabStore.getState()[module];
-        const next = reorderList(state.orderedTabs, source.index, destination.index);
-        setOrderedTabs(module, next);
-        persistOrder(module, next);
-    }, [persistOrder, setOrderedTabs]);
+
+        void run(async () => {
+            const state = useSubTabStore.getState()[module];
+            const confirmedSnapshot = state.orderedTabs;
+            const next = reorderList(state.orderedTabs, source.index, destination.index);
+            setOrderedTabs(module, next);
+            await persistOrder(module, next, confirmedSnapshot);
+        });
+    }, [persistOrder, run, setOrderedTabs]);
 
     const handleVisibleChange = useCallback((module: ModuleId, tab: SubTab, checked: boolean) => {
         const state = useSubTabStore.getState()[module];
@@ -331,19 +430,30 @@ function SubTabPreferences() {
             toast.error(t('subTab.minimumVisibleError', { count: MIN_VISIBLE_SUB_TABS }));
             return;
         }
-        setTabVisible(module, tab, checked);
-        const next = checked
-            ? Array.from(new Set([...state.visibleTabs, tab]))
-            : state.visibleTabs.filter((t) => t !== tab);
-        persistVisible(module, next);
-    }, [persistVisible, setTabVisible, t]);
+
+        void run(async () => {
+            const confirmedSnapshot = useSubTabStore.getState()[module].visibleTabs;
+            setTabVisible(module, tab, checked);
+            const nextVisible = useSubTabStore.getState()[module].visibleTabs;
+            await persistVisible(module, nextVisible, confirmedSnapshot);
+        });
+    }, [persistVisible, run, setTabVisible, t]);
 
     const handleReset = useCallback((module: ModuleId) => {
-        resetModule(module);
-        persistOrder(module, DEFAULT_SUB_TABS[module]);
-        persistVisible(module, DEFAULT_SUB_TABS[module]);
-        toast.success(t('subTab.resetSuccess'));
-    }, [persistOrder, persistVisible, resetModule, t]);
+        void run(async () => {
+            const state = useSubTabStore.getState()[module];
+            const confirmedOrder = state.orderedTabs;
+            const confirmedVisible = state.visibleTabs;
+            resetModule(module);
+            const [orderOutcome, visibleOutcome] = await Promise.all([
+                persistOrder(module, DEFAULT_SUB_TABS[module], confirmedOrder),
+                persistVisible(module, DEFAULT_SUB_TABS[module], confirmedVisible),
+            ]);
+            if (orderOutcome.ok && visibleOutcome.ok) {
+                toast.success(t('subTab.resetSuccess'));
+            }
+        });
+    }, [persistOrder, persistVisible, resetModule, run, t]);
 
     return (
         <div className="space-y-4 rounded-lg border-border/30 bg-card p-4 shadow-sm">
@@ -368,7 +478,7 @@ function SubTabPreferences() {
                         <div key={mod.id} className="rounded-lg border border-border/30 bg-card p-3 shadow-sm">
                             <div className="mb-2 flex items-center justify-between">
                                 <span className="text-sm font-medium text-foreground">{mod.label}</span>
-                                <Button type="button" variant="ghost" size="sm" className="h-7 rounded-lg text-xs" onClick={() => handleReset(mod.id)}>
+                                <Button type="button" variant="ghost" size="sm" className="h-7 rounded-lg text-xs" onClick={() => handleReset(mod.id)} disabled={pending}>
                                     <RotateCcw className="mr-1 size-3" />
                                     {t('subTab.reset')}
                                 </Button>
@@ -381,7 +491,7 @@ function SubTabPreferences() {
                                                 const isVisible = visibleSet.has(tab);
                                                 const disableToggle = isVisible && visibleCount <= MIN_VISIBLE_SUB_TABS;
                                                 return (
-                                                    <Draggable key={tab} draggableId={`${mod.id}-${tab}`} index={index}>
+                                                    <Draggable key={tab} draggableId={`${mod.id}-${tab}`} index={index} isDragDisabled={pending}>
                                                         {(draggableProvided, snapshot) => (
                                                             <div
                                                                 ref={draggableProvided.innerRef}
@@ -401,7 +511,7 @@ function SubTabPreferences() {
                                                                 <Switch
                                                                     checked={isVisible}
                                                                     onCheckedChange={(checked) => handleVisibleChange(mod.id, tab, checked)}
-                                                                    disabled={disableToggle}
+                                                                    disabled={disableToggle || pending}
                                                                     aria-label={mod.getLabel(tab)}
                                                                 />
                                                             </div>
@@ -428,6 +538,7 @@ export function SettingAppearance() {
     const { locale, setLocale, timeZone, setTimeZone, chinaMode, setChinaMode, exchangeRate, setExchangeRate } = useSettingStore();
     const { data: settings } = useSettingList();
     const setSetting = useSetSetting();
+    const saver = useNavigationSaver();
     const [alertNotifyLanguage, setAlertNotifyLanguage] = useState<AlertNotifyLanguage>('en');
     const initialAlertNotifyLanguage = useRef<AlertNotifyLanguage>('en');
     const initialTimeZone = useRef(timeZone);
@@ -707,10 +818,10 @@ export function SettingAppearance() {
                     </div>
                     <div className="grid items-start gap-4 xl:grid-cols-2">
                         <div className="flex flex-col gap-4">
-                            <NavigationPreferences />
+                            <NavigationPreferences saver={saver} />
                             <SettingOrder />
                         </div>
-                        <SubTabPreferences />
+                        <SubTabPreferences saver={saver} />
                     </div>
                 </div>
             </div>

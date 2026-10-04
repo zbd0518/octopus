@@ -549,11 +549,11 @@ export function GroupEditor({
 
 
     return (
-        <form onSubmit={handleSubmit} className={cn("flex h-full min-h-0 flex-col overflow-hidden", className)}>
+        <form onSubmit={handleSubmit} className={cn("flex h-full min-h-0 flex-col overflow-hidden 2xl:h-auto", className)}>
             <div className="flex-1 min-h-0 overflow-y-auto pr-1">
-                <FieldGroup className="flex min-h-full flex-col gap-4">
+                <FieldGroup className="flex flex-col gap-4">
                     <div className="grid gap-4 2xl:grid-cols-[minmax(21rem,0.9fr)_minmax(0,1.55fr)] 2xl:items-stretch">
-                        <section className="flex flex-col gap-3 rounded-xl border border-border/30 bg-card p-3 md:gap-4 md:p-5">
+                        <section className="flex min-w-0 flex-col gap-3 rounded-xl border border-border/30 bg-card p-3 md:gap-4 md:p-5">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div className="space-y-2">
                                     <div className="inline-flex items-center gap-2 rounded-full border border-primary/14 bg-card px-3 py-1 text-[0.68rem] font-semibold text-primary">
@@ -943,7 +943,7 @@ export function GroupEditor({
                 </FieldGroup>
             </div>
 
-            <div className="mt-auto shrink-0 px-1 pt-4 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
+            <div className="shrink-0 pr-1 pt-4 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
                 <div className="flex gap-2">
                     {onCancel && (
                         <Button type="button" variant="secondary" className="h-11 flex-1 rounded-lg" onClick={onCancel}>

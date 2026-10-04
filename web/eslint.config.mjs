@@ -4,7 +4,8 @@ import nextTs from "eslint-config-next/typescript";
 
 const eslintConfig = defineConfig([
   ...nextVitals,
-  ...nextTs,  {
+  ...nextTs,
+  {
     rules: {
       "react-hooks/set-state-in-effect": "off",
     },
@@ -16,6 +17,7 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "test-server*.js",
   ]),
 ]);
 

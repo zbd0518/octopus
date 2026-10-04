@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/utils/crypto"
 )
 
 // QuotaResult 号池账号额度查询结果（前端展示用）。
@@ -61,6 +62,30 @@ func SyncAllQuotas(ctx context.Context) {
 
 // RefreshAccountTokenFunc 由 pooltokenrefresh 包注入。
 var RefreshAccountTokenFunc func(ctx context.Context, poolID, accountID int) error
+
+// ParseQuotaSnapshot 只读解析账号上缓存的额度快照（PoolAccount.Quota：加密 JSON，
+// QuotaResult 形状 used/total/reset_at）。不做 DB 访问、不发网络请求，仅供调度器
+// 在候选结构体上就地消费（B1-#8；调用方须自行保证仅在 quota 权重非 0 时调用，
+// 避免默认路径上的 AES 解密开销）。快照缺失/解密失败/JSON 非法/total<=0 → ok=false。
+func ParseQuotaSnapshot(acct *model.PoolAccount) (used, total float64, ok bool) {
+	if acct == nil || acct.Quota == "" {
+		return 0, 0, false
+	}
+	raw := acct.Quota
+	if crypto.IsEncrypted(raw) {
+		if plain, err := crypto.Decrypt(raw); err == nil {
+			raw = plain
+		}
+	}
+	var snapshot QuotaResult
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return 0, 0, false
+	}
+	if snapshot.Total <= 0 {
+		return 0, 0, false
+	}
+	return snapshot.Used, snapshot.Total, true
+}
 
 // RefreshAccountToken 手动/调度触发单账号 token 刷新。
 func RefreshAccountToken(ctx context.Context, poolID, accountID int) error {

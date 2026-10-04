@@ -72,8 +72,9 @@ func loadInitSource(t *testing.T) string {
 // priceTaskBody 提取 init.go 中价格更新任务注册的那个 func() 闭包体。
 //
 // 以 Register(string(model.SettingKeyModelInfoUpdateInterval), ...) 为起点，
-// 到其后第一个 "\n\t\t})"（即该 Register 调用的收尾）为终点。这样切出来的范围
-// 只含价格任务自己，不会溢出到紧邻的 TaskBaseUrlDelay 等其他注册。
+// 到其后第一个 "\n\t})"（即该 Register 调用的收尾；注册已扁平化到 Init 顶层，
+// 收尾是一层缩进）为终点。这样切出来的范围只含价格任务自己，不会溢出到紧邻的
+// TaskBaseUrlDelay 等其他注册。
 func priceTaskBody(t *testing.T) string {
 	t.Helper()
 	src := loadInitSource(t)
@@ -85,9 +86,9 @@ func priceTaskBody(t *testing.T) string {
 			"若价格任务的注册写法被有意改动，请同步更新本守卫的 anchor。", anchor)
 	}
 	rest := src[idx+len(anchor):]
-	end := strings.Index(rest, "\n\t\t})")
+	end := strings.Index(rest, "\n\t})")
 	if end < 0 {
-		t.Fatal("price task closure terminator \"\\n\\t\\t})\" not found after the registration anchor")
+		t.Fatal("price task closure terminator \"\\n\\t})\" not found after the registration anchor")
 	}
 	return rest[:end]
 }

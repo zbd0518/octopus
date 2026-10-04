@@ -24,8 +24,8 @@ import { buildGroupedRouteModelCategories } from './grouped-view';
 import { buttonVariants } from '@/components/ui/button';
 import { useSearchableList, useGroupFilter } from '@/hooks/use-searchable-list';
 import { LoadingState } from '@/components/common/LoadingState';
-import { ErrorState } from '@/components/common/ErrorState';
 import { isGroupJumpTarget, useJumpStore } from '@/stores/jump';
+import { ErrorState } from '@/components/common/ErrorState';
 
 function matchesGroupFilter(item: RouteGroup, filter: string) {
     if (filter === 'with-members') return (item.items?.length || 0) > 0;
@@ -48,16 +48,17 @@ export function Group() {
     const groupViewMode = useToolbarViewOptionsStore((s) => s.groupViewMode);
     const setGroupViewMode = useToolbarViewOptionsStore((s) => s.setGroupViewMode);
     const searchTerm = useSearchStore((s) => s.getSearchTerm(pageKey));
-    const { data: modelChannels = [] } = useModelChannelList();
     const pendingJump = useJumpStore((s) => s.pending);
     const clearPending = useJumpStore((s) => s.clearPending);
     const [autoOpenGroupId, setAutoOpenGroupId] = useState<number | null>(null);
     const groupCardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+    const { data: modelChannels = [] } = useModelChannelList();
 
-    // 重新构造 pending，使 type guard 收窄到 GroupJumpTarget（直接赋值 pendingJump 时 target 仍是联合类型）
+
+    // 重新构造 pending，使 type guard 收窄到 GroupJumpTarget
     const pendingGroupJump =
         pendingJump && isGroupJumpTarget(pendingJump.target)
-            ? { requestId: pendingJump.requestId, target: pendingJump.target }
+            ? { requestId: pendingJump.requestId, target: pendingGroupJump.target }
             : null;
     const forcedGroupId = pendingGroupJump?.target.groupId ?? autoOpenGroupId;
 
@@ -114,15 +115,6 @@ export function Group() {
         filterPredicate: matchesGroupFilter,
     });
 
-    const displayGroups = useMemo(() => {
-        if (forcedGroupId == null) return visibleGroups;
-        const pinned = visibleGroups.find((g) => g.id === forcedGroupId);
-        // 目标组可能被当前 filter 隐藏：从全量列表补回并置顶，保证 jump 可打开
-        const fallback = pinned ?? (groups ?? []).find((g) => g.id === forcedGroupId);
-        if (!fallback) return visibleGroups;
-        return [fallback, ...visibleGroups.filter((g) => g.id !== forcedGroupId)];
-    }, [visibleGroups, forcedGroupId, groups]);
-
     const groupedSourceGroups = useMemo(
         () => sortedGroups.filter((group) => matchesGroupFilter(group, filter)),
         [sortedGroups, filter],
@@ -132,6 +124,14 @@ export function Group() {
         () => buildGroupedRouteModelCategories(groupedSourceGroups, modelChannels, searchTerm, { assignedGroups: groups ?? [] }),
         [groupedSourceGroups, modelChannels, searchTerm, groups],
     );
+
+    const displayGroups = useMemo(() => {
+        if (forcedGroupId == null) return visibleGroups;
+        const pinned = visibleGroups.find((g) => g.id === forcedGroupId);
+        const fallback = pinned ?? (groups ?? []).find((g) => g.id === forcedGroupId);
+        if (!fallback) return visibleGroups;
+        return [fallback, ...visibleGroups.filter((g) => g.id !== forcedGroupId)];
+    }, [visibleGroups, forcedGroupId, groups]);
 
     if (isLoading) {
         return (
@@ -181,7 +181,7 @@ export function Group() {
                                     {t('create.submit')}
                                 </MorphingDialogTrigger>
                                 <MorphingDialogContainer>
-                                    <MorphingDialogContent className="h-[calc(100dvh-2.5rem)] w-[min(100vw-2rem,92rem)] max-w-full sm:max-w-none flex-col overflow-hidden rounded-xl border border-border bg-card px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] text-card-foreground md:h-[calc(100dvh-3rem)] md:px-6 md:py-5">
+                                    <MorphingDialogContent className="h-[calc(100dvh-2.5rem)] w-[min(100vw-2rem,92rem)] max-w-full sm:max-w-none flex-col overflow-hidden rounded-xl border border-border bg-card px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] text-card-foreground md:h-[calc(100dvh-3rem)] md:px-6 md:py-5 2xl:h-auto">
                                         <CreateDialogContent />
                                     </MorphingDialogContent>
                                 </MorphingDialogContainer>

@@ -6,8 +6,19 @@ import (
 	"time"
 
 	dbmodel "github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/op/pool"
 	"github.com/lingyuins/octopus/internal/relay/poolscheduler"
 )
+
+// poolBaseCooldown 返回号池的基础冷却时长（AccountPool.CooldownBaseSec，默认 300s）。
+// 仅在冷却事件（如 429 反馈缺 reset 头证据）时调用，每事件读一次，非每请求。
+func poolBaseCooldown(poolID int) time.Duration {
+	sec := 300
+	if p, err := pool.GetPool(poolID); err == nil && p != nil && p.CooldownBaseSec > 0 {
+		sec = p.CooldownBaseSec
+	}
+	return time.Duration(sec) * time.Second
+}
 
 // pool_auth_error.go — P0 号池调度健壮性（对齐 sub2api ratelimit_service.go:280-330）。
 // OpenAI 403 按 180 分钟窗口计数，阈值 3 次；OAuth 401 不致直接 error，而是临时禁用 10 分钟留刷新窗口。
