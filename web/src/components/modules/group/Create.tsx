@@ -41,7 +41,7 @@ export function CreateDialogContent() {
     const t = useTranslations('group');
 
     return (
-        <div className="relative flex h-full min-h-0 w-full max-w-full flex-1 flex-col 2xl:h-auto">
+        <div className="relative flex h-full min-h-0 w-full max-w-full flex-1 flex-col">
             <MorphingDialogTitle className="shrink-0">
                 <header className="relative mb-5 flex items-start justify-between gap-4">
                     <div className="space-y-3">

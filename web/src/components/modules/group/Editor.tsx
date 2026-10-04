@@ -549,7 +549,7 @@ export function GroupEditor({
 
 
     return (
-        <form onSubmit={handleSubmit} className={cn("flex h-full min-h-0 flex-col overflow-hidden 2xl:h-auto", className)}>
+        <form onSubmit={handleSubmit} className={cn("flex h-full min-h-0 flex-col overflow-hidden", className)}>
             <div className="flex-1 min-h-0 overflow-y-auto pr-1">
                 <FieldGroup className="flex flex-col gap-4">
                     <div className="grid gap-4 2xl:grid-cols-[minmax(21rem,0.9fr)_minmax(0,1.55fr)] 2xl:items-stretch">

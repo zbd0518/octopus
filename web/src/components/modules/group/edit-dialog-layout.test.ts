@@ -75,17 +75,17 @@ test('wide model panels stretch to the configuration panel without sizing the gr
     assert.doesNotMatch(editor, /\b(?:lg|xl):(?:h-full|min-h-0|flex-1)/);
 });
 
-test('wide dialogs hug the editor content instead of reserving viewport-height whitespace', () => {
+test('group dialogs fill the available viewport height instead of hugging content', () => {
     for (const source of [card, list, index]) {
         const dialogClasses = source.match(/<MorphingDialogContent className="([^"]*)"/)?.[1].split(/\s+/);
-        assert.ok(dialogClasses?.includes('2xl:h-auto'), 'wide dialog must size itself to its content');
+        assert.ok(!dialogClasses?.includes('2xl:h-auto'), 'group dialog must fill viewport height on wide screens');
     }
     const groupCreateClasses = toolbar.match(/if \(activeItem === 'group'\) \{\s*return '([^']*)'/)?.[1].split(/\s+/);
-    assert.ok(groupCreateClasses?.includes('2xl:h-auto'), 'toolbar group creation must also hug its content');
+    assert.ok(!groupCreateClasses?.includes('2xl:h-auto'), 'toolbar group creation must fill viewport height on wide screens');
     for (const source of [card, list, create]) {
-        assert.match(source, /max-w-full flex-1 flex-col 2xl:h-auto/);
+        assert.match(source, /max-w-full flex-1 flex-col(?! 2xl:h-auto)/);
     }
-    assert.match(editor, /overflow-hidden 2xl:h-auto/);
+    assert.match(editor, /overflow-hidden", className/);
     assert.doesNotMatch(editor, /min-h-full|mt-auto/);
     assert.match(editor, /shrink-0 pr-1 pt-4/);
 });
