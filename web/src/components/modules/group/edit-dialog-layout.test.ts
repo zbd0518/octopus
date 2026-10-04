@@ -86,7 +86,13 @@ test('group dialogs fill the available viewport height instead of hugging conten
         assert.match(source, /max-w-full flex-1 flex-col(?! 2xl:h-auto)/);
     }
     assert.match(editor, /overflow-hidden", className/);
-    assert.doesNotMatch(editor, /min-h-full|mt-auto/);
+});
+
+test('group editor stretches its panels to fill the dialog height', () => {
+    assert.match(editor, /FieldGroup className="flex min-h-full flex-col gap-4"/);
+    assert.match(editor, /grid gap-4 2xl:min-h-0 2xl:flex-1 2xl:auto-rows-fr/);
+    assert.match(editor, /2xl:gap-4 2xl:auto-rows-fr/);
+    assert.doesNotMatch(editor, /mt-auto/);
     assert.match(editor, /shrink-0 pr-1 pt-4/);
 });
 

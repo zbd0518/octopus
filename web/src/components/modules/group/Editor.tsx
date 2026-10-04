@@ -551,8 +551,8 @@ export function GroupEditor({
     return (
         <form onSubmit={handleSubmit} className={cn("flex h-full min-h-0 flex-col overflow-hidden", className)}>
             <div className="flex-1 min-h-0 overflow-y-auto pr-1">
-                <FieldGroup className="flex flex-col gap-4">
-                    <div className="grid gap-4 2xl:grid-cols-[minmax(21rem,0.9fr)_minmax(0,1.55fr)] 2xl:items-stretch">
+                <FieldGroup className="flex min-h-full flex-col gap-4">
+                    <div className="grid gap-4 2xl:min-h-0 2xl:flex-1 2xl:auto-rows-fr 2xl:grid-cols-[minmax(21rem,0.9fr)_minmax(0,1.55fr)] 2xl:items-stretch">
                         <section className="flex min-w-0 flex-col gap-3 rounded-xl border border-border/30 bg-card p-3 md:gap-4 md:p-5">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div className="space-y-2">
@@ -913,7 +913,7 @@ export function GroupEditor({
                                 <p className="text-xs text-destructive">{t('form.membersRequired')}</p>
                             )}
 
-                            <div className="grid min-w-0 grid-cols-1 gap-3 2xl:min-h-0 2xl:flex-1 2xl:[contain:size] 2xl:grid-cols-[minmax(18rem,0.92fr)_minmax(20rem,1.18fr)] 2xl:gap-4">
+                            <div className="grid min-w-0 grid-cols-1 gap-3 2xl:min-h-0 2xl:flex-1 2xl:[contain:size] 2xl:grid-cols-[minmax(18rem,0.92fr)_minmax(20rem,1.18fr)] 2xl:gap-4 2xl:auto-rows-fr">
                                 <ModelPickerSection
                                     modelChannels={pickerModelChannels}
                                     selectedMembers={selectedMembers}
