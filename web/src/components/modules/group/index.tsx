@@ -180,7 +180,7 @@ export function Group() {
                                     {t('create.submit')}
                                 </MorphingDialogTrigger>
                                 <MorphingDialogContainer>
-                                    <MorphingDialogContent className="h-[calc(100dvh-2.5rem)] w-[min(100vw-2rem,92rem)] max-w-full sm:max-w-none flex-col overflow-hidden rounded-xl border border-border bg-card px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] text-card-foreground md:h-[calc(100dvh-3rem)] md:px-6 md:py-5">
+                                    <MorphingDialogContent className="max-h-[calc(100dvh-6rem)] sm:max-h-[calc(100dvh-3rem)] lg:max-h-[calc(100dvh-1.5rem)] max-w-full sm:max-w-[92rem] lg:max-w-full relative flex h-[calc(100dvh-6rem)] w-[min(100vw-2rem,92rem)] lg:w-full lg:h-[calc(100dvh-1.5rem)] flex-col overflow-hidden rounded-xl border border-border/35 bg-card px-4 py-4 text-card-foreground shadow-md md:h-[calc(100dvh-3rem)] md:w-[min(100vw-2rem,92rem)] md:px-6">
                                         <CreateDialogContent />
                                     </MorphingDialogContent>
                                 </MorphingDialogContainer>

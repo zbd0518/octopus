@@ -96,6 +96,21 @@ test('group editor stretches its panels to fill the dialog height', () => {
     assert.match(editor, /shrink-0 pr-1 pt-4/);
 });
 
+test('group create dialog mirrors the edit dialog sizing', () => {
+    const editDialog = list.match(/<MorphingDialogContent className="([^"]*)"/)?.[1];
+    const createDialog = index.match(/<MorphingDialogContent className="([^"]*)"/)?.[1];
+    const toolbarCreate = toolbar.match(/if \(activeItem === 'group'\) \{\s*return '([^']*)'/)?.[1];
+
+    assert.ok(editDialog, 'edit dialog classes required');
+    assert.equal(createDialog, editDialog, 'group create dialog must match the edit dialog sizing');
+    assert.equal(toolbarCreate, editDialog, 'toolbar group creation must match the edit dialog sizing');
+    for (const dialog of [createDialog, toolbarCreate]) {
+        assert.match(String(dialog), /sm:max-h-\[calc\(100dvh-3rem\)\]/);
+        assert.match(String(dialog), /max-w-full sm:max-w-\[92rem\]/);
+    }
+    assert.match(create, /grid-cols-\[minmax\(0,1fr\)_auto\]/);
+});
+
 test('shared editor view keeps form mounted while switching to results', () => {
     assert.match(shared, /aria-hidden=\{view !== 'edit'\}/);
     assert.match(shared, /inert=\{view !== 'edit'\}/);

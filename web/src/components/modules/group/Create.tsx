@@ -43,8 +43,8 @@ export function CreateDialogContent() {
     return (
         <div className="relative flex h-full min-h-0 w-full max-w-full flex-1 flex-col">
             <MorphingDialogTitle className="shrink-0">
-                <header className="relative mb-5 flex items-start justify-between gap-4">
-                    <div className="space-y-3">
+                <header className="relative mb-4 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 sm:items-center">
+                    <div className="min-w-0 space-y-3">
                         <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-card px-3 py-1 text-[0.68rem] font-semibold text-primary">
                             <Sparkles className="size-3.5" />
                             {t('create.submit')}
@@ -57,7 +57,7 @@ export function CreateDialogContent() {
                         </div>
                     </div>
                     <MorphingDialogClose
-                        className="relative right-0 top-0"
+                        className="relative col-start-2 row-start-1 right-auto top-auto size-11 shrink-0 rounded-lg border-transparent bg-transparent p-2 text-muted-foreground hover:bg-muted sm:size-9 sm:p-2 [&>svg]:size-4"
                         variants={{
                             initial: { opacity: 0, scale: 0.8 },
                             animate: { opacity: 1, scale: 1 },
