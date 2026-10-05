@@ -89,6 +89,7 @@ func redactSettingsURLsForViewer(settings []model.Setting) {
 			model.SettingKeyAIRouteBaseURL:
 			settings[settingIndex].Value = maskURLDomainForViewer(settings[settingIndex].Value)
 		case model.SettingKeyWebDAVConfig,
+			model.SettingKeyPoolGeminiClientSecret,
 			model.SettingKeySemanticCacheEmbeddingAPIKey,
 			model.SettingKeyAIRouteAPIKey,
 			model.SettingKeyAIRouteServices:

@@ -114,6 +114,7 @@ func Init() {
 	// 启动号池 ReportResult DB 写 worker pool（固定 worker + 有界队列，避免每请求
 	// 一 goroutine 在高 QPS + 慢 DB 下无限堆积）。
 	poolscheduler.StartReportWorkerPool(context.Background())
+	startPoolAlertWorker()
 	// 注入 Key 巡检状态清理函数到 relay 包（打破 relay -> task 循环依赖）。
 	relay.OnChannelDeletedKeyHealthHook = RemoveChannelKeyHealthState
 	priceUpdateInterval := settingInterval(model.SettingKeyModelInfoUpdateInterval, time.Hour, 24*time.Hour)

@@ -45,7 +45,7 @@ function PlanResults({ poolId, planId }: { poolId: number; planId: number }) {
             {results.map((result) => (
                 <div key={result.id} className="flex items-start gap-2 text-xs">
                     <Badge variant={result.success ? 'outline' : 'secondary'} className={result.success ? 'text-green-600' : 'text-destructive'}>
-                        {result.success ? t('testSuccess') : t('testFailed')}
+                        {result.success ? t('testSuccess', { latency: result.duration_ms }) : t('testFailed', { error: result.detail })}
                     </Badge>
                     <span className="shrink-0 tabular-nums text-muted-foreground">{formatUnixSeconds(Math.floor(new Date(result.created_at).getTime() / 1000))}</span>
                     <span className="tabular-nums text-muted-foreground">{result.duration_ms}ms</span>

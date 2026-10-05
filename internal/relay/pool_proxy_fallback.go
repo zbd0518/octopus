@@ -1,6 +1,8 @@
 package relay
 
 import (
+	"context"
+	"errors"
 	"strings"
 
 	"github.com/lingyuins/octopus/internal/op/pool"
@@ -31,10 +33,13 @@ var proxyFailureMarkers = []string{
 // isProxyLayerFailure reports whether the attempt error looks like a
 // transport/dial-layer failure (direct dial or proxy CONNECT).
 func isProxyLayerFailure(err error) bool {
-	if err == nil {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "upstream url is not allowed:") || strings.Contains(msg, "upstream error:") {
+		return false
+	}
 	for _, marker := range proxyFailureMarkers {
 		if strings.Contains(msg, marker) {
 			return true

@@ -220,6 +220,46 @@ func seedStatsForTest(t *testing.T, poolID, accountID int, errorRate, ttftMs flo
 	t.Cleanup(func() { globalPoolStats.Delete(statsKey(poolID, accountID)) })
 }
 
+func TestStickyEscapeFallsBackWithoutAnAvailableAlternative(t *testing.T) {
+	for _, scenario := range []string{"single", "excluded", "model", "busy"} {
+		t.Run(scenario, func(t *testing.T) {
+			poolID, _ := setupSchedulerPoolDB(t)
+			setStickyEscapeForTest(t, "true", "0.5", "15000")
+			a1 := addAccount(t, poolID, &model.PoolAccount{Name: "sticky-last"})
+			seedStickyForTest(t, poolID, a1, "last-session")
+			seedStatsForTest(t, poolID, a1, 0.6, 0)
+			var excluded []int
+			if scenario != "single" {
+				spare := &model.PoolAccount{Name: "unavailable-spare"}
+				if scenario == "model" {
+					spare.Models = "other-model"
+				}
+				a2 := addAccount(t, poolID, spare)
+				if scenario == "excluded" {
+					excluded = []int{a2}
+				}
+				if scenario == "busy" {
+					acquireSlot(poolID, a2)
+					defer ReleaseSlot(poolID, a2)
+				}
+			}
+			got, err := SelectAccount(poolID, "last-session", excluded, 1, "requested-model")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ReleaseSlot(poolID, got.ID)
+			if got.ID != a1 {
+				t.Fatalf("selected %d, want last usable account %d", got.ID, a1)
+			}
+			if scenario == "single" {
+				if _, err := SelectAccount(poolID, "last-session", []int{a1}, 1, "requested-model"); err == nil {
+					t.Fatal("caller exclusion must not be bypassed")
+				}
+			}
+		})
+	}
+}
+
 // TestStickyEscape_EscapeExcludesButPreservesEntry (B1-#9 core acceptance):
 // with escape enabled the degraded account is excluded from this selection
 // (round_robin will not re-pick it either) while the original sticky entry is

@@ -39,6 +39,10 @@ var (
 	// nil 表示刷新服务未启用（跳过触发）。
 	TriggerRefreshAsync func(poolID, accountID int)
 
+	// NotifyPoolStateChange is injected by the task layer. Implementations must
+	// enqueue without blocking; nil leaves event delivery disabled.
+	NotifyPoolStateChange func(poolID, accountID int, kind, detail string)
+
 	// poolReportCh 是 ReportResult DB 写入的有界 worker pool。
 	// 之前每个号池请求完成都 go func() 同步执行两次 pool.UpdateAccount（DB 写），
 	// 无信号量/超时，高 QPS + 慢 DB 下 goroutine 会无限堆积（风暴）。改为固定 worker
@@ -102,12 +106,7 @@ func SelectAccount(poolID int, sessionHash string, excludeIDs []int, poolDefault
 			return acct, nil
 		}
 		if escapedID > 0 {
-			// B1-#9 sticky escape: exclude the escaped account from this
-			// selection (so round_robin/ewma does not immediately re-pick it),
-			// but keep the original sticky entry unbound-changed — the session
-			// returns to its original binding once the stats recover.
 			escapedStickyID = escapedID
-			excludeIDs = append(append([]int(nil), excludeIDs...), escapedID)
 		}
 	}
 
@@ -130,6 +129,15 @@ func SelectAccount(poolID int, sessionHash string, excludeIDs []int, poolDefault
 	candidates = filterBySlot(candidates, poolID, poolDefaultConcurrency)
 	if len(candidates) == 0 {
 		return nil, ErrNoAvailableAccount
+	}
+
+	// Escape only when another candidate can serve this request; caller-provided
+	// exclusions, model constraints, priority filters and slot limits still apply.
+	if escapedStickyID > 0 {
+		alternatives := filterExcluded(candidates, []int{escapedStickyID})
+		if len(alternatives) > 0 {
+			candidates = alternatives
+		}
 	}
 
 	// L4: 评分排序 + 选择
@@ -255,23 +263,35 @@ func DroppedReportCount() int64 {
 
 // SetRateLimitCooldown 设置 429 冷却。
 func SetRateLimitCooldown(poolID, accountID int, until time.Time) {
-	_ = pool.UpdateAccount(poolID, accountID, map[string]interface{}{
+	if err := pool.UpdateAccount(poolID, accountID, map[string]interface{}{
 		"rate_limit_reset_at": until.Unix(),
-	})
+	}); err == nil {
+		notifyPoolStateChange(poolID, accountID, "rate_limit", until.Format(time.RFC3339))
+	}
 }
 
 // SetOverload 设置过载冷却。
 func SetOverload(poolID, accountID int, until time.Time) {
-	_ = pool.UpdateAccount(poolID, accountID, map[string]interface{}{
+	if err := pool.UpdateAccount(poolID, accountID, map[string]interface{}{
 		"overload_until": until.Unix(),
-	})
+	}); err == nil {
+		notifyPoolStateChange(poolID, accountID, "overload", until.Format(time.RFC3339))
+	}
 }
 
 // SetError 将账号标记为 error 状态。
 func SetError(poolID, accountID int) {
-	_ = pool.UpdateAccount(poolID, accountID, map[string]interface{}{
+	if err := pool.UpdateAccount(poolID, accountID, map[string]interface{}{
 		"status": "error",
-	})
+	}); err == nil {
+		notifyPoolStateChange(poolID, accountID, "error", "pool account entered error state")
+	}
+}
+
+func notifyPoolStateChange(poolID, accountID int, kind, detail string) {
+	if NotifyPoolStateChange != nil {
+		NotifyPoolStateChange(poolID, accountID, kind, detail)
+	}
 }
 
 // SetTempUnsched 设置临时不可调度（直到 until；reason 为 TempUnschedState JSON 或空字符串）。
@@ -285,7 +305,9 @@ func SetTempUnsched(poolID, accountID int, until time.Time, reason string) {
 		updates["temp_unsched_until"] = int64(0)
 		updates["temp_unsched_reason"] = ""
 	}
-	_ = pool.UpdateAccount(poolID, accountID, updates)
+	if err := pool.UpdateAccount(poolID, accountID, updates); err == nil && !until.IsZero() {
+		notifyPoolStateChange(poolID, accountID, "temp_unsched", reason)
+	}
 }
 
 // ClearTempUnsched 手动清除临时不可调度（测试成功/管理员恢复时）。
@@ -720,9 +742,9 @@ func schedulerFactorWeight(key model.SettingKey) float64 {
 }
 
 func selectByEWMA(candidates []model.PoolAccount, poolID int) model.PoolAccount {
-		// B1-#8: when both weights are 0 (the default) short-circuit at entry —
-		// no factor computation, no quota snapshot decryption, no extra DB
-		// access; byte-identical to the old implementation (locked by golden test).
+	// B1-#8: when both weights are 0 (the default) short-circuit at entry —
+	// no factor computation, no quota snapshot decryption, no extra DB
+	// access; byte-identical to the old implementation (locked by golden test).
 	wReset, wQuota := loadSchedulerFactorWeights()
 	factorsEnabled := wReset > 0 || wQuota > 0
 

@@ -1919,7 +1919,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					// configured backup proxy (no-op without one — never an
 					// automatic direct connection). The guarded update in
 					// op/pool preserves the origin id against concurrent writers.
-					if isProxyLayerFailure(result.Err) {
+					if result.Decision.Code == 0 && !result.Decision.SkipFailureAccounting && !isClientDisconnected(req.clientCtx) && isProxyLayerFailure(result.Err) {
 						maybeEnterProxyFallback(channel.PoolID, poolAccount.ID)
 					}
 				}

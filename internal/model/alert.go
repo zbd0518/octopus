@@ -9,7 +9,7 @@ const (
 	AlertConditionQuotaExceeded AlertRuleConditionType = "quota_exceeded"
 	AlertConditionChannelDown   AlertRuleConditionType = "channel_down"
 	// AlertConditionPoolAccountError fires while any (or the scoped) pool
-	// account is in the "error" state (B4-#15, pull-style evaluation).
+	// account is in the "error" state.
 	AlertConditionPoolAccountError AlertRuleConditionType = "pool_account_error"
 )
 

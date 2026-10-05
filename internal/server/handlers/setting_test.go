@@ -19,6 +19,20 @@ import (
 	"github.com/lingyuins/octopus/internal/utils/semantic_cache"
 )
 
+func TestViewerSettingsMaskGeminiClientSecret(t *testing.T) {
+	settings := []model.Setting{
+		{Key: model.SettingKeyPoolGeminiClientSecret, Value: "private-client-secret"},
+		{Key: model.SettingKeyPoolStickyEscapeEnabled, Value: "false"},
+	}
+	redactSettingsURLsForViewer(settings)
+	if settings[0].Value != viewerMaskedDomain {
+		t.Fatal("viewer received the Gemini client secret")
+	}
+	if settings[1].Value != "false" {
+		t.Fatal("non-secret settings must remain readable")
+	}
+}
+
 func TestDecodeDBDumpReaderSupportsWrappedDump(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

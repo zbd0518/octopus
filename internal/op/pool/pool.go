@@ -70,13 +70,12 @@ func DeletePool(id int) error {
 		tx.Rollback()
 		return err
 	}
-	// Delete the pool's scheduled test plans and their results (B4-#11) so
-	// orphaned plans cannot keep firing.
-	if err := tx.Where("pool_id = ?", id).Delete(&model.PoolScheduledTest{}).Error; err != nil {
+	planIDs := tx.Model(&model.PoolScheduledTest{}).Select("id").Where("pool_id = ?", id)
+	if err := tx.Where("test_id IN (?)", planIDs).Delete(&model.PoolScheduledTestResult{}).Error; err != nil {
 		tx.Rollback()
 		return err
 	}
-	if err := tx.Where("pool_id = ?", id).Delete(&model.PoolScheduledTestResult{}).Error; err != nil {
+	if err := tx.Where("pool_id = ?", id).Delete(&model.PoolScheduledTest{}).Error; err != nil {
 		tx.Rollback()
 		return err
 	}

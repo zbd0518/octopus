@@ -62,6 +62,10 @@ func Shutdown() {
 		for _, entry := range entries {
 			entry.wg.Wait()
 		}
+		if poolAlertStarted.Load() {
+			close(poolAlertStop)
+			<-poolAlertDone
+		}
 		log.Infof("all background tasks have been stopped")
 	})
 }

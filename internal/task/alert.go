@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lingyuins/octopus/internal/db"
@@ -29,13 +30,18 @@ const (
 	alertStateResolved         = "resolved"
 )
 
+var alertEvaluationMu sync.Mutex
+
 type alertEvaluation struct {
 	Firing       bool
 	CurrentValue float64
 	Detail       string
+	AccountIDs   []int
 }
 
 func EvaluateAlertRules() {
+	alertEvaluationMu.Lock()
+	defer alertEvaluationMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -62,6 +68,12 @@ func EvaluateAlertRules() {
 
 		currentState := alert.StateGet(rule.ID)
 		eval := evaluateRule(ctx, &rule)
+		if rule.ConditionType == model.AlertConditionPoolAccountError && eval.Firing {
+			if claimPoolAccountAlerts(rule, eval.AccountIDs, poolAlertNow()) {
+				firePoolAccountAlert(&rule, channelMap, eval)
+			}
+			continue
+		}
 		prevState := currentState.State
 
 		switch {
@@ -118,19 +130,15 @@ func evaluateRule(ctx context.Context, rule *model.AlertRule) alertEvaluation {
 	}
 }
 
-// evaluatePoolAccountError implements the pool_account_error condition
-// (B4-#15, pull-style): the evaluator scans the pool accounts (SetError
-// persists status="error" to the DB) instead of subscribing to scheduler
-// events, so the scheduler hot path stays untouched. A non-zero
-// ScopePoolAccountID narrows the check to one account; zero fires when any
-// account is in error. The existing firing/resolve state machine, cooldown
-// dedup and notification delivery are shared with the other conditions.
+// Periodic evaluation reconciles persisted errors after restart or dropped
+// events. Event delivery and this scan share the same per-account dedup window.
 func evaluatePoolAccountError(rule *model.AlertRule) alertEvaluation {
 	accounts, err := porop.ListAllAccounts()
 	if err != nil {
 		return alertEvaluation{Detail: err.Error()}
 	}
 	errored := make([]string, 0)
+	accountIDs := make([]int, 0)
 	for i := range accounts {
 		acct := &accounts[i]
 		if acct.Status != "error" {
@@ -139,13 +147,17 @@ func evaluatePoolAccountError(rule *model.AlertRule) alertEvaluation {
 		if rule.ScopePoolAccountID > 0 && acct.ID != rule.ScopePoolAccountID {
 			continue
 		}
-		errored = append(errored, fmt.Sprintf("%s (pool %d, account %d)", acct.Name, acct.PoolID, acct.ID))
+		accountIDs = append(accountIDs, acct.ID)
+		if len(errored) < 10 {
+			errored = append(errored, fmt.Sprintf("%.128s (pool %d, account %d)", acct.Name, acct.PoolID, acct.ID))
+		}
 	}
 	if len(errored) > 0 {
 		return alertEvaluation{
 			Firing:       true,
-			CurrentValue: float64(len(errored)),
-			Detail:       fmt.Sprintf("pool accounts in error: %s", strings.Join(errored, ", ")),
+			CurrentValue: float64(len(accountIDs)),
+			Detail:       fmt.Sprintf("pool accounts in error (%d): %s", len(accountIDs), strings.Join(errored, ", ")),
+			AccountIDs:   accountIDs,
 		}
 	}
 	scope := "any pool account"

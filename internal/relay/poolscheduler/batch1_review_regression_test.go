@@ -8,6 +8,35 @@ import (
 	"github.com/lingyuins/octopus/internal/op/pool"
 )
 
+func TestSuccessAfterRestartClearsPersistedAuthErrors(t *testing.T) {
+	for _, age := range []time.Duration{time.Minute, authErrorWindow + time.Minute} {
+		t.Run(age.String(), func(t *testing.T) {
+			resetAuthErrorsForTest(t)
+			now := time.Now()
+			fixedAuthErrorClock(t, now)
+			poolID, _ := setupSchedulerPoolDB(t)
+			accountID := addAccount(t, poolID, &model.PoolAccount{Name: "restart-success"})
+			if err := pool.UpdateAccount(poolID, accountID, map[string]interface{}{
+				"auth_error_count": 2, "auth_error_window_start": now.Add(-age).Unix(),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			count, window := snapshotAndResetAuthError(poolID, accountID)
+			applyReportToDB(poolReportJob{poolID: poolID, accountID: accountID, success: true, authErrorCount: count, authErrorWindowStart: window})
+			acct, err := pool.GetAccount(poolID, accountID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if acct.AuthErrorCount != 0 || acct.AuthErrorWindowStart != 0 {
+				t.Fatalf("persisted evidence survived success: %d/%d", acct.AuthErrorCount, acct.AuthErrorWindowStart)
+			}
+			if count, exceeded := IncrementAuthError(poolID, accountID); count != 1 || exceeded {
+				t.Fatalf("post-success error count = %d, exceeded = %v", count, exceeded)
+			}
+		})
+	}
+}
+
 // fixedAuthErrorClock pins the auth-error window clock to a single instant so
 // same-second and cross-second ordering cases run deterministically instead of
 // depending on which side of a Unix-second boundary the test executes on.

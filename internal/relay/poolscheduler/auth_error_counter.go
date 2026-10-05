@@ -150,6 +150,17 @@ func snapshotAndResetAuthError(poolID, accountID int) (count int, windowStart in
 	mu := authErrorLock(poolID, accountID)
 	mu.Lock()
 	defer mu.Unlock()
+	// A successful request after restart must account for persisted evidence
+	// before resetting it, just like the first post-restart auth error does.
+	key := authErrorKey(poolID, accountID)
+	if _, ok := globalAuthErrors.Load(key); !ok {
+		entry := &authErrorEntry{windowStart: authErrorNow().Unix()}
+		if acct, err := pool.GetAccount(poolID, accountID); err == nil {
+			entry.count = int64(acct.AuthErrorCount)
+			entry.windowStart = acct.AuthErrorWindowStart
+		}
+		globalAuthErrors.Store(key, entry)
+	}
 	count, windowStart = authErrorSnapshot(poolID, accountID)
 	resetAuthErrorLocked(poolID, accountID)
 	return count, windowStart

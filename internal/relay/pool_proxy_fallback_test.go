@@ -1,7 +1,10 @@
 package relay
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"net"
 	"testing"
 
 	"github.com/lingyuins/octopus/internal/model"
@@ -27,10 +30,18 @@ func TestIsProxyLayerFailure(t *testing.T) {
 		`context deadline exceeded`,
 		`failed to send request: Post "https://api.example.com": context canceled`,
 		`empty output, try another key`,
+		`upstream url is not allowed: resolve url host: lookup invalid.example: no such host`,
+		`upstream error: 502: {"error":"dial tcp: connect: connection refused"}`,
 	}
 	for _, msg := range notMatching {
 		if isProxyLayerFailure(errors.New(msg)) {
 			t.Fatalf("expected non-proxy classification for: %s", msg)
+		}
+	}
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		err := fmt.Errorf("failed to send request: %w", &net.OpError{Op: "dial", Net: "tcp", Err: cause})
+		if isProxyLayerFailure(err) {
+			t.Fatalf("canceled/deadline dial must not trigger fallback: %v", err)
 		}
 	}
 	if isProxyLayerFailure(nil) {
