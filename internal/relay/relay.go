@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -154,6 +153,18 @@ func resolveCandidateModelName(requestModel string, item dbmodel.GroupItem) stri
 	return item.ModelName
 }
 
+func apiKeyAllowsModel(supportedModels string, requestModel string) bool {
+	if supportedModels == "" {
+		return true
+	}
+	for _, supported := range strings.Split(supportedModels, ",") {
+		if strings.TrimSpace(supported) == requestModel {
+			return true
+		}
+	}
+	return false
+}
+
 func apiKeyAllowsGroupCategory(allowedCategories string, groupCategory string) bool {
 	allowedCategories = strings.TrimSpace(allowedCategories)
 	if allowedCategories == "" {
@@ -180,16 +191,9 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 	if err != nil {
 		return
 	}
-	supportedModels := c.GetString("supported_models")
-	if supportedModels != "" {
-		supportedModelsArray := strings.Split(supportedModels, ",")
-		for i := range supportedModelsArray {
-			supportedModelsArray[i] = strings.TrimSpace(supportedModelsArray[i])
-		}
-		if !slices.Contains(supportedModelsArray, internalRequest.Model) {
-			resp.Error(c, http.StatusBadRequest, "model not supported")
-			return
-		}
+	if !apiKeyAllowsModel(c.GetString("supported_models"), internalRequest.Model) {
+		resp.Error(c, http.StatusBadRequest, "model not supported")
+		return
 	}
 
 	requestModel := internalRequest.Model
@@ -638,20 +642,15 @@ func (ra *relayAttempt) forward() (int, error) {
 
 	requestForOutbound := ra.internalRequest
 	effectiveRewrite := (*rewrite.EffectiveConfig)(nil)
-	groupEndpointProvider := ""
-	if ra.group != nil {
-		groupEndpointProvider = ra.group.EndpointProvider
-	}
 	// passthrough / raw（原始穿透）都要求原样转发客户端请求体，
 	// 跳过 param_override 与改写引擎，避免请求体被二次加工。
 	if ra.adapterType != outbound.OutboundTypePassthrough && ra.adapterType != outbound.OutboundTypeRaw {
 		var err error
-		requestForOutbound, effectiveRewrite, err = prepareInternalRequestForOutboundWithProvider(
-			ra.channel,
-			ra.internalRequest,
-			ra.groupEndpointType,
-			groupEndpointProvider,
-		)
+		group := ra.group
+		if group == nil {
+			group = &dbmodel.Group{EndpointType: ra.groupEndpointType}
+		}
+		requestForOutbound, effectiveRewrite, err = prepareInternalRequestForOutbound(ra.channel, ra.internalRequest, group)
 		if err != nil {
 			log.Warnf("failed to prepare outbound request data: %v", err)
 			return 0, fmt.Errorf("failed to prepare outbound request data: %w", err)

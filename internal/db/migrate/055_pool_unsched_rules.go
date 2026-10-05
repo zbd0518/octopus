@@ -9,7 +9,7 @@ import (
 
 func init() {
 	RegisterAfterAutoMigration(Migration{
-		Version: 59,
+		Version: 63,
 		Up:      migratePoolUnschedRules,
 	})
 }

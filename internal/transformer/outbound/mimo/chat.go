@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/lingyuins/octopus/internal/transformer"
 	"net/http"
 	"net/url"
 
@@ -37,7 +36,7 @@ func (o *ChatOutbound) TransformRequest(ctx context.Context, request *transforme
 		}
 	}
 
-	body, err := transformer.Marshal(compatRequest)
+	body, err := openaioutbound.MarshalOpenAICompatRequest(compatRequest)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}

@@ -186,6 +186,9 @@ type InternalLLMRequest struct {
 	// Controls effort on reasoning for reasoning models. It can be set to "low", "medium", or "high".
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 
+	// ThinkingMode is the group policy; adapters translate it to their own wire format.
+	ThinkingMode string `json:"-"`
+
 	// Reasoning budget for reasoning models.
 	// Help fields， will not be sent to the llm service.
 	ReasoningBudget *int64 `json:"-"`

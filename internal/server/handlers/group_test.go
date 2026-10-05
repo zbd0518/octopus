@@ -96,6 +96,7 @@ func TestGetGroupListEncodesEmptyItemsAsArray(t *testing.T) {
 		Name:         "empty-items",
 		EndpointType: model.EndpointTypeChat,
 		Mode:         model.GroupModeRoundRobin,
+		ThinkingMode: "off",
 	}
 	if err := grp.GroupCreate(group, ctx); err != nil {
 		t.Fatalf("create group: %v", err)
@@ -113,7 +114,8 @@ func TestGetGroupListEncodesEmptyItemsAsArray(t *testing.T) {
 
 	var response struct {
 		Data []struct {
-			Items json.RawMessage `json:"items"`
+			Items        json.RawMessage `json:"items"`
+			ThinkingMode string          `json:"thinking_mode"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
@@ -121,6 +123,9 @@ func TestGetGroupListEncodesEmptyItemsAsArray(t *testing.T) {
 	}
 	if len(response.Data) != 1 {
 		t.Fatalf("unexpected response payload: %+v", response.Data)
+	}
+	if response.Data[0].ThinkingMode != "off" {
+		t.Fatalf("thinking_mode = %q, want off", response.Data[0].ThinkingMode)
 	}
 	if string(response.Data[0].Items) != "[]" {
 		t.Fatalf("items = %s, want []", response.Data[0].Items)

@@ -60,20 +60,53 @@ func TestBuildKeySupportedModelUpdatesOnlyWritesPassedKeys(t *testing.T) {
 	}
 }
 
-func TestBuildKeySupportedModelUpdatesSkipsEmptyAndOversized(t *testing.T) {
-	oversized := strings.Repeat("m", keySupportedModelsColumnMax+1)
+func TestBuildKeySupportedModelUpdatesSkipsEmptyAndMissingID(t *testing.T) {
 	results := []helper.KeyModelResult{
-		{KeyID: 1, Passed: true, Models: nil},                 // 上游返回空列表
-		{KeyID: 2, Passed: true, Models: []string{oversized}}, // 超出列容量
-		{KeyID: 0, Passed: true, Models: []string{"x"}},       // KeyID 缺失（未保存的 key）
+		{KeyID: 1, Passed: true, Models: nil},
+		{KeyID: 0, Passed: true, Models: []string{"x"}},
 	}
-	current := []model.ChannelKey{
-		{ID: 1, SupportedModels: "keep-me"},
-		{ID: 2, SupportedModels: "keep-me-too"},
-	}
+	current := []model.ChannelKey{{ID: 1, SupportedModels: "keep-me"}}
 
 	if updates := buildKeySupportedModelUpdates(results, current); len(updates) != 0 {
-		t.Fatalf("updates = %#v, want none (empty list / oversized CSV / missing KeyID must all be skipped)", updates)
+		t.Fatalf("updates = %#v, want none (empty list / missing KeyID must be skipped)", updates)
+	}
+}
+
+func TestBuildKeySupportedModelUpdatesAcceptsLongLists(t *testing.T) {
+	models := []string{strings.Repeat("a", 300), strings.Repeat("b", 300), "target-model"}
+	want := strings.Join(models, ",")
+	updates := buildKeySupportedModelUpdates(
+		[]helper.KeyModelResult{{KeyID: 1, Passed: true, Models: models}},
+		[]model.ChannelKey{{ID: 1}},
+	)
+	if len(updates) != 1 || updates[0].SupportedModels == nil || *updates[0].SupportedModels != want {
+		t.Fatalf("long model list was skipped or truncated: %#v", updates)
+	}
+}
+
+func TestSyncModelsTaskPersistsLongSupportedModels(t *testing.T) {
+	setupPerKeySyncDB(t)
+	models := []string{strings.Repeat("a", 300), strings.Repeat("b", 300), "target-model"}
+	srv := perKeyUpstream(t, map[string][]string{"sk-long-list": models})
+	ch := &model.Channel{
+		Name: "long-perkey-channel", GroupID: 1,
+		Type: outbound.OutboundTypeOpenAIChat, Enabled: true,
+		AutoSync: true, AutoSyncKeyModels: true,
+		BaseUrls: []model.BaseUrl{{URL: srv.URL}},
+		Keys:     []model.ChannelKey{{Enabled: true, ChannelKey: "sk-long-list"}},
+	}
+	seedSyncChannel(t, ch)
+	SyncModelsTask()
+	_, keys := loadSyncChannel(t, ch.ID)
+	if len(keys) != 1 || !equalStringSlices(modelsCSV(keys[0].SupportedModels), models) {
+		t.Fatalf("long model list was not fully persisted: %#v", keys)
+	}
+	channel, err := opchannel.Get(ch.ID, context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key := channel.GetChannelKeyWithCooldown("unsupported-model", 300); key.ID != 0 {
+		t.Fatal("cached key remained unrestricted after model sync")
 	}
 }
 

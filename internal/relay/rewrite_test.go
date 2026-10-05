@@ -37,11 +37,11 @@ func TestPrepareInternalRequestForOutbound_IsScopedPerChannelAttempt(t *testing.
 		Type: outbound.OutboundTypeOpenAIChat,
 	}
 
-	rewritten, _, err := prepareInternalRequestForOutbound(rewriteChannel, baseRequest, appmodel.EndpointTypeDeepSeek)
+	rewritten, _, err := prepareInternalRequestForOutbound(rewriteChannel, baseRequest, &appmodel.Group{EndpointType: appmodel.EndpointTypeDeepSeek})
 	if err != nil {
 		t.Fatalf("prepareInternalRequestForOutbound() rewrite channel error = %v", err)
 	}
-	plain, _, err := prepareInternalRequestForOutbound(plainChannel, baseRequest, appmodel.EndpointTypeChat)
+	plain, _, err := prepareInternalRequestForOutbound(plainChannel, baseRequest, &appmodel.Group{EndpointType: appmodel.EndpointTypeChat})
 	if err != nil {
 		t.Fatalf("prepareInternalRequestForOutbound() plain channel error = %v", err)
 	}
@@ -73,14 +73,13 @@ func TestPrepareInternalRequestForOutbound_AttachesEndpointProviderMetadata(t *t
 	}
 	channel := &appmodel.Channel{Type: outbound.OutboundTypeOpenAIChat}
 
-	got, _, err := prepareInternalRequestForOutboundWithProvider(
+	got, _, err := prepareInternalRequestForOutbound(
 		channel,
 		request,
-		appmodel.EndpointTypeChat,
-		"DeepSeek",
+		&appmodel.Group{EndpointType: appmodel.EndpointTypeChat, EndpointProvider: "DeepSeek"},
 	)
 	if err != nil {
-		t.Fatalf("prepareInternalRequestForOutboundWithProvider() error = %v", err)
+		t.Fatalf("prepareInternalRequestForOutbound() error = %v", err)
 	}
 
 	if got.TransformerMetadata[transmodel.TransformerMetadataGroupEndpointType] != appmodel.EndpointTypeChat {

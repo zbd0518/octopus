@@ -78,6 +78,17 @@ func normalizeDeepSeekReasoningCompat(request *model.InternalLLMRequest, baseURL
 		return
 	}
 
+	if request.ThinkingMode == "off" || request.ThinkingMode == "on" {
+		thinkingType := "enabled"
+		request.ReasoningEffort = "high"
+		if request.ThinkingMode == "off" {
+			thinkingType = "disabled"
+			request.ReasoningEffort = ""
+		}
+		request.ExtraBody = mergeDeepSeekThinkingExtraBody(request.ExtraBody, thinkingType)
+		return
+	}
+
 	thinkingType, hasThinkingType := extractDeepSeekThinkingType(request.ExtraBody)
 	normalizedEffort := normalizeDeepSeekReasoningEffort(request.ReasoningEffort)
 	originalEffort := strings.ToLower(strings.TrimSpace(request.ReasoningEffort))

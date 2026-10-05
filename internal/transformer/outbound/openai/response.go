@@ -513,6 +513,11 @@ type ResponsesStreamEvent struct {
 
 func ConvertToResponsesRequest(req *model.InternalLLMRequest) *ResponsesRequest {
 	reasoningEffort := normalizeOpenAICompatReasoningEffort(req.ReasoningEffort)
+	if req.ThinkingMode == "off" {
+		reasoningEffort = "none"
+	} else if req.ThinkingMode == "on" {
+		reasoningEffort = "high"
+	}
 
 	result := &ResponsesRequest{
 		Model:             req.Model,

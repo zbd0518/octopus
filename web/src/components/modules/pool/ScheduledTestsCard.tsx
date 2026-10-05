@@ -2,11 +2,12 @@
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { CalendarClock, ChevronDown, ChevronUp, Loader2, Plus, Trash2 } from 'lucide-react';
+import { CalendarClock, Check as CheckIcon, ChevronDown, ChevronUp, Loader2, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from 'radix-ui';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from '@/components/common/Toast';
 import { formatUnixSeconds } from '@/lib/time';
 import {
@@ -28,7 +29,7 @@ const Check = ({ checked, onChange, label }: { checked: boolean; onChange: (v: b
             onCheckedChange={(v) => onChange(v === true)}
             className="grid size-5 shrink-0 place-items-center rounded border border-input bg-background outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground"
         >
-            <span className="text-xs font-bold text-primary-foreground">{checked ? '✓' : ''}</span>
+            <Checkbox.Indicator><CheckIcon className="size-3.5" /></Checkbox.Indicator>
         </Checkbox.Root>
         {label}
     </label>
@@ -86,7 +87,7 @@ function PlanRow({ poolId, plan, accounts, onEdit }: {
                     {showResults ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
                     {t('schedTestResults')}
                 </Button>
-                <Button variant="ghost" size="sm" onClick={() => onEdit(plan)}>{t('editAccount')}</Button>
+                <Button variant="ghost" size="sm" onClick={() => onEdit(plan)}>{t('unschedRuleEdit')}</Button>
                 <Button
                     variant="ghost"
                     size="sm"
@@ -168,19 +169,23 @@ export function ScheduledTestsCard({ poolId, accounts }: { poolId: number; accou
             {formOpen && (
                 <div className="mt-3 space-y-3 rounded-lg border border-border bg-muted/30 p-3">
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <label className="grid gap-1">
+                        <div className="grid gap-1">
                             <span className="text-xs font-medium text-muted-foreground">{t('schedTestScope')}</span>
-                            <select
-                                value={draft.accountId ?? 0}
-                                onChange={(e) => setDraft((d) => ({ ...d, accountId: Number(e.target.value) > 0 ? Number(e.target.value) : null }))}
-                                className="h-10 rounded-xl bg-background border border-border text-sm px-3"
+                            <Select
+                                value={String(draft.accountId ?? 0)}
+                                onValueChange={(v) => setDraft((d) => ({ ...d, accountId: Number(v) > 0 ? Number(v) : null }))}
                             >
-                                <option value={0}>{t('schedTestScopePool')}</option>
-                                {accounts.map((account) => (
-                                    <option key={account.id} value={account.id}>{account.name || `#${account.id}`}</option>
-                                ))}
-                            </select>
-                        </label>
+                                <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="0">{t('schedTestScopePool')}</SelectItem>
+                                    {accounts.map((account) => (
+                                        <SelectItem key={account.id} value={String(account.id)}>
+                                            {account.name || `#${account.id}`}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
                         <label className="grid gap-1">
                             <span className="text-xs font-medium text-muted-foreground">{t('schedTestCron')}</span>
                             <Input

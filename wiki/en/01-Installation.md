@@ -4,7 +4,7 @@
 
 ### 🐳 Docker
 
-The examples below use `latest`. For a pinned version, use the image tag recorded in the repository's `docker-compose.yml` after that image has been published.
+The examples below use `latest`. For a pinned version, use the image tag recorded in the repository's `docker-compose.yml` after that image has been published. Tag pushes start the release workflow; wait for it to finish before pulling the pinned image.
 
 Run directly:
 

@@ -96,6 +96,8 @@ func inferErrorMessageKey(message string) string {
 		return "errors.permissionDenied"
 	case "channel not found":
 		return "errors.channelNotFound"
+	case "invalid thinking mode: must be 'auto', 'off', or 'on'":
+		return "errors.invalidThinkingMode"
 	case "group not found":
 		return "errors.groupNotFound"
 	case "group test progress not found":

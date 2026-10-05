@@ -2622,6 +2622,13 @@
       "attemptTimeOutHint": "单位秒，单次转发尝试的超时时间，0 表示不限制（流式和非流式均生效）",
       "sessionKeepTime": "会话保持",
       "sessionKeepTimeHint": "单位秒，会话期间保持使用同一渠道，0 表示禁用",
+      "thinkingMode": {
+        "label": "思考模式",
+        "auto": "自动（跟随客户端 / 上游默认）",
+        "off": "强制关闭",
+        "on": "强制开启",
+        "hint": "覆盖客户端推理参数，客户端不传参时也生效，但需要上游模型支持。DeepSeek/MiMo 使用 thinking.type，OpenAI 使用推理强度，Anthropic 和 Gemini 使用各自协议。原始透传 / 原始穿透模式不应用此策略。"
+      },
       "reasoningBufferStrategy": {
         "label": "推理内容缓冲策略",
         "hint": "控制该分组的推理 token（思考过程）流式发送方式。可针对特定上游（如有严格超时的 Cloudflare Workers）覆盖全局设置。",
@@ -3453,6 +3460,7 @@
     "tooManyRequests": "请求过多",
     "permissionDenied": "权限不足",
     "channelNotFound": "渠道不存在",
+    "invalidThinkingMode": "无效的思考模式：请选择 auto、off 或 on",
     "groupNotFound": "分组不存在",
     "groupTestProgressNotFound": "分组检测进度不存在",
     "aiRouteProgressNotFound": "AI 路由进度不存在",

@@ -75,7 +75,12 @@ export function LogCandidatesPanel({ log, channelNameById }: {
                     <div key={JSON.stringify([candidate.channel_id, candidate.model_name])} className="border-b border-border/70 last:border-b-0">
                         {candidate.attempts.length > 0 ? (
                             <details className="group text-xs">
-                                <summary className="list-none cursor-pointer hover:bg-muted/50 [&::-webkit-details-marker]:hidden">{row}</summary>
+                                <summary
+                                    className="list-none cursor-pointer hover:bg-muted/50 [&::-webkit-details-marker]:hidden"
+                                    aria-label={`${candidate.model_name} — ${channelName}`}
+                                >
+                                    {row}
+                                </summary>
                                 <div className="mx-4 mb-3 space-y-2 rounded-lg bg-muted/50 p-2.5">
                                     {candidate.attempts.map((attempt, index) => (
                                         <div key={index} className="space-y-1">

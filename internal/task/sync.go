@@ -220,13 +220,6 @@ func GetLastSyncModelsTime() time.Time {
 	return lastSyncModelsTime
 }
 
-// keySupportedModelsColumnMax 是 channel_keys.supported_models 列的字符容量
-// （迁移 050 建列为 varchar(512)）。超过它时 MySQL 严格模式会直接报错，
-// 而那次报错会连带回滚整个渠道更新事务（连 channels.model 也丢）。
-// 截断到模型边界会让该 key “比实际上更严格”，错误地排除本可用的模型；
-// 因此宁可跳过回填（保留旧值 / 空值=不限），也不写入一个不完整的支持列表。
-const keySupportedModelsColumnMax = 512
-
 // anyKeyFetchPassed 报告是否至少有一个 key 抓取成功。全部失败时渠道整体跳过，
 // 既不写 channels.model 也不碰任何 key 的 SupportedModels。
 func anyKeyFetchPassed(results []helper.KeyModelResult) bool {
@@ -287,7 +280,6 @@ func unionKeyModels(results []helper.KeyModelResult, currentKeys []model.Channel
 //     它的 SupportedModels——上游一次 429/超时就清掉模型隔离会把请求打到
 //     不支持该模型的 key 上（上游回 model_not_found）。
 //   - 与现值相同时不生成更新项，避免无意义的 DB 写与缓存刷新。
-//   - CSV 超出列容量时跳过并告警（见 keySupportedModelsColumnMax 注释）。
 //
 // currentKeys 用于读回旧值做比较；传 nil 时退化为“无条件写入”（仅测试便利）。
 func buildKeySupportedModelUpdates(results []helper.KeyModelResult, currentKeys []model.ChannelKey) []model.ChannelKeyUpdateRequest {
@@ -311,12 +303,6 @@ func buildKeySupportedModelUpdates(results []helper.KeyModelResult, currentKeys 
 			// 解除掉，比保留旧值危险得多 → 跳过，保留现值。
 			log.Warnf("key %d (remark=%q) returned no models, skipping backfill (keeping existing supported_models)",
 				r.KeyID, r.KeyRemark)
-			continue
-		}
-		if len(csv) > keySupportedModelsColumnMax {
-			log.Warnf("skip per-key model backfill for channel key %d (remark=%q): "+
-				"supported_models CSV is %d chars, exceeds column capacity %d; keeping existing value",
-				r.KeyID, r.KeyRemark, len(csv), keySupportedModelsColumnMax)
 			continue
 		}
 		if old, ok := oldByID[r.KeyID]; ok && old == csv {

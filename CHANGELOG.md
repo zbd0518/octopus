@@ -7,14 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.6.3-fix] - 2026-10-06
+
 ### Fixed
 
+- Enforce API key model allowlists for all media and utility relay endpoints, including multipart requests.
+- Remove the obsolete 512-byte limit from per-key model synchronization while preserving existing restrictions on failed or empty fetch results.
+- Select model-compatible keys for group availability tests instead of probing unsupported keys.
+- Show loading, error, and empty states consistently on the analytics latency view.
+- Correct account-pool scheduled-test edit labels and preserve pool dialog layout guards after formatting.
+- Add accessible names to expandable log candidate diagnostics.
+
+### Changed
+
+- Standardize account-pool and analytics selectors with the shared Select component and improve pool operation dialog readability.
+- Align application, frontend package, and Docker Compose versions to v2.6.3-fix.
+
+## [v2.6.3] - 2026-10-05
+
+### Added
+
+- Add group-level thinking modes (`auto`, `off`, `on`) that can override client reasoning controls without client-supplied parameters, with provider-specific outbound conversion and localized editor controls (#255).
+- Add scheduled account-pool tests with recovery, rule-driven temporary unschedulability, guarded proxy fallback, and account-scoped error alerts with deduplicated notification delivery.
+- Add account-scheduler quota-headroom and reset-readiness factors, upstream-aware rate-limit cooldowns, persistent authentication-error counters, and sticky-session escape for degraded accounts.
+- Support Gemini OAuth in both Code Assist and AI Studio modes with client-secret fallback.
+- Show recorded group/model candidates beside relay responses with expandable attempt diagnostics.
+
+### Fixed
+
+- Prevent stale OAuth refresh results from overwriting newer account credentials, recover from invalid_grant races, and pause scheduling while credentials are being refreshed.
+- Apply runtime setting changes consistently, serialize saves per setting key, preserve independent rollback state, and normalize persisted preferences.
+- Correct model-market filtering, deduplication, price validation, and peak-billing time-window editing.
+- Compact group editor dialogs and align their model panels across responsive layouts.
 - Prevent process termination when the relay log queue is full with the `disabled` drop policy.
 - Ensure singleflight leaders write responses and record metrics only once, including failed requests.
 - Clean up group caches and runtime state for all channel deletion paths.
 - Periodically persist site-model hourly statistics, retain failed batches for retry, and invalidate bindings after projection.
 - Continue saving independent caches after an earlier save failure.
 - Abort release builds on platform or artifact failures, freeze frontend dependencies, and test release failure handling in CI.
+
+### Changed
+
+- Audit account credential exports and remove the unsupported setup-token entry from the frontend.
+- Align application, frontend package, and Docker Compose versions to v2.6.3.
 
 ## [v2.6.2-fix7] - 2026-10-04
 

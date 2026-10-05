@@ -8,6 +8,7 @@ import { formatCount, formatMoney } from '@/lib/utils';
 import { ObservatorySection, QueryState, StatusBadge, formatPercent } from './shared';
 import { useAnalyticsCacheTtl } from './cache-context';
 import { useBreakdownSort, type AnalyticsSortKey } from './use-sort';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 type BreakdownItem = AnalyticsProviderBreakdownItem | AnalyticsModelBreakdownItem | AnalyticsAPIKeyBreakdownItem;
 
@@ -46,22 +47,23 @@ function BreakdownCard({
                     <h4 className="text-sm font-semibold">{title}</h4>
                 </div>
                 <div className="flex items-center gap-1">
-                    <select
-                        value={sortKey}
-                        onChange={(e) => setSortKey(e.target.value as AnalyticsSortKey)}
-                        className="h-6 rounded-md border border-border/50 bg-background px-1.5 text-[11px] outline-none focus:border-primary/30"
-                    >
-                        {SORT_OPTIONS.map((opt) => (
-                            <option key={opt} value={opt}>
-                                {t(sortLabelKeys[opt])}
-                            </option>
-                        ))}
-                    </select>
+                    <Select value={sortKey} onValueChange={(v) => setSortKey(v as AnalyticsSortKey)}>
+                        <SelectTrigger className="h-6 w-auto rounded-md border-border/50 bg-background px-1.5 text-[11px]">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {SORT_OPTIONS.map((opt) => (
+                                <SelectItem key={opt} value={opt} className="text-xs">
+                                    {t(sortLabelKeys[opt])}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                     <button
                         type="button"
                         onClick={toggleOrder}
                         title={sortOrder === 'desc' ? t('sort.descending') : t('sort.ascending')}
-                        className="flex h-6 w-6 items-center justify-center rounded-md border border-border/50 bg-background text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                        className="flex h-6 w-6 items-center justify-center rounded-md border border-border/50 bg-background text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                     >
                         <ArrowDownUp className={`size-3 ${sortOrder === 'asc' ? 'rotate-180' : ''}`} />
                     </button>

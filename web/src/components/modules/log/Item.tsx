@@ -282,7 +282,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
     const { resolvedTheme } = useTheme();
     const badgeColor = resolveBrandColor(brandColor, resolvedTheme === 'dark');
     const requestAPIKeyName = displayFields.requestAPIKeyName;
-	const clientIP = log.client_ip || '';
+    const clientIP = log.client_ip || '';
     const cacheReadTokens = displayFields.cacheReadTokens;
     const semanticCacheHit = displayFields.semanticCacheHit;
     const effectiveInputTokens = Math.max(0, log.input_tokens - cacheReadTokens);

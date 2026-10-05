@@ -178,6 +178,3 @@ export function formatJsonForCopy(content: string | undefined | null): string {
     }
 }
 
-
-
-

@@ -86,6 +86,11 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 		return
 	}
 
+	if !apiKeyAllowsModel(c.GetString("supported_models"), requestModel) {
+		resp.Error(c, http.StatusBadRequest, "model not supported")
+		return
+	}
+
 	apiKeyID := c.GetInt("api_key_id")
 	clientIP := c.ClientIP()
 	startTime := time.Now()

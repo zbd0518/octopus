@@ -10,11 +10,7 @@ import (
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
-func prepareInternalRequestForOutbound(channel *appmodel.Channel, request *transmodel.InternalLLMRequest, groupEndpointType string) (*transmodel.InternalLLMRequest, *rewrite.EffectiveConfig, error) {
-	return prepareInternalRequestForOutboundWithProvider(channel, request, groupEndpointType, "")
-}
-
-func prepareInternalRequestForOutboundWithProvider(channel *appmodel.Channel, request *transmodel.InternalLLMRequest, groupEndpointType, groupEndpointProvider string) (*transmodel.InternalLLMRequest, *rewrite.EffectiveConfig, error) {
+func prepareInternalRequestForOutbound(channel *appmodel.Channel, request *transmodel.InternalLLMRequest, group *appmodel.Group) (*transmodel.InternalLLMRequest, *rewrite.EffectiveConfig, error) {
 	if channel == nil {
 		return nil, nil, fmt.Errorf("channel is nil")
 	}
@@ -27,6 +23,12 @@ func prepareInternalRequestForOutboundWithProvider(channel *appmodel.Channel, re
 		return nil, nil, err
 	}
 
+	cloned := *request
+	cloned.TransformerMetadata = make(map[string]string, len(request.TransformerMetadata))
+	for key, value := range request.TransformerMetadata {
+		cloned.TransformerMetadata[key] = value
+	}
+	request = &cloned
 	var target *transmodel.InternalLLMRequest
 	if !enabled {
 		target = cloneRequestForOutbound(request)
@@ -39,7 +41,13 @@ func prepareInternalRequestForOutboundWithProvider(channel *appmodel.Channel, re
 	}
 
 	applyParamOverride(channel, target)
-	attachRelayGroupEndpointMetadata(target, groupEndpointType, groupEndpointProvider)
+	if group != nil {
+		// 分组强制思考模式（upstream）：auto 保留客户端控制。
+		target = transmodel.WithThinkingMode(target, group.ThinkingMode)
+		// 本仓库附加：端点类型 + 提供方元数据，供 deepseek/mimo 兼容层区分上游
+		// wire-format（provider 非 auto 时才落库，见 attachRelayGroupEndpointMetadata）。
+		attachRelayGroupEndpointMetadata(target, group.EndpointType, group.EndpointProvider)
+	}
 	return target, effectiveRewrite, nil
 }
 

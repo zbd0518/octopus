@@ -49,7 +49,7 @@
 
 ### 🐳 Docker
 
-The examples below use `latest`. For a pinned version, use the image tag recorded in `docker-compose.yml` after that image has been published.
+The examples below use `latest`. For a pinned version, use the image tag recorded in `docker-compose.yml` after that image has been published. Tag pushes start the release workflow; wait for it to finish before pulling the pinned image.
 
 Run directly:
 
@@ -388,7 +388,7 @@ The embedded management UI currently ships with these top-level modules:
 | Hub | Upstream relay platform management with 5 tabs: Sites (multi-account cards with inline balance / sync / check-in status, archive/restore, batch edit, and bulk import from AllAPIHub / MetAPI), Site Channels (projected channel bindings), Automation (auto-sync and auto-checkin intervals), Balance (plan balance charts), and TokenPlan (token plan monitoring) |
 | Channel | Upstream provider configuration, keys, headers, sync, latency probing, proxy mode, and request rewrite profiles |
 | Account Pool | Account pools for relay scheduling: searchable pool list with create/edit (name, description, strategy, default concurrency, cooldown, enabled) and delete confirmation; detail view with account keyword / platform / status filters, OAuth account authorization, batch operations, and credential import/export |
-| Group | Model routing, load-balancing strategies, sticky sessions, group test, AI route generation, endpoint provider, zashboard-style collapsible group list, and CC Switch deep link |
+| Group | Model routing, load-balancing strategies, sticky sessions, group test, AI route generation, group thinking mode (auto / off / on), endpoint provider, zashboard-style collapsible group list, and CC Switch deep link |
 | Model Market | Model catalog with market / available endpoints / price categories views, custom pricing, channel coverage, enabled key counts, latency, success metrics, multi-dimension filters with normalized dedupe, and fallback pricing plus peak/off-peak billing rules |
 | Analytics | Channel × Model (default), Usage Breakdown, Route Health, Latency distribution, Evaluation, Cache (semantic + provider prompt cache), and share snapshot |
 | Log | Relay request history with Group / Request Body tabs, model/channel candidate statuses alongside the response, expandable attempt diagnostics, token usage, and cost records |
@@ -600,6 +600,7 @@ Groups aggregate multiple channels into a unified external model name.
 - **Condition (JSON)**: optional AND rules currently evaluated in the main LLM relay path; the built-in request context currently includes `model`, `api_key_id`, and `hour`
 - **Endpoint Provider**: provider-aware request rewriting that adapts requests for upstream compatibility per endpoint type. Chat providers (`openai`, `deepseek`, `mimo`, `siliconflow`, `newapi`) strip incompatible reasoning fields; music providers (`newapi`, `minimax`) rewrite the request body and path; video provider (`agnes`) rewrites the upstream path; audio speech provider (`mimo`) converts the request format and path
 - **Outbound Format**: controls cross-format adapter fallback. `""` (auto), `chat`, and `responses` set the Chat/Responses attempt order; `chat_only` and `responses_only` disable the fallback entirely — useful for upstreams (e.g. public-welfare relays) that reject the other format with 400/404
+- **Thinking Mode**: configure `thinking_mode` in the group editor's advanced settings. `auto` (default) preserves client/upstream behavior; `off` / `on` override client reasoning controls even when the client sends none. Adapters use provider-specific fields for DeepSeek/MiMo, OpenAI Chat/Responses (including Codex), Anthropic, Gemini, and Volcengine. For a DeepSeek/MiMo-compatible proxy with a generic URL, set the corresponding API type or endpoint provider. This requires upstream model support; raw/passthrough formats leave the original body unchanged and skip the policy. It does not add a FIM or `/v1/completions` endpoint.
 - **Key Cooldown**: rate-limit cooldown is tracked per `(keyID, model)` (issue #94), so a single model's 429 no longer blocks the same key's other models. Per-channel retry count can be set to `0` (try once, then move to the next channel); the max-total-attempts quota counts only real upstream forwards (cooldown/circuit-breaker skips do not consume it)
 
 **Load Balancing Modes:**

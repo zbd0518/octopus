@@ -92,6 +92,10 @@ func createGroup(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
 		return
 	}
+	if !model.IsValidThinkingMode(group.ThinkingMode) {
+		resp.Error(c, http.StatusBadRequest, "invalid thinking mode: must be 'auto', 'off', or 'on'")
+		return
+	}
 	group.EndpointType = model.NormalizeEndpointType(group.EndpointType)
 	if group.EndpointType == model.EndpointTypeAll {
 		resp.Error(c, http.StatusBadRequest, "endpoint_type '*' is no longer supported; use a specific type (e.g. 'chat')")
@@ -122,6 +126,10 @@ func updateGroup(c *gin.Context) {
 	var req model.GroupUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
+		return
+	}
+	if req.ThinkingMode != nil && !model.IsValidThinkingMode(*req.ThinkingMode) {
+		resp.Error(c, http.StatusBadRequest, "invalid thinking mode: must be 'auto', 'off', or 'on'")
 		return
 	}
 	if req.EndpointType != nil {
@@ -168,6 +176,8 @@ func classifyGroupMutationError(err error) (int, string, bool) {
 	msg := strings.ToLower(err.Error())
 
 	switch {
+	case strings.Contains(msg, "invalid thinking mode"):
+		return http.StatusBadRequest, "invalid thinking mode: must be 'auto', 'off', or 'on'", true
 	case strings.Contains(msg, "group name is required"):
 		return http.StatusBadRequest, "group name is required", true
 	case (strings.Contains(msg, "endpoint_type") || strings.Contains(msg, "endpoint_provider")) &&
@@ -358,6 +368,7 @@ type groupListResponseItem struct {
 	Items             []model.GroupItem `json:"items"`
 	LastTestPassed    *bool             `json:"last_test_passed,omitempty"`
 	LastTestAt        int64             `json:"last_test_at,omitempty"`
+	ThinkingMode      string            `json:"thinking_mode"`
 }
 
 func normalizeGroupListResponse(groups []model.Group) []groupListResponseItem {
@@ -385,6 +396,7 @@ func normalizeGroupListResponse(groups []model.Group) []groupListResponseItem {
 			Items:             groupItems,
 			LastTestPassed:    group.LastTestPassed,
 			LastTestAt:        group.LastTestAt,
+			ThinkingMode:      model.NormalizeThinkingMode(group.ThinkingMode),
 		}
 	}
 	return items

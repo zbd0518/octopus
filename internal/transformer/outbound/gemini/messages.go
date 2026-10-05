@@ -356,12 +356,17 @@ func convertLLMToGeminiRequest(request *model.InternalLLMRequest) *model.GeminiG
 		hasConfig = true
 	}
 
-	if request.ReasoningEffort != "" {
+	if request.ReasoningEffort != "" || request.ThinkingMode == "off" || request.ThinkingMode == "on" {
 		budget := reasoningToThinkingBudget(request.ReasoningEffort)
+		if request.ThinkingMode == "off" {
+			budget = 0
+		} else if request.ThinkingMode == "on" {
+			budget = -1
+		}
 
 		config.ThinkingConfig = &model.GeminiThinkingConfig{
 			ThinkingBudget:  &budget,
-			IncludeThoughts: true,
+			IncludeThoughts: request.ThinkingMode != "off",
 		}
 		hasConfig = true
 	}

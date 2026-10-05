@@ -2666,6 +2666,13 @@
       "attemptTimeOutHint": "Unit: seconds, per-attempt relay timeout, 0 = no limit (applies to both streaming and non-streaming)",
       "sessionKeepTime": "Session Keep Time",
       "sessionKeepTimeHint": "Unit: seconds, keeps using the same channel within a session, 0 = disabled",
+      "thinkingMode": {
+        "label": "Thinking Mode",
+        "auto": "Auto (client / upstream default)",
+        "off": "Force off",
+        "on": "Force on",
+        "hint": "Overrides client reasoning controls, even when none are sent. Requires upstream model support. DeepSeek/MiMo use thinking.type; OpenAI uses reasoning effort; Anthropic and Gemini use their own controls. Raw/passthrough modes do not apply this policy."
+      },
       "reasoningBufferStrategy": {
         "label": "Reasoning Buffer Strategy",
         "hint": "Controls how reasoning tokens (thinking process) are streamed for this group. Override the global setting for specific upstreams (e.g. Cloudflare Workers with strict timeouts).",
@@ -3497,6 +3504,7 @@
     "tooManyRequests": "Too many requests",
     "permissionDenied": "Permission denied",
     "channelNotFound": "Channel not found",
+    "invalidThinkingMode": "Invalid thinking mode: use auto, off, or on",
     "groupNotFound": "Group not found",
     "groupTestProgressNotFound": "Group test progress not found",
     "aiRouteProgressNotFound": "AI route progress not found",

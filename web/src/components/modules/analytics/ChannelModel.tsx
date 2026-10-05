@@ -16,6 +16,7 @@ import { useNavHandoff } from '@/lib/nav-handoff';
 import { UsageDistribution } from './UsageDistribution';
 import { useAnalyticsCacheTtl } from './cache-context';
 import type { AnalyticsSortKey } from './use-sort';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 type ChannelModelSortKey = AnalyticsSortKey | 'failed';
 
@@ -149,38 +150,39 @@ export function ChannelModel({ range }: { range: AnalyticsRange }) {
                 icon={Boxes}
                 actions={
                     <div className="flex items-center gap-2">
-                        <label className="text-xs text-muted-foreground">{t('channelModel.scopeAll')}</label>
-                        <select
-                            value={groupId ?? ''}
-                            onChange={(e) => {
-                                const v = e.target.value;
-                                setGroupId(v === '' ? undefined : Number(v));
-                            }}
-                            className="h-7 rounded-md border border-border/50 bg-background px-2 text-xs outline-none focus:border-primary/30"
+                        <Select
+                            value={groupId !== undefined ? String(groupId) : ''}
+                            onValueChange={(v) => setGroupId(v === '' ? undefined : Number(v))}
                         >
-                            <option value="">{t('channelModel.scopeAll')}</option>
-                            {groups.map((g) => (
-                                <option key={g.id} value={g.id}>
-                                    {g.name}
-                                </option>
-                            ))}
-                        </select>
-                        <select
-                            value={sortKey}
-                            onChange={(e) => setSortKey(e.target.value as ChannelModelSortKey)}
-                            className="h-7 rounded-md border border-border/50 bg-background px-2 text-xs outline-none focus:border-primary/30"
-                        >
-                            {CHANNEL_MODEL_SORT_OPTIONS.map((opt) => (
-                                <option key={opt} value={opt}>
-                                    {t(sortLabelKeys[opt])}
-                                </option>
-                            ))}
-                        </select>
+                            <SelectTrigger className="h-7 w-auto rounded-md border-border/50 bg-background text-xs">
+                                <SelectValue placeholder={t('channelModel.scopeAll')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="">{t('channelModel.scopeAll')}</SelectItem>
+                                {groups.map((g) => (
+                                    <SelectItem key={g.id} value={String(g.id)} className="text-xs">
+                                        {g.name}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        <Select value={sortKey} onValueChange={(v) => setSortKey(v as ChannelModelSortKey)}>
+                            <SelectTrigger className="h-7 w-auto rounded-md border-border/50 bg-background text-xs">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {CHANNEL_MODEL_SORT_OPTIONS.map((opt) => (
+                                    <SelectItem key={opt} value={opt} className="text-xs">
+                                        {t(sortLabelKeys[opt])}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
                         <button
                             type="button"
                             onClick={() => setSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'))}
                             title={sortOrder === 'desc' ? t('sort.descending') : t('sort.ascending')}
-                            className="flex h-7 w-7 items-center justify-center rounded-md border border-border/50 bg-background text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                            className="flex h-7 w-7 items-center justify-center rounded-md border border-border/50 bg-background text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                         >
                             <ArrowDownUp className={`size-3 ${sortOrder === 'asc' ? 'rotate-180' : ''}`} />
                         </button>

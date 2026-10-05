@@ -333,7 +333,12 @@ func convertToAnthropicRequest(req *model.InternalLLMRequest) *anthropicModel.Me
 	// 1) 客户端显式 budget_tokens（ReasoningBudget）→ 保留 enabled+budget，兼容老请求
 	// 2) 有 reasoning effort（含 AdaptiveThinking / OpenAI reasoning_effort）→
 	//    与 Claude Code 一致：adaptive + output_config.effort 原样透传，不再猜 budget
-	if req.ReasoningBudget != nil {
+	if req.ThinkingMode == "off" {
+		result.Thinking = &anthropicModel.Thinking{Type: "disabled"}
+	} else if req.ThinkingMode == "on" {
+		result.Thinking = &anthropicModel.Thinking{Type: anthropicModel.ThinkingTypeAdaptive}
+		result.OutputConfig = &anthropicModel.OutputConfig{Effort: "high"}
+	} else if req.ReasoningBudget != nil {
 		result.Thinking = &anthropicModel.Thinking{
 			Type:         anthropicModel.ThinkingTypeEnabled,
 			BudgetTokens: getThinkingBudget(req.ReasoningEffort, req.ReasoningBudget),

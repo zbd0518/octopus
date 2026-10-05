@@ -1,5 +1,30 @@
 package model
 
+import "strings"
+
+const (
+	ThinkingModeAuto = "auto"
+	ThinkingModeOff  = "off"
+	ThinkingModeOn   = "on"
+)
+
+func NormalizeThinkingMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return ThinkingModeAuto
+	}
+	return mode
+}
+
+func IsValidThinkingMode(mode string) bool {
+	switch NormalizeThinkingMode(mode) {
+	case ThinkingModeAuto, ThinkingModeOff, ThinkingModeOn:
+		return true
+	default:
+		return false
+	}
+}
+
 type GroupMode int
 
 const (
@@ -42,6 +67,7 @@ type Group struct {
 	// "" = 使用全局设置；"buffer" = 缓冲直到可见内容（安全重试但 CF 可能超时）；
 	// "immediate" = 立即流式发送（实时体验但空输出不可重试）。
 	ReasoningBufferStrategy string `json:"reasoning_buffer_strategy,omitempty" gorm:"column:reasoning_buffer_strategy;default:'';size:20"`
+	ThinkingMode            string `json:"thinking_mode" gorm:"not null;default:auto;size:20"`
 }
 
 type GroupItem struct {
@@ -68,9 +94,10 @@ type GroupUpdateRequest struct {
 	AttemptTimeOut          *int                     `json:"attempt_time_out,omitempty"`          // 仅在转发超时变更时发送(秒)
 	SessionKeepTime         *int                     `json:"session_keep_time,omitempty"`         // 仅在会话保持时间变更时发送(秒)
 	ReasoningBufferStrategy *string                  `json:"reasoning_buffer_strategy,omitempty"` // 仅在推理缓冲策略变更时发送
-	ItemsToAdd              []GroupItemAddRequest    `json:"items_to_add,omitempty"`              // 新增的 items
-	ItemsToUpdate           []GroupItemUpdateRequest `json:"items_to_update,omitempty"`           // 更新的 items (priority 变更)
-	ItemsToDelete           []int                    `json:"items_to_delete,omitempty"`           // 删除的 item IDs
+	ThinkingMode            *string                  `json:"thinking_mode,omitempty"`
+	ItemsToAdd              []GroupItemAddRequest    `json:"items_to_add,omitempty"`    // 新增的 items
+	ItemsToUpdate           []GroupItemUpdateRequest `json:"items_to_update,omitempty"` // 更新的 items (priority 变更)
+	ItemsToDelete           []int                    `json:"items_to_delete,omitempty"` // 删除的 item IDs
 }
 
 // GroupItemAddRequest 新增 item 请求

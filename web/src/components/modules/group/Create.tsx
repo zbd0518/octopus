@@ -72,7 +72,7 @@ export function CreateDialogContent() {
                     submitText={t('create.submit')}
                     submittingText={t('create.submitting')}
                     isSubmitting={createGroup.isPending}
-                    onSubmit={({ name, category, endpoint_type, endpoint_provider, outbound_format, match_regex, condition, mode, first_token_time_out, attempt_time_out, session_keep_time, reasoning_buffer_strategy, members }) => {
+                    onSubmit={({ name, category, endpoint_type, endpoint_provider, outbound_format, match_regex, condition, mode, first_token_time_out, attempt_time_out, session_keep_time, thinking_mode, reasoning_buffer_strategy, members }) => {
                         const items = buildCreateItems(members.map((member) => ({
                             channel_id: member.channel_id,
                             model_name: member.name,
@@ -93,6 +93,7 @@ export function CreateDialogContent() {
                                 first_token_time_out: first_token_time_out ?? 0,
                                 attempt_time_out: attempt_time_out ?? 0,
                                 session_keep_time: session_keep_time ?? 0,
+                                thinking_mode: thinking_mode ?? 'auto',
                                 reasoning_buffer_strategy: reasoning_buffer_strategy ?? '',
                                 items,
                             },

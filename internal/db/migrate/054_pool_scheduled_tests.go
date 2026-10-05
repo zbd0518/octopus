@@ -9,7 +9,7 @@ import (
 
 func init() {
 	RegisterAfterAutoMigration(Migration{
-		Version: 58,
+		Version: 62,
 		Up:      migratePoolScheduledTest,
 	})
 }

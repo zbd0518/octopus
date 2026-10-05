@@ -9,7 +9,7 @@ import (
 
 func init() {
 	RegisterAfterAutoMigration(Migration{
-		Version: 60,
+		Version: 64,
 		Up:      migratePoolProxyFallback,
 	})
 }

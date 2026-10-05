@@ -8,6 +8,8 @@ import { useAuthStore } from './user';
 /**
  * 分组项信息
  */
+export type ThinkingMode = 'auto' | 'off' | 'on';
+
 export interface GroupItem {
     id?: number;
     group_id?: number;
@@ -48,6 +50,7 @@ export interface Group {
     last_test_passed?: boolean;
     last_test_all_failed?: boolean;
     last_test_at?: number;
+    thinking_mode?: ThinkingMode;
     reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
 }
 
@@ -376,6 +379,7 @@ export interface CreateGroupRequest {
     session_keep_time: number;
     condition: string;
     items: GroupItem[];
+    thinking_mode?: ThinkingMode;
     reasoning_buffer_strategy?: string;
 }
 
@@ -395,6 +399,7 @@ export interface GroupUpdateRequest {
     first_token_time_out?: number;
     attempt_time_out?: number;
     session_keep_time?: number;
+    thinking_mode?: ThinkingMode;
     reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
     items_to_add?: GroupItemAddRequest[];
     items_to_update?: GroupItemUpdateRequest[];

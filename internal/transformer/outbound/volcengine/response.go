@@ -38,7 +38,14 @@ func (o *ResponseOutbound) TransformRequest(ctx context.Context, request *model.
 		ResponsesRequest: openaiReq,
 		Input:            convertToResponsesInput(openaiReq.Input),
 	}
-	switch strings.ToLower(strings.TrimSpace(request.ReasoningEffort)) {
+	effort := strings.ToLower(strings.TrimSpace(request.ReasoningEffort))
+	if request.ThinkingMode == "off" {
+		effort = "minimal"
+		openaiReq.Reasoning = nil
+	} else if request.ThinkingMode == "on" {
+		effort = "high"
+	}
+	switch effort {
 	case "minimal":
 		responsesReq.Thinking = &Thinking{Type: ThinkingTypeDisabled}
 	case "low", "medium", "high", "xhigh", "max":

@@ -2615,6 +2615,13 @@
       "attemptTimeOutHint": "單位秒，單次轉發嘗試的逾時時間，0 表示不限制（串流和非串流均生效）",
       "sessionKeepTime": "會話保持",
       "sessionKeepTimeHint": "單位秒，會話期間保持使用同一供應源，0 表示停用",
+      "thinkingMode": {
+        "label": "思考模式",
+        "auto": "自動（跟隨客戶端 / 上游預設）",
+        "off": "強制關閉",
+        "on": "強制開啟",
+        "hint": "覆蓋客戶端推理參數，客戶端未傳參時也生效，但需要上游模型支援。DeepSeek/MiMo 使用 thinking.type，OpenAI 使用推理強度，Anthropic 和 Gemini 使用各自協議。原始透傳 / 原始穿透模式不套用此策略。"
+      },
       "reasoningBufferStrategy": {
         "label": "推理內容緩衝策略",
         "hint": "控制該分組的推理 token（思考過程）串流發送方式。可針對特定上游（如有嚴格逾時的 Cloudflare Workers）覆蓋全域設定。",
@@ -3453,6 +3460,7 @@
     "tooManyRequests": "請求過多",
     "permissionDenied": "權限不足",
     "channelNotFound": "供應源不存在",
+    "invalidThinkingMode": "無效的思考模式：請選擇 auto、off 或 on",
     "groupNotFound": "分組不存在",
     "groupTestProgressNotFound": "分組檢測進度不存在",
     "aiRouteProgressNotFound": "AI 路由進度不存在",

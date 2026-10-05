@@ -122,6 +122,7 @@ export function EditDialogContent({
                             match_regex: group.match_regex ?? '', condition: group.condition ?? '', mode: group.mode,
                             first_token_time_out: group.first_token_time_out ?? 0, attempt_time_out: group.attempt_time_out ?? 0,
                             session_keep_time: group.session_keep_time ?? 0, reasoning_buffer_strategy: group.reasoning_buffer_strategy ?? '',
+                            thinking_mode: group.thinking_mode ?? 'auto',
                             members: editMembers,
                         }}
                         submitText={t('detail.actions.save')} submittingText={t('create.submitting')} isSubmitting={isSubmitting}
