@@ -20,7 +20,7 @@ type ProxySelectorProps = {
     allowInherit?: boolean;
     disabled?: boolean;
     className?: string;
-    layout?: 'inline' | 'stacked';
+    layout?: 'inline' | 'stacked' | 'row';
 };
 
 export function ProxySelector({ value, onChange, allowInherit = false, disabled = false, className, layout = 'inline' }: ProxySelectorProps) {
@@ -30,15 +30,16 @@ export function ProxySelector({ value, onChange, allowInherit = false, disabled 
     const selectedProxy = proxies.find((item) => item.id === value.proxy_config_id) ?? null;
     const enabledProxies = proxies.filter((item) => item.enabled || item.id === value.proxy_config_id);
     const mode = value.proxy_mode || (allowInherit ? 'inherit' : 'direct');
+    const isRow = layout === 'row';
 
     const modes: ProxyMode[] = allowInherit
         ? ['inherit', 'direct', 'system', 'pool']
         : ['direct', 'system', 'pool'];
     return (
         <div className={className}>
-            <div className={layout === 'stacked' ? 'grid min-w-0 gap-3' : 'grid gap-2 md:grid-cols-8'}>
-                <div className={layout === 'stacked' ? 'min-w-0 space-y-2' : allowInherit ? 'space-y-2 md:col-span-3' : 'space-y-2 md:col-span-2'}>
-                    <label className="text-sm font-medium text-card-foreground">{t('mode.label')}</label>
+            <div className={isRow ? 'flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2' : layout === 'stacked' ? 'grid min-w-0 gap-3' : 'grid gap-2 md:grid-cols-8'}>
+                <div className={isRow ? 'flex min-w-0 items-center gap-3' : layout === 'stacked' ? 'min-w-0 space-y-2' : allowInherit ? 'space-y-2 md:col-span-3' : 'space-y-2 md:col-span-2'}>
+                    <label className={isRow ? 'shrink-0 text-sm font-medium text-card-foreground' : 'text-sm font-medium text-card-foreground'}>{t('mode.label')}</label>
                     <Select
                         value={mode}
                         disabled={disabled}
@@ -50,7 +51,7 @@ export function ProxySelector({ value, onChange, allowInherit = false, disabled 
                             });
                         }}
                     >
-                        <SelectTrigger aria-label={t('mode.label')} className={layout === 'stacked' ? 'h-11 w-full rounded-lg' : 'w-full rounded-xl'}>
+                        <SelectTrigger aria-label={t('mode.label')} className={isRow ? 'h-11 w-40 rounded-lg' : layout === 'stacked' ? 'h-11 w-full rounded-lg' : 'w-full rounded-xl'}>
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent className="rounded-xl">
@@ -64,9 +65,9 @@ export function ProxySelector({ value, onChange, allowInherit = false, disabled 
                 </div>
 
                 {mode === 'pool' ? (
-                    <div className={layout === 'stacked' ? 'min-w-0 space-y-2' : allowInherit ? 'space-y-2 md:col-span-5' : 'space-y-2 md:col-span-6'}>
-                        <label className="text-sm font-medium text-card-foreground">{t('name')}</label>
-                        <div className="flex items-center gap-2">
+                    <div className={isRow ? 'flex min-w-0 flex-1 items-center gap-3' : layout === 'stacked' ? 'min-w-0 space-y-2' : allowInherit ? 'space-y-2 md:col-span-5' : 'space-y-2 md:col-span-6'}>
+                        <label className={isRow ? 'shrink-0 text-sm font-medium text-card-foreground' : 'text-sm font-medium text-card-foreground'}>{t('name')}</label>
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
                             {enabledProxies.length > 0 ? (
                                 <Select
                                     value={value.proxy_config_id ? String(value.proxy_config_id) : ''}

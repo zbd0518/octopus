@@ -161,9 +161,21 @@ export function CreateDialogContent() {
 
     return (
         <div className="flex h-full w-full min-h-0 flex-col overflow-hidden bg-card text-card-foreground">
-            <MorphingDialogTitle className="shrink-0">
-                <header className="flex min-h-16 items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-6">
-                    <h2 className="min-w-0 text-lg font-semibold">{t('dialogTitle')}</h2>
+            <MorphingDialogTitle>
+                <header className="relative flex items-center justify-between gap-4 px-1 pb-4 pt-1">
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                            <span className="h-2.5 w-10 rounded-full bg-primary/18" />
+                            <span className="h-2.5 w-24 rounded-full bg-card" />
+                            <span className="h-2.5 w-14 rounded-full bg-card" />
+                        </div>
+                        <div className="space-y-1">
+                            <h2 className="text-2xl font-semibold tracking-tight text-card-foreground">
+                                {t('dialogTitle')}
+                            </h2>
+                            <p className="text-sm text-muted-foreground">{tForm('template.hint')}</p>
+                        </div>
+                    </div>
                     <div className="flex shrink-0 items-center gap-2">
                     <Button
                         type="button"
@@ -187,7 +199,7 @@ export function CreateDialogContent() {
                         </Button>
                     ) : (
                         <MorphingDialogClose
-                            className="relative inset-auto size-10 shrink-0 p-2 sm:inset-auto sm:size-10 sm:p-2"
+                            className="relative right-0 top-0"
                             variants={{
                                 initial: { opacity: 0, scale: 0.8 },
                                 animate: { opacity: 1, scale: 1 },
@@ -249,7 +261,6 @@ export function CreateDialogContent() {
                             pendingText={t('submitting')}
                             idPrefix="new-channel"
                             showTemplatePicker={false}
-                            layout="create"
                             onCancel={() => setIsOpen(false)}
                             cancelText={tForm('modelPicker.cancel')}
                         />

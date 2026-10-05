@@ -1595,34 +1595,23 @@ export function ChannelForm({
                     </AccordionTrigger>
                     <AccordionContent className="pt-4">
                         <div className="space-y-4">
-                        <div className="grid min-w-0 items-start gap-4 md:grid-cols-2">
-                            <ProxySelector
-                                layout="stacked"
-                                value={{ proxy_mode: formData.proxy_mode, proxy_config_id: formData.proxy_config_id }}
-                                onChange={(next) => onFormDataChange({
-                                    ...formData,
-                                    proxy_mode: next.proxy_mode as ChannelProxyMode,
-                                    proxy_config_id: next.proxy_config_id ?? null,
-                                })}
-                            />
-                            <div className={fieldGroupClassName}>
-                                <label htmlFor={`${idPrefix}-key-strategy`} className={labelClassName}>{t('keySelectionStrategy')}</label>
-                                <Select
-                                    value={formData.key_selection_strategy || '__inherit__'}
-                                    onValueChange={(value) => onFormDataChange({ ...formData, key_selection_strategy: value === '__inherit__' ? '' : value })}
-                                >
-                                    <SelectTrigger id={`${idPrefix}-key-strategy`} className="h-11 w-full rounded-lg">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent className="rounded-lg">
-                                        <SelectItem className="rounded-xl" value="__inherit__">{t('keySelectionStrategyInherit')}</SelectItem>
-                                        <SelectItem className="rounded-xl" value="cost">{t('keySelectionStrategyCost')}</SelectItem>
-                                        <SelectItem className="rounded-xl" value="availability">{t('keySelectionStrategyAvailability')}</SelectItem>
-                                        <SelectItem className="rounded-xl" value="speed">{t('keySelectionStrategySpeed')}</SelectItem>
-                                        <SelectItem className="rounded-xl" value="priority">{t('keySelectionStrategyPriority')}</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
+                        <div className={fieldGroupClassName}>
+                            <label htmlFor={`${idPrefix}-key-strategy`} className={labelClassName}>{t('keySelectionStrategy')}</label>
+                            <Select
+                                value={formData.key_selection_strategy || '__inherit__'}
+                                onValueChange={(value) => onFormDataChange({ ...formData, key_selection_strategy: value === '__inherit__' ? '' : value })}
+                            >
+                                <SelectTrigger id={`${idPrefix}-key-strategy`} className="h-11 w-full rounded-lg">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent className="rounded-lg">
+                                    <SelectItem className="rounded-xl" value="__inherit__">{t('keySelectionStrategyInherit')}</SelectItem>
+                                    <SelectItem className="rounded-xl" value="cost">{t('keySelectionStrategyCost')}</SelectItem>
+                                    <SelectItem className="rounded-xl" value="availability">{t('keySelectionStrategyAvailability')}</SelectItem>
+                                    <SelectItem className="rounded-xl" value="speed">{t('keySelectionStrategySpeed')}</SelectItem>
+                                    <SelectItem className="rounded-xl" value="priority">{t('keySelectionStrategyPriority')}</SelectItem>
+                                </SelectContent>
+                            </Select>
                         </div>
                         <div className={fieldGroupClassName}>
                             <label htmlFor={`${idPrefix}-pool`} className={labelClassName}>
@@ -1887,13 +1876,24 @@ export function ChannelForm({
                 </AccordionItem>
             </Accordion>
             <section className={cn(sectionClassName, 'flex flex-col gap-4', isCreateLayout && 'md:col-span-2')}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                    <Switch
-                        checked={formData.enabled}
-                        onCheckedChange={(checked) => onFormDataChange({ ...formData, enabled: checked })}
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                        <Switch
+                            checked={formData.enabled}
+                            onCheckedChange={(checked) => onFormDataChange({ ...formData, enabled: checked })}
+                        />
+                        <span className="text-sm font-medium text-card-foreground">{t('enabled')}</span>
+                    </label>
+                    <ProxySelector
+                        layout="row"
+                        value={{ proxy_mode: formData.proxy_mode, proxy_config_id: formData.proxy_config_id }}
+                        onChange={(next) => onFormDataChange({
+                            ...formData,
+                            proxy_mode: next.proxy_mode as ChannelProxyMode,
+                            proxy_config_id: next.proxy_config_id ?? null,
+                        })}
                     />
-                    <span className="text-sm font-medium text-card-foreground">{t('enabled')}</span>
-                </label>
+                </div>
                 <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-border/10 pt-4">
                     <label className="flex items-center gap-2 cursor-pointer">
                         <Switch
