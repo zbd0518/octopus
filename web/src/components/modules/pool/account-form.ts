@@ -212,6 +212,21 @@ export function applyHeaderOverridesToExtra(
     return next;
 }
 
+/**
+ * Writes the backup-proxy selection into the extra object (B4-#13). A null or
+ * non-positive backupProxyId removes the backup_proxy_config_id key (default
+ * off); all other fields are preserved.
+ */
+export function applyBackupProxyToExtra(extra: PoolAccountExtraLike, backupProxyId: number | null): PoolAccountExtraLike {
+    const next: PoolAccountExtraLike = { ...extra };
+    if (backupProxyId != null && backupProxyId > 0) {
+        next.backup_proxy_config_id = backupProxyId;
+    } else {
+        delete next.backup_proxy_config_id;
+    }
+    return next;
+}
+
 // ---------------------------------------------------------------------------
 // extra JSON 安全解析：坏 JSON 不静默丢弃（调用方禁保存并提示）
 // ---------------------------------------------------------------------------

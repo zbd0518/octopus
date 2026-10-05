@@ -2,12 +2,14 @@ package task
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
+	porop "github.com/lingyuins/octopus/internal/op/pool"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	st "github.com/lingyuins/octopus/internal/op/stats"
 )
@@ -182,5 +184,65 @@ func seedRelayAttempt(t *testing.T, id int64, ts int64, channelID int, apiKeyID 
 	}
 	if err := db.GetLogDB().Create(&attempt).Error; err != nil {
 		t.Fatalf("create relay attempt: %v", err)
+	}
+}
+
+// TestEvaluatePoolAccountError covers the pool_account_error condition
+// (B4-#15, pull-style): firing while any/scoped account is in error, resolve
+// once recovered, and scope narrowing to a single account.
+func TestEvaluatePoolAccountError(t *testing.T) {
+	setupAlertEvalDB(t)
+
+	// Pool tables are created by migrations (040) on the first process-wide
+	// InitDB; materialize them defensively so this test is order-independent.
+	if !db.GetDB().Migrator().HasTable(&model.AccountPool{}) {
+		if err := db.GetDB().AutoMigrate(&model.AccountPool{}, &model.PoolAccount{}); err != nil {
+			t.Fatalf("auto migrate pool tables: %v", err)
+		}
+	}
+
+	pool := &model.AccountPool{Name: fmt.Sprintf("pool-alert-%d", time.Now().UnixNano()), Enabled: true}
+	if err := db.GetDB().Create(pool).Error; err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	t.Cleanup(func() { _ = db.GetDB().Delete(pool) })
+	errored := &model.PoolAccount{PoolID: pool.ID, Name: "acct-error", Platform: model.PoolPlatformOpenAI, Type: model.PoolTypeAPIKey}
+	healthy := &model.PoolAccount{PoolID: pool.ID, Name: "acct-ok", Platform: model.PoolPlatformOpenAI, Type: model.PoolTypeAPIKey}
+	for _, acct := range []*model.PoolAccount{errored, healthy} {
+		if err := db.GetDB().Create(acct).Error; err != nil {
+			t.Fatalf("create account %s: %v", acct.Name, err)
+		}
+		t.Cleanup(func() { _ = db.GetDB().Delete(acct) })
+	}
+	// SetError persists status="error" (same write path the scheduler uses).
+	if err := porop.UpdateAccount(pool.ID, errored.ID, map[string]interface{}{"status": "error"}); err != nil {
+		t.Fatalf("set error status: %v", err)
+	}
+
+	// Any account in error (scope 0) → firing.
+	eval := evaluatePoolAccountError(&model.AlertRule{ConditionType: model.AlertConditionPoolAccountError})
+	if !eval.Firing || eval.CurrentValue != 1 {
+		t.Fatalf("expected firing with 1 errored account, got firing=%v current=%v (%s)", eval.Firing, eval.CurrentValue, eval.Detail)
+	}
+
+	// Scoped to the errored account → firing.
+	eval = evaluatePoolAccountError(&model.AlertRule{ConditionType: model.AlertConditionPoolAccountError, ScopePoolAccountID: errored.ID})
+	if !eval.Firing {
+		t.Fatalf("expected firing for the errored scope, got %s", eval.Detail)
+	}
+
+	// Scoped to the healthy account → not firing.
+	eval = evaluatePoolAccountError(&model.AlertRule{ConditionType: model.AlertConditionPoolAccountError, ScopePoolAccountID: healthy.ID})
+	if eval.Firing {
+		t.Fatalf("expected not firing for the healthy scope, got %s", eval.Detail)
+	}
+
+	// Recover the account → resolve.
+	if err := porop.UpdateAccount(pool.ID, errored.ID, map[string]interface{}{"status": "active"}); err != nil {
+		t.Fatalf("recover status: %v", err)
+	}
+	eval = evaluatePoolAccountError(&model.AlertRule{ConditionType: model.AlertConditionPoolAccountError})
+	if eval.Firing {
+		t.Fatalf("expected resolve after recovery, got %s", eval.Detail)
 	}
 }

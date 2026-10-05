@@ -438,6 +438,6 @@ func TestPoolFailureSignalsStillApplyForRealUpstreamErrors(t *testing.T) {
 			t.Fatalf("real %d must not be marked SkipFailureAccounting", code)
 		}
 		// nil 账号是 handlePoolAuthError 的既有早退，确认可安全调用。
-		handlePoolAuthError(nil, dbmodel.PoolTypeAPIKey, code)
+		handlePoolAuthError(nil, dbmodel.PoolTypeAPIKey, code, "")
 	}
 }

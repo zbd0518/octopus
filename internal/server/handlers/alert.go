@@ -216,36 +216,38 @@ func listAlertHistory(c *gin.Context) {
 }
 
 type alertRulePayload struct {
-	ID             int                          `json:"id"`
-	Name           string                       `json:"name"`
-	Enabled        bool                         `json:"enabled"`
-	ConditionType  model.AlertRuleConditionType `json:"condition_type"`
-	Threshold      float64                      `json:"threshold"`
-	ConditionJSON  string                       `json:"condition_json,omitempty"`
-	NotifChannelID int                          `json:"notif_channel_id"`
-	CooldownSec    int                          `json:"cooldown_sec"`
-	WindowSec      int                          `json:"window_sec,omitempty"`
-	ScopeChannelID int                          `json:"scope_channel_id,omitempty"`
-	ScopeAPIKeyID  int                          `json:"scope_api_key_id,omitempty"`
-	ScopeGroupID   int                          `json:"scope_group_id,omitempty"`
-	ScopeModelName string                       `json:"scope_model_name,omitempty"`
+	ID                 int                          `json:"id"`
+	Name               string                       `json:"name"`
+	Enabled            bool                         `json:"enabled"`
+	ConditionType      model.AlertRuleConditionType `json:"condition_type"`
+	Threshold          float64                      `json:"threshold"`
+	ConditionJSON      string                       `json:"condition_json,omitempty"`
+	NotifChannelID     int                          `json:"notif_channel_id"`
+	CooldownSec        int                          `json:"cooldown_sec"`
+	WindowSec          int                          `json:"window_sec,omitempty"`
+	ScopeChannelID     int                          `json:"scope_channel_id,omitempty"`
+	ScopeAPIKeyID      int                          `json:"scope_api_key_id,omitempty"`
+	ScopeGroupID       int                          `json:"scope_group_id,omitempty"`
+	ScopeModelName     string                       `json:"scope_model_name,omitempty"`
+	ScopePoolAccountID int                          `json:"scope_pool_account_id,omitempty"`
 }
 
 func (p alertRulePayload) toModel() model.AlertRule {
 	return model.AlertRule{
-		ID:             p.ID,
-		Name:           p.Name,
-		Enabled:        p.Enabled,
-		ConditionType:  p.ConditionType,
-		Threshold:      p.Threshold,
-		ConditionJSON:  p.ConditionJSON,
-		NotifChannelID: p.NotifChannelID,
-		CooldownSec:    p.CooldownSec,
-		WindowSec:      p.WindowSec,
-		ScopeChannelID: p.ScopeChannelID,
-		ScopeAPIKeyID:  p.ScopeAPIKeyID,
-		ScopeGroupID:   p.ScopeGroupID,
-		ScopeModelName: p.ScopeModelName,
+		ID:                 p.ID,
+		Name:               p.Name,
+		Enabled:            p.Enabled,
+		ConditionType:      p.ConditionType,
+		Threshold:          p.Threshold,
+		ConditionJSON:      p.ConditionJSON,
+		NotifChannelID:     p.NotifChannelID,
+		CooldownSec:        p.CooldownSec,
+		WindowSec:          p.WindowSec,
+		ScopeChannelID:     p.ScopeChannelID,
+		ScopeAPIKeyID:      p.ScopeAPIKeyID,
+		ScopeGroupID:       p.ScopeGroupID,
+		ScopeModelName:     p.ScopeModelName,
+		ScopePoolAccountID: p.ScopePoolAccountID,
 	}
 }
 

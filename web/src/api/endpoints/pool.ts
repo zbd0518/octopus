@@ -24,6 +24,7 @@ export type PoolAccountExtra = {
     tls_fingerprint_profile?: string;
     refresh_failure_count?: number;
     next_refresh_allowed_at?: number;
+    backup_proxy_config_id?: number;
 };
 
 export type PoolAccount = {
@@ -60,8 +61,43 @@ export type PoolAccount = {
     extra: string;
     weight: number;
     load_factor: number;
+    // B4-#13 proxy fallback: non-null means the account currently runs on its
+    // backup proxy and this holds the original proxy_config_id.
+    proxy_fallback_origin_id?: number | null;
     created_at: string;
     updated_at: string;
+};
+
+// --- Scheduled tests (B4-#11) ---
+
+export type PoolScheduledTest = {
+    id: number;
+    pool_id: number;
+    account_id?: number | null;
+    cron_expr: string;
+    enabled: boolean;
+    auto_recover: boolean;
+    last_run_at: number;
+    next_run_at: number;
+    created_at: string;
+    updated_at: string;
+};
+
+export type PoolScheduledTestResult = {
+    id: number;
+    test_id: number;
+    account_id: number;
+    success: boolean;
+    detail: string;
+    duration_ms: number;
+    created_at: string;
+};
+
+export type PoolScheduledTestRequest = {
+    account_id?: number | null;
+    cron_expr: string;
+    enabled?: boolean;
+    auto_recover?: boolean;
 };
 
 export type CreatePoolRequest = {
@@ -297,8 +333,10 @@ export type PoolAccountExport = {
 };
 
 export function useExportPoolAccounts(poolId: number) {
+    // POST (not GET): the backend audit middleware short-circuits every
+    // non-writing method, so the export route is only auditable as POST.
     return useMutation({
-        mutationFn: () => apiClient.get<PoolAccountExport[]>(`/api/v1/pool/${poolId}/account/export`),
+        mutationFn: () => apiClient.post<PoolAccountExport[]>(`/api/v1/pool/${poolId}/account/export`),
     });
 }
 
@@ -308,5 +346,124 @@ export function useImportPoolAccounts() {
         mutationFn: ({ poolId, accounts }: { poolId: number; accounts: string }) =>
             apiClient.post<{ imported: number }>('/api/v1/pool/import', { pool_id: poolId, accounts }),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pools'] }),
+    });
+}
+
+// --- Scheduled test plan mutations (B4-#11) ---
+
+export function usePoolScheduledTests(poolId: number | null) {
+    return useQuery({
+        queryKey: ['pools', poolId, 'scheduled-tests'],
+        queryFn: () => apiClient.get<PoolScheduledTest[]>(`/api/v1/pool/${poolId}/scheduled-test/list`),
+        enabled: poolId !== null,
+    });
+}
+
+export function usePoolScheduledTestResults(poolId: number | null, testId: number | null) {
+    return useQuery({
+        queryKey: ['pools', poolId, 'scheduled-tests', testId, 'results'],
+        queryFn: () => apiClient.get<PoolScheduledTestResult[]>(`/api/v1/pool/${poolId}/scheduled-test/results/${testId}`),
+        enabled: poolId !== null && testId !== null,
+    });
+}
+
+function invalidateScheduledTests(queryClient: ReturnType<typeof useQueryClient>, poolId: number) {
+    void queryClient.invalidateQueries({ queryKey: ['pools', poolId, 'scheduled-tests'] });
+    void queryClient.invalidateQueries({ queryKey: ['pools', poolId, 'accounts'] });
+}
+
+export function useCreatePoolScheduledTest(poolId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (data: PoolScheduledTestRequest) =>
+            apiClient.post<PoolScheduledTest>(`/api/v1/pool/${poolId}/scheduled-test/create`, data),
+        onSuccess: () => invalidateScheduledTests(queryClient, poolId),
+    });
+}
+
+export function useUpdatePoolScheduledTest(poolId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ testId, data }: { testId: number; data: PoolScheduledTestRequest }) =>
+            apiClient.post<PoolScheduledTest>(`/api/v1/pool/${poolId}/scheduled-test/update/${testId}`, data),
+        onSuccess: () => invalidateScheduledTests(queryClient, poolId),
+    });
+}
+
+export function useDeletePoolScheduledTest(poolId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (testId: number) => apiClient.delete(`/api/v1/pool/${poolId}/scheduled-test/delete/${testId}`),
+        onSuccess: () => invalidateScheduledTests(queryClient, poolId),
+    });
+}
+
+// --- Proxy fallback (B4-#13) ---
+
+export function useRestorePoolAccountProxy(poolId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (accountId: number) =>
+            apiClient.post(`/api/v1/pool/${poolId}/account/restore-proxy/${accountId}`, {}),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pools', poolId, 'accounts'] }),
+    });
+}
+
+// --- Temp-unsched rules (B4-#12) ---
+
+export type PoolUnschedRule = {
+    id: number;
+    name: string;
+    match_status_code?: number | null;
+    match_keyword: string;
+    duration_minutes: number;
+    enabled: boolean;
+    sort_order: number;
+    created_at: string;
+    updated_at: string;
+};
+
+export type PoolUnschedRuleRequest = {
+    name?: string;
+    match_status_code?: number | null;
+    match_keyword?: string;
+    duration_minutes: number;
+    enabled?: boolean;
+    sort_order?: number;
+};
+
+export function usePoolUnschedRules() {
+    return useQuery({
+        queryKey: ['pools', 'unsched-rules'],
+        queryFn: () => apiClient.get<PoolUnschedRule[]>('/api/v1/pool/unsched-rules/list'),
+    });
+}
+
+function invalidateUnschedRules(queryClient: ReturnType<typeof useQueryClient>) {
+    void queryClient.invalidateQueries({ queryKey: ['pools', 'unsched-rules'] });
+}
+
+export function useCreatePoolUnschedRule() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (data: PoolUnschedRuleRequest) => apiClient.post<PoolUnschedRule>('/api/v1/pool/unsched-rules/create', data),
+        onSuccess: () => invalidateUnschedRules(queryClient),
+    });
+}
+
+export function useUpdatePoolUnschedRule() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ id, data }: { id: number; data: PoolUnschedRuleRequest }) =>
+            apiClient.post(`/api/v1/pool/unsched-rules/update/${id}`, data),
+        onSuccess: () => invalidateUnschedRules(queryClient),
+    });
+}
+
+export function useDeletePoolUnschedRule() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (id: number) => apiClient.delete(`/api/v1/pool/unsched-rules/delete/${id}`),
+        onSuccess: () => invalidateUnschedRules(queryClient),
     });
 }

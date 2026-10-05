@@ -8,7 +8,12 @@ export type PoolPlatform =
     | 'volcengine'
     | 'custom';
 
-export type PoolAccountType = 'oauth' | 'apikey' | 'cookie' | 'upstream' | 'setup-token';
+// NOTE: 'setup-token' was intentionally removed from the credential type
+// union (route A of guide card B3-#6): it was a frontend-only entry with no
+// backend test/outbound/refresh implementation. Historical setup-token rows
+// keep rendering via the unknown-type fallback editor in AccountFormDialog
+// and the `t.has(typeLabels.*)` fallback in PoolDetail.
+export type PoolAccountType = 'oauth' | 'apikey' | 'cookie' | 'upstream';
 
 export const POOL_PLATFORM_OPTIONS: { value: PoolPlatform; label: string }[] = [
     { value: 'anthropic', label: 'Anthropic' },

@@ -104,6 +104,75 @@ func isOfficialGeminiEndpoint(endpoint string) bool {
 	return strings.Contains(lower, "generativelanguage.googleapis.com")
 }
 
+// isCodeAssistEndpoint 判断是否为 Cloud Code Assist 域名。
+func isCodeAssistEndpoint(endpoint string) bool {
+	lower := strings.ToLower(endpoint)
+	return strings.Contains(lower, "cloudcode-pa.googleapis.com")
+}
+
+// transformAIStudioRequest 构造 AI Studio 模式（官方 Generative Language API）
+// 的出站请求：{base}/v1beta/models/{model}:{action} + Bearer 鉴权，免
+// project_id，也不带 ?key=（裸 access_token 当 ?key= 用会被直接 401/403）。
+//
+// 流式复用官方端点的 alt=sse 既有模式；base_url 指向 Code Assist 域名（或留空）
+// 时改回官方端点，避免 ai_studio 的 token 被发到不认该 scope 的域名。
+func transformAIStudioRequest(
+	ctx context.Context,
+	request *model.InternalLLMRequest,
+	baseUrl string,
+	cred geminicli.CodeAssistCredential,
+) (*http.Request, error) {
+	geminiReq := convertLLMToGeminiRequest(request)
+
+	body, err := transformer.Marshal(geminiReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal gemini request: %w", err)
+	}
+
+	isStream := request.Stream != nil && *request.Stream
+	action := "generateContent"
+	if isStream {
+		action = "streamGenerateContent"
+	}
+
+	endpoint := strings.TrimSuffix(strings.TrimSpace(baseUrl), "/")
+	if endpoint == "" || isCodeAssistEndpoint(endpoint) {
+		endpoint = geminicli.AIStudioEndpoint
+	}
+
+	parsedUrl, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse base url: %w", err)
+	}
+
+	// Build path: /v1beta/models/{model}:{action}（与官方 API key 路径同构；
+	// base_url 通常不含版本段，这里统一补 /v1beta，已带则不重复）。
+	modelName := request.Model
+	if !strings.Contains(modelName, "/") {
+		modelName = "models/" + modelName
+	}
+	basePath := strings.TrimSuffix(parsedUrl.Path, "/")
+	if !strings.HasSuffix(basePath, "/v1beta") {
+		basePath += "/v1beta"
+	}
+	parsedUrl.Path = fmt.Sprintf("%s/%s:%s", basePath, modelName, action)
+
+	if isStream {
+		q := parsedUrl.Query()
+		q.Set("alt", "sse")
+		parsedUrl.RawQuery = q.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, parsedUrl.String(), bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+cred.AccessToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	return req, nil
+}
+
 // unwrapCodeAssistPayload 剥掉 {"response":{...}} 外层包装。
 //
 // 未包装的报文原样返回，因此对官方格式同样安全。

@@ -185,7 +185,8 @@ func TestPoolStrategyWhitelist_RejectsUnknown(t *testing.T) {
 	}
 }
 
-// setStickyEscapeForTest 设置粘性逃逸三键并在测试后还原默认值（默认关闭）。
+// setStickyEscapeForTest sets the three sticky-escape keys and restores the
+// defaults (off) after the test.
 func setStickyEscapeForTest(t *testing.T, enabled, errorRate, ttftMs string) {
 	t.Helper()
 	set := func(key model.SettingKey, value string) {
@@ -203,23 +204,26 @@ func setStickyEscapeForTest(t *testing.T, enabled, errorRate, ttftMs string) {
 	})
 }
 
-// seedStickyForTest 直接向 globalPoolSticky 写入粘性条目并注册清理。
+// seedStickyForTest writes a sticky entry into globalPoolSticky directly and
+// registers cleanup.
 func seedStickyForTest(t *testing.T, poolID, accountID int, sessionHash string) {
 	t.Helper()
 	globalPoolSticky.Store(stickyKey(poolID, sessionHash), &stickyEntry{AccountID: accountID, LastActivity: time.Now()})
 	t.Cleanup(func() { globalPoolSticky.Delete(stickyKey(poolID, sessionHash)) })
 }
 
-// seedStatsForTest 直接向 globalPoolStats 写入 EWMA 统计并注册清理。
+// seedStatsForTest writes EWMA stats into globalPoolStats directly and
+// registers cleanup.
 func seedStatsForTest(t *testing.T, poolID, accountID int, errorRate, ttftMs float64) {
 	t.Helper()
 	globalPoolStats.Store(statsKey(poolID, accountID), &accountStats{errorRate: errorRate, ttftMs: ttftMs, lastActivity: time.Now()})
 	t.Cleanup(func() { globalPoolStats.Delete(statsKey(poolID, accountID)) })
 }
 
-// TestStickyEscape_EscapeExcludesButPreservesEntry（B1-#9 核心验收）：
-// 开启逃逸后，本次选号排除劣化账号（round_robin 也不会再选中它），
-// 原粘性条目保留、不改绑。
+// TestStickyEscape_EscapeExcludesButPreservesEntry (B1-#9 core acceptance):
+// with escape enabled the degraded account is excluded from this selection
+// (round_robin will not re-pick it either) while the original sticky entry is
+// preserved and not rebound.
 func TestStickyEscape_EscapeExcludesButPreservesEntry(t *testing.T) {
 	poolID, _ := setupSchedulerPoolDB(t)
 	setStickyEscapeForTest(t, "true", "0.5", "15000")
@@ -229,7 +233,8 @@ func TestStickyEscape_EscapeExcludesButPreservesEntry(t *testing.T) {
 	seedStickyForTest(t, poolID, a1, "sess-escape")
 	seedStatsForTest(t, poolID, a1, 0.6, 0)
 
-	// round_robin 策略下验证"排除"语义（否则 RR 可能立刻转回劣化账号）。
+	// Verifies the exclusion semantics under the round_robin strategy (otherwise
+	// RR could immediately rotate back to the degraded account).
 	if err := pool.UpdatePool(poolID, map[string]interface{}{"strategy": "round_robin"}); err != nil {
 		t.Fatalf("set strategy: %v", err)
 	}
@@ -245,7 +250,7 @@ func TestStickyEscape_EscapeExcludesButPreservesEntry(t *testing.T) {
 		t.Fatalf("expected spare account %d, got %d", a2, got.ID)
 	}
 
-	// 原粘性条目保留（未被改绑到 a2，也未被删除）。
+	// The original sticky entry survives (not rebound to a2, not deleted).
 	val, ok := globalPoolSticky.Load(stickyKey(poolID, "sess-escape"))
 	if !ok {
 		t.Fatalf("sticky entry must survive escape")
@@ -257,7 +262,8 @@ func TestStickyEscape_EscapeExcludesButPreservesEntry(t *testing.T) {
 	_ = a2
 }
 
-// TestStickyEscape_RecoveredStatsReconverge：统计恢复后，会话回归原粘性绑定。
+// TestStickyEscape_RecoveredStatsReconverge: once the stats recover the session
+// returns to the original sticky binding.
 func TestStickyEscape_RecoveredStatsReconverge(t *testing.T) {
 	poolID, _ := setupSchedulerPoolDB(t)
 	setStickyEscapeForTest(t, "true", "0.5", "15000")
@@ -271,7 +277,7 @@ func TestStickyEscape_RecoveredStatsReconverge(t *testing.T) {
 		t.Fatalf("select during degrade: %v", err)
 	}
 
-	// 统计恢复：errorRate 归零。
+	// Stats recover: errorRate back to zero.
 	globalPoolStats.Store(statsKey(poolID, a1), &accountStats{errorRate: 0, ttftMs: 0, lastActivity: time.Now()})
 
 	got, err := SelectAccount(poolID, "sess-recover", nil, 1, "")
@@ -283,11 +289,12 @@ func TestStickyEscape_RecoveredStatsReconverge(t *testing.T) {
 	}
 }
 
-// TestStickyEscape_DisabledKeepsOldBehavior（golden）：默认关闭时，即使
-// 错误率超阈值，粘性命中行为与旧逻辑逐字节一致。
+// TestStickyEscape_DisabledKeepsOldBehavior (golden): with the default off, a
+// sticky hit behaves byte-identically to the old logic even when the error rate
+// exceeds the threshold.
 func TestStickyEscape_DisabledKeepsOldBehavior(t *testing.T) {
 	poolID, _ := setupSchedulerPoolDB(t)
-	// 不设置任何键：使用默认值 enabled=false。
+	// No keys set: the default enabled=false applies.
 	setStickyEscapeForTest(t, "false", "0.5", "15000")
 
 	a1 := addAccount(t, poolID, &model.PoolAccount{Name: "sticky-default"})
@@ -303,7 +310,8 @@ func TestStickyEscape_DisabledKeepsOldBehavior(t *testing.T) {
 	}
 }
 
-// TestStickyEscape_TTFTDimension：TTFT 超阈值触发逃逸；阈值 <=0 禁用该维度。
+// TestStickyEscape_TTFTDimension: a TTFT above the threshold escapes; a
+// threshold <=0 disables the dimension.
 func TestStickyEscape_TTFTDimension(t *testing.T) {
 	poolID, _ := setupSchedulerPoolDB(t)
 
@@ -317,7 +325,8 @@ func TestStickyEscape_TTFTDimension(t *testing.T) {
 		t.Fatalf("high TTFT should escape sticky, got %v err=%v", got, err)
 	}
 
-	// 阈值 0 = 禁用 TTFT 维度（错误率未超阈值 → 不逃逸，回归粘性命中）。
+	// Threshold 0 = TTFT dimension disabled (error rate below threshold -> no
+	// escape; the sticky hit applies).
 	globalPoolSticky.Store(stickyKey(poolID, "sess-ttft"), &stickyEntry{AccountID: a1, LastActivity: time.Now()})
 	globalPoolSlots.Delete(statsKey(poolID, a1))
 	setStickyEscapeForTest(t, "true", "0.5", "0")

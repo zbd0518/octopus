@@ -1020,7 +1020,8 @@
       "cost_threshold": "Cost Threshold",
       "error_rate": "Error Rate %",
       "quota_exceeded": "Quota Exceeded",
-      "channel_down": "Channel Down"
+      "channel_down": "Channel Down",
+      "pool_account_error": "Pool Account Error"
     },
     "channelTypes": {
       "webhook": "Webhook",
@@ -1055,13 +1056,19 @@
           "cost_threshold": "Alert when daily accumulated cost exceeds this amount (USD)",
           "error_rate": "Alert when error rate in the sliding window exceeds this percentage for the scoped target",
           "quota_exceeded": "Alert when quota usage exceeds this percentage",
-          "channel_down": "Alert when consecutive channel failures exceed this count"
+          "channel_down": "Alert when consecutive channel failures exceed this count",
+          "pool_account_error": "Fires while any (or the scoped) pool account is in the error state; resolves automatically once the account recovers"
         },
         "window": "Window (sec)",
         "windowPlaceholder": "Sliding window seconds",
         "windowHint": "Sliding window duration for calculating the condition; only applies to error-rate alerts",
         "scopeGroupId": "Scope group ID",
-        "scopeModelName": "Scope model name"
+        "scopeModelName": "Scope model name",
+        "scopePoolAccountId": "Scope pool account",
+        "selectPool": "Select pool…",
+        "scopeAnyPoolAccount": "All pool accounts (any error)",
+        "scopeChannelId": "Scope channel ID",
+        "scopeApiKeyId": "Scope API key ID"
       }
     },
     "channels": {
@@ -1444,7 +1451,9 @@
       "schedulerWeightReset": "Scheduler weight: reset readiness",
       "schedulerWeightResetHint": "Off by default (0). When > 0, accounts whose quota/reset window renews sooner are preferred, normalized over a 7-day horizon.",
       "schedulerWeightQuota": "Scheduler weight: quota headroom",
-      "schedulerWeightQuotaHint": "Off by default (0). When > 0, accounts with more remaining quota are preferred. Requires a synced quota snapshot."
+      "schedulerWeightQuotaHint": "Off by default (0). When > 0, accounts with more remaining quota are preferred. Requires a synced quota snapshot.",
+      "geminiClientSecret": "Gemini OAuth client secret",
+      "geminiClientSecretHint": "Overrides the client secret of the built-in Gemini CLI OAuth client. Empty = GEMINI_CLI_OAUTH_CLIENT_SECRET env -> built-in public credential."
     },
     "proxyPool": {
       "title": "Proxy Pool"
@@ -3933,6 +3942,7 @@
       "tierId": "Tier ID",
       "oauthType": "OAuth Type",
       "oauthTypeNone": "None",
+      "oauthTypeHint": "Selects the gemini OAuth outbound mode. code_assist uses Cloud Code Assist (project discovery); ai_studio uses the official Generative Language API without a project; google_one falls back to code_assist behavior.",
       "authMode": "Auth Mode",
       "authModeDefault": "Default",
       "tlsFingerprint": "TLS Fingerprint",
@@ -4045,6 +4055,44 @@
       "updated": "Pool updated",
       "refresh": "Refresh"
     },
+    "scheduledTests": "Scheduled Tests",
+    "scheduledTestsHint": "Run connectivity tests on a schedule and optionally auto-recover accounts whose test passes.",
+    "schedTestCreate": "New Plan",
+    "schedTestCron": "Cron Expression",
+    "schedTestAutoRecover": "Auto-recover on success",
+    "schedTestScope": "Scope",
+    "schedTestScopePool": "Whole pool",
+    "schedTestLastRun": "Last run",
+    "schedTestNextRun": "Next run",
+    "schedTestResults": "Results",
+    "schedTestNoResults": "No results yet",
+    "schedTestCreated": "Plan created",
+    "schedTestUpdated": "Plan updated",
+    "schedTestDeleted": "Plan deleted",
+    "schedTestInvalidCron": "Unsupported cron expression (use e.g. */30 * * * * or 0 9,21 * * *)",
+    "schedTestEnabled": "Enabled",
+    "schedTestNoPlans": "No scheduled test plans yet",
+    "unschedRules": "Temp-Unsched Rules",
+    "unschedRulesHint": "When an upstream failure matches a rule, the account is temporarily unschedulable for the rule's duration. Rules are evaluated in order; the first match wins.",
+    "unschedRuleCreate": "New Rule",
+    "unschedRuleEdit": "Edit",
+    "unschedRuleName": "Rule name",
+    "unschedRuleStatusCode": "Status code (e.g. 529)",
+    "unschedRuleKeyword": "Body keyword (optional)",
+    "unschedRuleDuration": "Duration (minutes)",
+    "unschedRuleSortOrder": "Sort order",
+    "unschedRuleEnabled": "Enabled",
+    "unschedRuleCreated": "Rule created",
+    "unschedRuleUpdated": "Rule updated",
+    "unschedRuleDeleted": "Rule deleted",
+    "unschedRuleNoRules": "No rules yet (failures keep the default 10-minute cooldown)",
+    "unschedRuleInvalidInput": "A rule needs a status code between 400 and 599 or a body keyword, and a positive duration.",
+    "backupProxy": "Backup proxy (on failure)",
+    "backupProxyHint": "When the account's proxy dial fails, traffic switches to this backup proxy. The original proxy is remembered and can be restored from the account actions.",
+    "backupProxyNone": "No backup proxy",
+    "proxyFallbackBadge": "Proxy fallback active",
+    "proxyFallbackRestored": "Original proxy restored",
+    "restoreProxy": "Restore original proxy",
     "batchDeleteConfirm": "Delete the selected {count} accounts? This cannot be undone.",
     "batchDeleteResult": "Deleted {count} accounts",
     "clearAccounts": "Clear all",

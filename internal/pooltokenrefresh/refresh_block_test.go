@@ -17,7 +17,8 @@ import (
 	"github.com/lingyuins/octopus/internal/relay/poolscheduler"
 )
 
-// 共享测试 DB（Windows 上 TempDir 句柄跨测试保持打开，不能每测试重建）。
+// Shared test DB (on Windows TempDir handles stay open across tests, so the DB
+// cannot be rebuilt per test).
 var (
 	refreshTestDBOnce sync.Once
 	refreshTestDBErr  error
@@ -41,8 +42,9 @@ func ensureRefreshTestDB(t *testing.T) {
 
 var refreshAccountSeq int64
 
-// createRefreshTestAccount 创建独立池 + OAuth 账号（凭据为明文 JSON，
-// crypto 未初始化时 EncryptCredentials 原样透传）。
+// createRefreshTestAccount creates an isolated pool + OAuth account
+// (credentials as plaintext JSON; when crypto is uninitialized
+// EncryptCredentials passes the value through unchanged).
 func createRefreshTestAccount(t *testing.T, credJSON string) (poolID, accountID int) {
 	t.Helper()
 	ensureRefreshTestDB(t)
@@ -74,7 +76,8 @@ func createRefreshTestAccount(t *testing.T, credJSON string) (poolID, accountID 
 	return p.ID, a.ID
 }
 
-// overrideRefreshByPlatform 替换平台刷新实现并在测试结束后还原。
+// overrideRefreshByPlatform swaps the per-platform refresh implementation and
+// restores it after the test.
 func overrideRefreshByPlatform(t *testing.T, fn func(ctx context.Context, platform string, cred model.PoolCredential) (model.PoolCredential, int64, error)) {
 	t.Helper()
 	prev := refreshByPlatformFunc
@@ -84,8 +87,10 @@ func overrideRefreshByPlatform(t *testing.T, fn func(ctx context.Context, platfo
 
 const testRefreshCredJSON = `{"type":"oauth","access_token":"at-old","refresh_token":"rt-old"}`
 
-// TestRefreshInFlightBlocksScheduling：刷新在途期间账号被临时禁用
-//（并发调度管线的 ListSchedulableAccounts 不可见），完成后 1s 内恢复可调度。
+// TestRefreshInFlightBlocksScheduling: while the refresh is in flight the
+// account is temporarily unschedulable (invisible to a concurrent scheduling
+// scan via ListSchedulableAccounts) and becomes schedulable again within 1s
+// after completion.
 func TestRefreshInFlightBlocksScheduling(t *testing.T) {
 	poolID, accountID := createRefreshTestAccount(t, testRefreshCredJSON)
 
@@ -93,7 +98,8 @@ func TestRefreshInFlightBlocksScheduling(t *testing.T) {
 	release := make(chan struct{})
 	observedBlocked := false
 	overrideRefreshByPlatform(t, func(ctx context.Context, platform string, cred model.PoolCredential) (model.PoolCredential, int64, error) {
-		// 刷新在途：模拟并发调度扫描，账号必须被临时不可调度挡住。
+		// Refresh in flight: simulate a concurrent scheduling scan — the account
+		// must be held back by the temporary unschedulable flag.
 		candidates, err := pool.ListSchedulableAccounts(poolID)
 		if err != nil {
 			t.Errorf("list schedulable during refresh: %v", err)
@@ -126,7 +132,7 @@ func TestRefreshInFlightBlocksScheduling(t *testing.T) {
 		t.Fatalf("stub did not observe the in-flight window")
 	}
 
-	// 完成后 1s 内恢复可调度。
+	// Schedulable again within 1s after completion.
 	deadline := time.Now().Add(time.Second)
 	for {
 		candidates, err := pool.ListSchedulableAccounts(poolID)
@@ -157,8 +163,8 @@ func TestRefreshInFlightBlocksScheduling(t *testing.T) {
 	}
 }
 
-// TestRefreshFailureClearsBlock：失败路径同样清除在途块（退避由
-// next_refresh_allowed_at 负责，与块无关）。
+// TestRefreshFailureClearsBlock: the failure path clears the in-flight block
+// too (retry pacing is next_refresh_allowed_at's job, independent of the block).
 func TestRefreshFailureClearsBlock(t *testing.T) {
 	poolID, accountID := createRefreshTestAccount(t, testRefreshCredJSON)
 
@@ -182,8 +188,8 @@ func TestRefreshFailureClearsBlock(t *testing.T) {
 	}
 }
 
-// TestRefreshNoRefreshTokenLeavesNoBlock：无 refresh_token 的早返回
-// 发生在设块之前，不留任何块，也不触发平台刷新。
+// TestRefreshNoRefreshTokenLeavesNoBlock: the no-refresh_token early return
+// happens before any block is set — no block left, no platform refresh run.
 func TestRefreshNoRefreshTokenLeavesNoBlock(t *testing.T) {
 	poolID, accountID := createRefreshTestAccount(t, `{"type":"oauth","access_token":"at-only"}`)
 
@@ -208,8 +214,9 @@ func TestRefreshNoRefreshTokenLeavesNoBlock(t *testing.T) {
 	}
 }
 
-// TestClearTempUnschedIfTrigger_OnlyClearsOwnBlock：条件清除不擦并发
-// 401/403/手动块；自己的 trigger 块被清。
+// TestClearTempUnschedIfTrigger_OnlyClearsOwnBlock: the conditional clear never
+// erases concurrent 401/403/manual blocks; a block carrying its own trigger is
+// cleared.
 func TestClearTempUnschedIfTrigger_OnlyClearsOwnBlock(t *testing.T) {
 	ensureRefreshTestDB(t)
 	seq := atomic.AddInt64(&refreshAccountSeq, 1)
@@ -223,7 +230,8 @@ func TestClearTempUnschedIfTrigger_OnlyClearsOwnBlock(t *testing.T) {
 		t.Fatalf("create account: %v", err)
 	}
 
-	// 403 形状的块（与 handlePoolAuthError setTempUnschedWithReason 同形状）。
+	// A 403-shaped block (same shape as handlePoolAuthError's
+	// setTempUnschedWithReason).
 	blockedUntil := time.Now().Add(10 * time.Minute)
 	reason403 := `{"status_code":403,"trigger":"http_403_counter","at":1759500000}`
 	poolscheduler.SetTempUnsched(p.ID, a.ID, blockedUntil, reason403)
@@ -243,7 +251,7 @@ func TestClearTempUnschedIfTrigger_OnlyClearsOwnBlock(t *testing.T) {
 		t.Fatalf("403 block must survive, got reason=%q until=%d", acct.TempUnschedReason, acct.TempUnschedUntil)
 	}
 
-	// 自己的 trigger 块 → 清除成功。
+	// A block with our trigger -> cleared successfully.
 	poolscheduler.SetTempUnsched(p.ID, a.ID, time.Now().Add(6*time.Minute), `{"trigger":"token_refresh_inflight","at":1}`)
 	cleared, err = poolscheduler.ClearTempUnschedIfTrigger(p.ID, a.ID, refreshUnschedTrigger)
 	if err != nil {
@@ -260,8 +268,74 @@ func TestClearTempUnschedIfTrigger_OnlyClearsOwnBlock(t *testing.T) {
 		t.Fatalf("own block should be gone, got reason=%q until=%d", acct.TempUnschedReason, acct.TempUnschedUntil)
 	}
 
-	// 空白账号：条件清除是无害 no-op。
+	// Unblocked account: the conditional clear is a harmless no-op.
 	if cleared, err := poolscheduler.ClearTempUnschedIfTrigger(p.ID, a.ID, refreshUnschedTrigger); err != nil || cleared {
 		t.Fatalf("clear on unblocked account should be a no-op, cleared=%v err=%v", cleared, err)
+	}
+}
+
+// TestRefreshAcquireDoesNotOverwriteActiveForeignBlock: when an active block
+// from another source (403 cooldown shape) exists, the DB-conditional acquire
+// must lose — the refresh proceeds without overwriting the block, and the
+// foreign block (reason + until) survives the whole flow including cleanup.
+func TestRefreshAcquireDoesNotOverwriteActiveForeignBlock(t *testing.T) {
+	poolID, accountID := createRefreshTestAccount(t, testRefreshCredJSON)
+
+	reason403 := `{"status_code":403,"trigger":"http_403_counter","at":1759500000}`
+	blockedUntil := time.Now().Add(10 * time.Minute)
+	poolscheduler.SetTempUnsched(poolID, accountID, blockedUntil, reason403)
+
+	overrideRefreshByPlatform(t, func(ctx context.Context, platform string, cred model.PoolCredential) (model.PoolCredential, int64, error) {
+		acct, err := pool.GetAccount(poolID, accountID)
+		if err != nil {
+			t.Errorf("get account during refresh: %v", err)
+			return cred, 0, nil
+		}
+		if acct.TempUnschedReason != reason403 {
+			t.Errorf("in-flight refresh must not overwrite the foreign block, got reason=%q", acct.TempUnschedReason)
+		}
+		newCred := cred
+		newCred.AccessToken = "at-new"
+		return newCred, time.Now().Add(time.Hour).Unix(), nil
+	})
+
+	if err := refreshAccountImpl(context.Background(), poolID, accountID); err != nil {
+		t.Fatalf("refreshAccountImpl: %v", err)
+	}
+
+	acct, err := pool.GetAccount(poolID, accountID)
+	if err != nil {
+		t.Fatalf("get account: %v", err)
+	}
+	if acct.TempUnschedReason != reason403 || !acct.IsTempUnsched() {
+		t.Fatalf("foreign block must survive the refresh flow, got reason=%q until=%d", acct.TempUnschedReason, acct.TempUnschedUntil)
+	}
+}
+
+// TestRefreshAcquiresOverExpiredForeignBlock: an expired block is scheduling
+// space, so the conditional acquire takes it over (overwrites the stale
+// reason) and the trigger-conditional cleanup removes it after completion.
+func TestRefreshAcquiresOverExpiredForeignBlock(t *testing.T) {
+	poolID, accountID := createRefreshTestAccount(t, testRefreshCredJSON)
+
+	expiredReason := `{"status_code":401,"trigger":"oauth_401_refresh_window","at":1759500000}`
+	poolscheduler.SetTempUnsched(poolID, accountID, time.Now().Add(-time.Minute), expiredReason)
+
+	overrideRefreshByPlatform(t, func(ctx context.Context, platform string, cred model.PoolCredential) (model.PoolCredential, int64, error) {
+		newCred := cred
+		newCred.AccessToken = "at-new"
+		return newCred, time.Now().Add(time.Hour).Unix(), nil
+	})
+
+	if err := refreshAccountImpl(context.Background(), poolID, accountID); err != nil {
+		t.Fatalf("refreshAccountImpl: %v", err)
+	}
+
+	acct, err := pool.GetAccount(poolID, accountID)
+	if err != nil {
+		t.Fatalf("get account: %v", err)
+	}
+	if acct.IsTempUnsched() || acct.TempUnschedReason != "" {
+		t.Fatalf("expired block should be acquired and cleared, got reason=%q until=%d", acct.TempUnschedReason, acct.TempUnschedUntil)
 	}
 }

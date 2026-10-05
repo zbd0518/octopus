@@ -424,10 +424,12 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 	return
 }
 
-// attachEvidence 把上游响应头与错误体片段附着到决策上（B1-#1）。
-// attempt() 内所有 RetryDecision 构造点（含成功返回）统一调用，保证证据齐全；
-// 零值（nil headers / 空 snippet）不改变任何决策语义——反馈段的
-// SkipFailureAccounting 守卫仍然阻止客户端断连/内容拦截注入冷却证据。
+// attachEvidence attaches the upstream response headers and error-body snippet
+// to a decision (B1-#1). Every RetryDecision construction site inside attempt()
+// (including the success return) calls it so the evidence is complete; zero
+// values (nil headers / empty snippet) do not change any decision semantics —
+// the feedback segment's SkipFailureAccounting guard still prevents client
+// disconnects / content filtering from injecting cooldown evidence.
 func (ra *relayAttempt) attachEvidence(d RetryDecision) RetryDecision {
 	d.Headers = ra.respHeaders
 	d.BodySnippet = ra.errBodySnippet
@@ -691,8 +693,9 @@ func (ra *relayAttempt) forward() (int, error) {
 	}
 	defer response.Body.Close()
 
-	// B1-#1：快照上游响应头，供 RetryDecision 携带限流证据（429 reset 头解析）。
-	// Clone 一份，避免后续处理路径复用/修改同一 Header 对象。
+	// B1-#1: snapshot the upstream response headers so RetryDecision can carry
+	// rate-limit evidence (429 reset-header parsing). Clone a copy to avoid
+	// later processing paths reusing/mutating the same Header object.
 	ra.respHeaders = response.Header.Clone()
 
 	// 检查响应状态
@@ -722,8 +725,9 @@ func (ra *relayAttempt) forward() (int, error) {
 //   - openai-oauth 且非 codex 适配器：ChannelKey 是 OAuth JSON，适配器无法解析，
 //     手动设置 Authorization: Bearer {access_token} + chatgpt-account-id: {account_id}。
 //     codex 适配器自身解析 OAuth JSON，无需覆盖。
-//   - gemini-oauth：ChannelKey 是 code_assist 凭据 JSON，由 gemini 出站适配器
-//     自行解析并设置 Bearer（同时切到 cloudcode-pa 端点），这里不覆盖。
+//   - gemini-oauth：ChannelKey 是 OAuth 凭据 JSON，由 gemini 出站适配器
+//     自行解析并按 oauth_type 分流端点（code_assist→cloudcode-pa，
+//     ai_studio→官方 /v1beta），这里不覆盖。
 //   - 其他 oauth/apikey/upstream：适配器默认 Bearer 行为正确，无需覆盖。
 //   - P3 header overrides：符合资格条件时叠加自定义请求头（跳过黑名单与安全头）。
 func (ra *relayAttempt) applyPoolCredentialHeaders(req *http.Request) {
@@ -813,8 +817,9 @@ func (ra *relayAttempt) applyHeaderOverrides(req *http.Request) {
 	}
 }
 
-// maxBodySnippetBytes 是 RetryDecision.BodySnippet 的截断上限（2KB，与 sub2api
-// 错误体快照口径一致；B4-#12 TempUnsched 规则按关键词匹配时复用）。
+// maxBodySnippetBytes caps RetryDecision.BodySnippet truncation (2KB, matching
+// sub2api's error-body snapshot cutoff; reused by B4-#12 TempUnsched keyword
+// matching).
 const maxBodySnippetBytes = 2 << 10
 
 func (ra *relayAttempt) handleForwardResponse(response *http.Response) (int, error) {
@@ -826,8 +831,9 @@ func (ra *relayAttempt) handleForwardResponse(response *http.Response) (int, err
 	if err != nil {
 		return response.StatusCode, fmt.Errorf("failed to read response body: %w", err)
 	}
-	// B1-#1/B4-#12：从已读入内存的错误体截取前 2KB 作为证据片段。
-	// 不额外消费 response.Body（保持既有消费流不变）。
+	// B1-#1/B4-#12: take the first 2KB of the already-read in-memory error body
+	// as the evidence snippet. response.Body is not consumed any further
+	// (the existing consumption flow is unchanged).
 	ra.errBodySnippet = truncateBodySnippet(body)
 	if len(body) > maxErrorBodyBytes {
 		return response.StatusCode, fmt.Errorf("upstream error: %d: response body too large", response.StatusCode)
@@ -835,7 +841,7 @@ func (ra *relayAttempt) handleForwardResponse(response *http.Response) (int, err
 	return response.StatusCode, fmt.Errorf("upstream error: %d: %s", response.StatusCode, string(body))
 }
 
-// truncateBodySnippet 截取错误体前 maxBodySnippetBytes 字节。
+// truncateBodySnippet truncates the error body to its first maxBodySnippetBytes bytes.
 func truncateBodySnippet(body []byte) string {
 	if len(body) > maxBodySnippetBytes {
 		return string(body[:maxBodySnippetBytes])
@@ -1889,9 +1895,10 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					// 限流/过载冷却只对真实上游信号生效：客户端断连、内容拦截
 					// 的 Code 不是渠道侧限流证据，不该把账号打入冷却。
 					if result.Decision.Code == http.StatusTooManyRequests && !result.Decision.SkipFailureAccounting {
-						// B1-#1：优先解析上游 429 reset 头（x-codex-* / Retry-After /
-						// anthropic-ratelimit-unified-reset）；无可信证据时回落池级
-						// 基础冷却（每冷却事件读一次池配置，非每请求）。
+						// B1-#1: parse the upstream 429 reset headers first
+						// (x-codex-* / Retry-After / anthropic-ratelimit-unified-reset);
+						// with no trustworthy evidence, fall back to the pool-level
+						// base cooldown (one pool-config read per cooldown event, not per request).
 						cooldown := time.Now().Add(poolBaseCooldown(channel.PoolID))
 						if resetAt, ok := poolscheduler.Compute429Reset(poolPlatform, result.Decision.Headers, time.Now()); ok {
 							cooldown = resetAt
@@ -1903,8 +1910,17 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					// P0 调度健壮性：OpenAI 403 阈值禁用 / OAuth 401 临时禁用（对齐 sub2api ratelimit_service）。
 					// 客户端主动停止 / 内容拦截不是鉴权失败，显式排除，避免把健康账号
 					// 打成 IncrementAuthError + 临时禁用甚至账号级 SetError。
+					// B4-#12: the error-body snippet feeds the temp-unsched rule
+					// keyword matching (rules run after the 403-counter logic).
 					if !result.Decision.SkipFailureAccounting {
-						handlePoolAuthError(poolAccount, poolCredType, result.Decision.Code)
+						handlePoolAuthError(poolAccount, poolCredType, result.Decision.Code, result.Decision.BodySnippet)
+					}
+					// B4-#13: proxy-layer dial failures switch the account to its
+					// configured backup proxy (no-op without one — never an
+					// automatic direct connection). The guarded update in
+					// op/pool preserves the origin id against concurrent writers.
+					if isProxyLayerFailure(result.Err) {
+						maybeEnterProxyFallback(channel.PoolID, poolAccount.ID)
 					}
 				}
 

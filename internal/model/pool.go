@@ -24,29 +24,34 @@ func (AccountPool) TableName() string { return "account_pools" }
 
 // PoolAccount 号池内的单个上游账号。
 type PoolAccount struct {
-	ID               int        `json:"id" gorm:"primaryKey"`
-	PoolID           int        `json:"pool_id" gorm:"index;not null"`
-	Name             string     `json:"name" gorm:"size:128"`
-	Platform         string     `json:"platform" gorm:"type:varchar(32);not null;default:'custom'"`
-	Type             string     `json:"type" gorm:"type:varchar(32);not null;default:'apikey'"`
-	Models           string     `json:"models" gorm:"type:text"`      // 逗号分隔模型列表，空=不限
-	Credentials      string     `json:"credentials" gorm:"type:text"` // 加密存储（crypto.Encrypt）
-	BaseURL          string     `json:"base_url" gorm:"size:512"`
-	Quota            string     `json:"quota" gorm:"type:text"` // JSON 额度快照缓存（加密存储）
-	Status           string     `json:"status" gorm:"type:varchar(32);not null;default:'active'"`
-	Schedulable      bool       `json:"schedulable" gorm:"default:true"`
-	Priority         int        `json:"priority" gorm:"default:0"`
-	Concurrency      int        `json:"concurrency" gorm:"default:0"`
-	ProxyConfigID    *int       `json:"proxy_config_id"`
-	RateLimitResetAt int64      `json:"rate_limit_reset_at" gorm:"default:0"`
-	OverloadUntil    int64      `json:"overload_until" gorm:"default:0"`
-	TokenExpiresAt   int64      `json:"token_expires_at" gorm:"default:0"` // OAuth access_token 过期 unix 秒
-	TotalRequests    int64      `json:"total_requests" gorm:"default:0"`
-	TotalErrors      int64      `json:"total_errors" gorm:"default:0"`
-	TotalTokens      int64      `json:"total_tokens" gorm:"default:0"`
-	LastUsedAt       *time.Time `json:"last_used_at"`
-	ErrorMessage     string     `json:"error_message" gorm:"type:text"`
-	Notes            string     `json:"notes" gorm:"size:512"`
+	ID            int    `json:"id" gorm:"primaryKey"`
+	PoolID        int    `json:"pool_id" gorm:"index;not null"`
+	Name          string `json:"name" gorm:"size:128"`
+	Platform      string `json:"platform" gorm:"type:varchar(32);not null;default:'custom'"`
+	Type          string `json:"type" gorm:"type:varchar(32);not null;default:'apikey'"`
+	Models        string `json:"models" gorm:"type:text"`      // 逗号分隔模型列表，空=不限
+	Credentials   string `json:"credentials" gorm:"type:text"` // 加密存储（crypto.Encrypt）
+	BaseURL       string `json:"base_url" gorm:"size:512"`
+	Quota         string `json:"quota" gorm:"type:text"` // JSON 额度快照缓存（加密存储）
+	Status        string `json:"status" gorm:"type:varchar(32);not null;default:'active'"`
+	Schedulable   bool   `json:"schedulable" gorm:"default:true"`
+	Priority      int    `json:"priority" gorm:"default:0"`
+	Concurrency   int    `json:"concurrency" gorm:"default:0"`
+	ProxyConfigID *int   `json:"proxy_config_id"`
+	// ProxyFallbackOriginID non-nil means the account currently runs on its
+	// backup proxy; the value is the pre-fallback proxy_config_id (B4-#13,
+	// column added by migration 056, same semantics as sub2api
+	// ent/schema/account.go:93-96).
+	ProxyFallbackOriginID *int       `json:"proxy_fallback_origin_id"`
+	RateLimitResetAt      int64      `json:"rate_limit_reset_at" gorm:"default:0"`
+	OverloadUntil         int64      `json:"overload_until" gorm:"default:0"`
+	TokenExpiresAt        int64      `json:"token_expires_at" gorm:"default:0"` // OAuth access_token 过期 unix 秒
+	TotalRequests         int64      `json:"total_requests" gorm:"default:0"`
+	TotalErrors           int64      `json:"total_errors" gorm:"default:0"`
+	TotalTokens           int64      `json:"total_tokens" gorm:"default:0"`
+	LastUsedAt            *time.Time `json:"last_used_at"`
+	ErrorMessage          string     `json:"error_message" gorm:"type:text"`
+	Notes                 string     `json:"notes" gorm:"size:512"`
 
 	// P0 调度健壮性：临时不可调度（频控/鉴权失败，窗口截止前不参与调度）
 	TempUnschedUntil     int64  `json:"temp_unsched_until" gorm:"default:0"`
@@ -83,16 +88,29 @@ const (
 
 // 号池账号凭据类型常量
 const (
-	PoolTypeOAuth      = "oauth"
-	PoolTypeAPIKey     = "apikey"
-	PoolTypeCookie     = "cookie"
-	PoolTypeUpstream   = "upstream"
+	PoolTypeOAuth    = "oauth"
+	PoolTypeAPIKey   = "apikey"
+	PoolTypeCookie   = "cookie"
+	PoolTypeUpstream = "upstream"
+
+	// Deprecated: setup-token is a compatibility constant only (guide card
+	// B3-#6, route A). The frontend entry was removed — no test, outbound or
+	// refresh implementation ever existed. Historical rows still load and
+	// render through the unknown-type fallbacks.
 	PoolTypeSetupToken = "setup-token"
 )
 
 // OAuthTypeCodeAssist 是 PoolAccountExtra.OAuthType 的取值，标记 gemini OAuth
 // 账号走 Cloud Code Assist（cloudcode-pa）而非官方 Generative Language API。
 const OAuthTypeCodeAssist = "code_assist"
+
+// OAuthTypeAIStudio 是 PoolAccountExtra.OAuthType 的取值，标记 gemini OAuth 账号
+// 走官方 Generative Language API（AI Studio 模式，免 project_id）。
+const OAuthTypeAIStudio = "ai_studio"
+
+// OAuthTypeGoogleOne 是 PoolAccountExtra.OAuthType 的取值，标记 Google One 渠道
+// 授权的 gemini OAuth 账号。接受并存储该值；出站回落 code_assist 行为（不硬拒）。
+const OAuthTypeGoogleOne = "google_one"
 
 // PoolAccountExtra 平台附加字段（Extra JSON 反序列化后的结构）
 // 敏感键（含 key/token/secret/cookie 字样的 header value）在写库前单独脱敏存储，
@@ -112,7 +130,74 @@ type PoolAccountExtra struct {
 	// P2 刷新失败退避（写入 Extra JSON，不加列）
 	RefreshFailureCount  int   `json:"refresh_failure_count,omitempty"`
 	NextRefreshAllowedAt int64 `json:"next_refresh_allowed_at,omitempty"`
+	// B4-#13 backup proxy (Extra JSON extension, no extra column): when the
+	// account's proxy dial fails, traffic switches to this proxy config.
+	// Empty = not configured (default off; never an automatic direct
+	// connection). Per-account opt-in.
+	BackupProxyConfigID *int `json:"backup_proxy_config_id,omitempty"`
 }
+
+// PoolUnschedRule is a pool temp-unsched rule (B4-#12): when an upstream
+// failure matches, the account becomes temporarily unschedulable for
+// duration_minutes. The first enabled rule by sort_order wins; a rule matches
+// on status-code equality (when MatchStatusCode is set) or on a response-body
+// keyword hit (when MatchKeyword is set and the body is non-empty). With no
+// matching rule the historical default cooldown behavior is preserved.
+// The table is created explicitly by migration 055 (pool tables are not in
+// the main AutoMigrate list).
+type PoolUnschedRule struct {
+	ID   int    `json:"id" gorm:"primaryKey"`
+	Name string `json:"name" gorm:"size:128"`
+	// MatchStatusCode nil = do not match on status code; when set it must be
+	// within 400-599. Enabled carries no default tag for the same reason as
+	// PoolScheduledTest.Enabled (GORM zero-value + default tag INSERT trap).
+	MatchStatusCode *int      `json:"match_status_code"`
+	MatchKeyword    string    `json:"match_keyword" gorm:"size:256"` // empty = no keyword matching
+	DurationMinutes int       `json:"duration_minutes"`
+	Enabled         bool      `json:"enabled"`
+	SortOrder       int       `json:"sort_order" gorm:"default:0"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+func (PoolUnschedRule) TableName() string { return "pool_unsched_rules" }
+
+// PoolScheduledTest is a pool scheduled connectivity test plan (B4-#11).
+// A nil AccountID targets every account in the pool; a non-nil one targets a
+// single account. Pool tables are not part of the main AutoMigrate list —
+// the table is created explicitly by migration 054.
+type PoolScheduledTest struct {
+	ID     int `json:"id" gorm:"primaryKey"`
+	PoolID int `json:"pool_id" gorm:"index;not null"`
+	// AccountID nil = whole pool; non-nil = that account only.
+	// Enabled deliberately carries no default tag: GORM replaces zero-valued
+	// fields that carry a default tag with the DDL default on INSERT, which
+	// would turn a disabled-at-create plan into an enabled one.
+	AccountID   *int      `json:"account_id"`
+	CronExpr    string    `json:"cron_expr" gorm:"type:varchar(64);not null"`
+	Enabled     bool      `json:"enabled" gorm:"index:idx_pool_sched_enabled_next,priority:1"`
+	AutoRecover bool      `json:"auto_recover" gorm:"default:false"`
+	LastRunAt   int64     `json:"last_run_at" gorm:"default:0"`
+	NextRunAt   int64     `json:"next_run_at" gorm:"default:0;index:idx_pool_sched_enabled_next,priority:2"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func (PoolScheduledTest) TableName() string { return "pool_scheduled_tests" }
+
+// PoolScheduledTestResult is one execution outcome of a scheduled test plan
+// (history trimmed to the newest 100 rows per plan).
+type PoolScheduledTestResult struct {
+	ID         int64     `json:"id" gorm:"primaryKey"`
+	TestID     int       `json:"test_id" gorm:"index"`
+	AccountID  int       `json:"account_id"`
+	Success    bool      `json:"success"`
+	Detail     string    `json:"detail" gorm:"type:text"`
+	DurationMS int64     `json:"duration_ms"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+func (PoolScheduledTestResult) TableName() string { return "pool_scheduled_test_results" }
 
 // IsSchedulable 判断账号当前是否可参与调度。
 func (a *PoolAccount) IsSchedulable() bool {
@@ -286,14 +371,20 @@ func (c PoolCredential) EffectiveKeyWithExtra(platform string, extra PoolAccount
 			})
 			return string(b)
 		}
-		// gemini 平台的 OAuth 账号走 Cloud Code Assist：出站需要 project_id，
-		// 且必须与官方 API key 区分开（后者用 ?key=，前者用 Bearer）。
-		// 裸 access_token 承载不了这两点，故与 openai 一样透传 JSON。
+		// gemini 平台的 OAuth 账号走 OAuth 出站：出站需要 oauth_type（决定
+		// cloudcode-pa 还是官方 /v1beta 端点）与 project_id，且必须与官方
+		// API key 区分开（后者用 ?key=，前者用 Bearer）。
+		// B3-#5: 透传 extra.OAuthType（ai_studio/google_one 等）；空值回落
+		// code_assist，保持存量账号行为不变。
 		if platform == PoolPlatformGemini {
+			oauthType := extra.OAuthType
+			if oauthType == "" {
+				oauthType = OAuthTypeCodeAssist
+			}
 			b, _ := json.Marshal(map[string]string{
 				"access_token": c.AccessToken,
 				"project_id":   extra.ProjectID,
-				"oauth_type":   OAuthTypeCodeAssist,
+				"oauth_type":   oauthType,
 			})
 			return string(b)
 		}

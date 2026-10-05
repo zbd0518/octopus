@@ -22,6 +22,7 @@ test('createAlertRuleDraft returns expected defaults for a new rule', () => {
         scope_api_key_id: 0,
         scope_group_id: 0,
         scope_model_name: '',
+        scope_pool_account_id: 0,
     });
 });
 
@@ -41,6 +42,7 @@ test('applyAlertRuleDraft updates editable fields and preserves hidden metadata'
             scope_api_key_id: 9,
             scope_group_id: 3,
             scope_model_name: 'gpt-4o',
+            scope_pool_account_id: 21,
         },
         {
             name: 'new',
@@ -54,6 +56,7 @@ test('applyAlertRuleDraft updates editable fields and preserves hidden metadata'
             scope_api_key_id: 2,
             scope_group_id: 5,
             scope_model_name: 'claude-3',
+            scope_pool_account_id: 34,
         }
     );
 
@@ -71,6 +74,7 @@ test('applyAlertRuleDraft updates editable fields and preserves hidden metadata'
         scope_api_key_id: 2,
         scope_group_id: 5,
         scope_model_name: 'claude-3',
+        scope_pool_account_id: 34,
     });
 });
 

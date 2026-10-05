@@ -1020,7 +1020,8 @@
       "cost_threshold": "成本阈值",
       "error_rate": "错误率",
       "quota_exceeded": "额度耗尽",
-      "channel_down": "渠道离线"
+      "channel_down": "渠道离线",
+      "pool_account_error": "号池账号出错"
     },
     "channelTypes": {
       "webhook": "Webhook",
@@ -1055,13 +1056,19 @@
           "cost_threshold": "当日累计费用超过该金额时触发告警（元）",
           "error_rate": "滑动窗口内错误率超过该百分比时，对作用域目标触发告警",
           "quota_exceeded": "配额使用率超过该百分比时触发告警",
-          "channel_down": "渠道连续不可用次数超过该值时触发告警"
+          "channel_down": "渠道连续不可用次数超过该值时触发告警",
+          "pool_account_error": "当任一（或指定）号池账号处于 error 状态时触发；账号恢复后自动解除"
         },
         "window": "窗口（秒）",
         "windowPlaceholder": "滑动窗口秒数",
         "windowHint": "用于计算条件的滑动窗口时长；仅对错误率告警生效",
         "scopeGroupId": "作用域分组 ID",
-        "scopeModelName": "作用域模型名称"
+        "scopeModelName": "作用域模型名称",
+        "scopePoolAccountId": "作用域号池账号",
+        "selectPool": "选择号池…",
+        "scopeAnyPoolAccount": "所有号池账号（任一出错即触发）",
+        "scopeChannelId": "作用域渠道 ID",
+        "scopeApiKeyId": "作用域 API Key ID"
       }
     },
     "channels": {
@@ -1400,7 +1407,9 @@
       "schedulerWeightReset": "调度权重：重置就绪",
       "schedulerWeightResetHint": "默认 0 关闭。大于 0 时，额度/重置窗口更快到来的账号更优先，按 7 天地平线归一化。",
       "schedulerWeightQuota": "调度权重：额度余量",
-      "schedulerWeightQuotaHint": "默认 0 关闭。大于 0 时，剩余额度占比更高的账号更优先，需要已同步额度快照。"
+      "schedulerWeightQuotaHint": "默认 0 关闭。大于 0 时，剩余额度占比更高的账号更优先，需要已同步额度快照。",
+      "geminiClientSecret": "Gemini OAuth 客户端密钥",
+      "geminiClientSecretHint": "覆盖内置 Gemini CLI OAuth 客户端的 client secret。留空时依次回退：GEMINI_CLI_OAUTH_CLIENT_SECRET 环境变量 → 内置公开凭证。"
     },
     "proxyPool": {
       "title": "代理池"
@@ -3933,6 +3942,7 @@
       "tierId": "Tier ID",
       "oauthType": "OAuth Type",
       "oauthTypeNone": "无",
+      "oauthTypeHint": "选择 gemini OAuth 出站模式。code_assist 走 Cloud Code Assist（需探测 project）；ai_studio 走官方 Generative Language API，免 project；google_one 回落 code_assist 行为。",
       "authMode": "Auth Mode",
       "authModeDefault": "默认",
       "tlsFingerprint": "TLS 指纹",
@@ -4045,6 +4055,44 @@
       "updated": "号池已更新",
       "refresh": "刷新"
     },
+    "scheduledTests": "定时测试",
+    "scheduledTestsHint": "按计划对号池账号做连通性测试，测试通过可自动恢复账号。",
+    "schedTestCreate": "新建计划",
+    "schedTestCron": "Cron 表达式",
+    "schedTestAutoRecover": "成功后自动恢复",
+    "schedTestScope": "测试范围",
+    "schedTestScopePool": "整池",
+    "schedTestLastRun": "上次执行",
+    "schedTestNextRun": "下次执行",
+    "schedTestResults": "测试结果",
+    "schedTestNoResults": "暂无测试结果",
+    "schedTestCreated": "计划已创建",
+    "schedTestUpdated": "计划已更新",
+    "schedTestDeleted": "计划已删除",
+    "schedTestInvalidCron": "不支持的 Cron 表达式（例如 */30 * * * * 或 0 9,21 * * *）",
+    "schedTestEnabled": "启用",
+    "schedTestNoPlans": "暂无定时测试计划",
+    "unschedRules": "临时禁用规则",
+    "unschedRulesHint": "上游失败命中规则时，账号将按规则时长被临时禁用调度。规则按顺序匹配，命中第一条即生效。",
+    "unschedRuleCreate": "新建规则",
+    "unschedRuleEdit": "编辑",
+    "unschedRuleName": "规则名称",
+    "unschedRuleStatusCode": "状态码（如 529）",
+    "unschedRuleKeyword": "响应体关键词（可选）",
+    "unschedRuleDuration": "时长（分钟）",
+    "unschedRuleSortOrder": "排序",
+    "unschedRuleEnabled": "启用",
+    "unschedRuleCreated": "规则已创建",
+    "unschedRuleUpdated": "规则已更新",
+    "unschedRuleDeleted": "规则已删除",
+    "unschedRuleNoRules": "暂无规则（失败保持默认 10 分钟冷却）",
+    "unschedRuleInvalidInput": "规则需要填写 400-599 的状态码或响应体关键词，且时长必须为正。",
+    "backupProxy": "备用代理（失败时切换）",
+    "backupProxyHint": "当账号代理拨号失败时，出口自动切换到该备用代理；原始代理会被记录，可在账号操作中恢复。",
+    "backupProxyNone": "不使用备用代理",
+    "proxyFallbackBadge": "代理已回退",
+    "proxyFallbackRestored": "已恢复原始代理",
+    "restoreProxy": "恢复原始代理",
     "batchDeleteConfirm": "确定删除选中的 {count} 个账号吗？此操作不可撤销。",
     "batchDeleteResult": "已删除 {count} 个账号",
     "clearAccounts": "一键清空",

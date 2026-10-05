@@ -9,9 +9,9 @@ import (
 	"github.com/lingyuins/octopus/internal/op/pool"
 )
 
-// resetAuthErrorsForTest 清空全局计数器（测试隔离）。
-// B1-#7 起 IncrementAuthError 首次未命中会从 DB 镜像懒加载播种，
-// 因此测试需要共享 DB 先就绪。
+// resetAuthErrorsForTest clears the global counter (test isolation).
+// Since B1-#7, IncrementAuthError lazy-seeds from the DB mirror on first miss,
+// so tests need the shared DB to be ready first.
 func resetAuthErrorsForTest(t *testing.T) {
 	t.Helper()
 	ensureSchedulerSharedDB(t)
@@ -140,8 +140,9 @@ func TestAuthErrorCounter_Concurrent(t *testing.T) {
 	}
 }
 
-// TestAuthErrorCounter_LazyLoadSeedsFromMirror：进程重启（内存清空）后，
-// 首次计数从 DB 镜像继承窗口内计数（B1-#7）。
+// TestAuthErrorCounter_LazyLoadSeedsFromMirror: after a process restart
+// (memory cleared), the first count inherits the in-window count from the DB
+// mirror (B1-#7).
 func TestAuthErrorCounter_LazyLoadSeedsFromMirror(t *testing.T) {
 	resetAuthErrorsForTest(t)
 	poolID, _ := setupSchedulerPoolDB(t)
@@ -156,17 +157,18 @@ func TestAuthErrorCounter_LazyLoadSeedsFromMirror(t *testing.T) {
 		t.Fatalf("seed mirror: %v", err)
 	}
 
-	// 首次未命中 → 播种 2 + 本次 1 = 3（恰好达到阈值 3）。
+	// First miss -> seeded 2 + this one 1 = 3 (exactly the threshold).
 	count, exceeded := IncrementAuthError(poolID, accountID)
 	if count != 3 || !exceeded {
 		t.Fatalf("lazy-load count=%d exceeded=%v want 3/true", count, exceeded)
 	}
-	// 真实调用方（handlePoolAuthError）在增量后同步回写镜像。
+	// The real caller (handlePoolAuthError) mirrors back synchronously after the increment.
 	if err := ReportAuthErrorCount(poolID, accountID, count); err != nil {
 		t.Fatalf("report mirror: %v", err)
 	}
 
-	// 模拟进程重启：清空内存后再次计数应继续继承（3+1=4）。
+	// Simulate a process restart: after clearing memory, counting again should keep
+	// inheriting (3+1=4).
 	globalAuthErrors.Delete(authErrorKey(poolID, accountID))
 	count, _ = IncrementAuthError(poolID, accountID)
 	if count != 4 {
@@ -174,8 +176,8 @@ func TestAuthErrorCounter_LazyLoadSeedsFromMirror(t *testing.T) {
 	}
 }
 
-// TestAuthErrorCounter_LazyLoadExpiredMirrorRestarts：镜像窗口已过期 →
-// 不继承，全新窗口从 1 起算。
+// TestAuthErrorCounter_LazyLoadExpiredMirrorRestarts: an expired mirror window
+// is not inherited; a fresh window starts from 1.
 func TestAuthErrorCounter_LazyLoadExpiredMirrorRestarts(t *testing.T) {
 	resetAuthErrorsForTest(t)
 	poolID, _ := setupSchedulerPoolDB(t)
@@ -195,7 +197,8 @@ func TestAuthErrorCounter_LazyLoadExpiredMirrorRestarts(t *testing.T) {
 	}
 }
 
-// TestReportAuthErrorCount_WritesWindowMirror：镜像写入同时携带计数与窗口起点。
+// TestReportAuthErrorCount_WritesWindowMirror: the mirror write carries both the
+// count and the window start.
 func TestReportAuthErrorCount_WritesWindowMirror(t *testing.T) {
 	resetAuthErrorsForTest(t)
 	poolID, _ := setupSchedulerPoolDB(t)
@@ -216,8 +219,8 @@ func TestReportAuthErrorCount_WritesWindowMirror(t *testing.T) {
 	}
 }
 
-// TestPurgeStaleAuthErrors_ZeroesMirror：驱逐过期内存条目时 best-effort
-// 清零 DB 镜像，避免面板残留僵尸计数（B1-#7）。
+// TestPurgeStaleAuthErrors_ZeroesMirror: evicting an expired in-memory entry
+// zeroes the DB mirror best-effort so the panel keeps no zombie count (B1-#7).
 func TestPurgeStaleAuthErrors_ZeroesMirror(t *testing.T) {
 	resetAuthErrorsForTest(t)
 	poolID, _ := setupSchedulerPoolDB(t)
@@ -246,18 +249,19 @@ func TestPurgeStaleAuthErrors_ZeroesMirror(t *testing.T) {
 	}
 }
 
-// TestApplyReportToDB_DelayedSuccessKeepsNewEvidence：延迟到达的成功任务
-// 不得擦掉快照之后新产生的镜像证据（B1-#7 防擦除措施）。
+// TestApplyReportToDB_DelayedSuccessKeepsNewEvidence: a delayed success job must
+// not erase mirror evidence produced after its snapshot (B1-#7 anti-erasure).
 func TestApplyReportToDB_DelayedSuccessKeepsNewEvidence(t *testing.T) {
 	resetAuthErrorsForTest(t)
 	poolID, _ := setupSchedulerPoolDB(t)
 	accountID := addAccount(t, poolID, &model.PoolAccount{Name: "auth-evidence"})
 
 	oldWindow := time.Now().Add(-10 * time.Minute).Unix()
-	newEvidenceStart := time.Now().Unix() // ResetAuthError 之后的镜像写入携带更新的 window_start
+	newEvidenceStart := time.Now().Unix() // mirror writes after ResetAuthError carry the updated window_start
 
-	// 场景 1：成功后（快照 window=oldWindow）新 403 写入镜像 {1, newEvidenceStart}。
-	// 延迟成功任务按快照 (1, oldWindow) 清除 → 新证据更"新"，必须保留。
+	// Scenario 1: after the success (snapshot window=oldWindow) a new 403 mirrors
+	// {1, newEvidenceStart}. The delayed success job clears per snapshot (1,
+	// oldWindow) -> the newer evidence must survive.
 	if err := pool.UpdateAccount(poolID, accountID, map[string]interface{}{
 		"auth_error_count":        1,
 		"auth_error_window_start": newEvidenceStart,
@@ -273,7 +277,8 @@ func TestApplyReportToDB_DelayedSuccessKeepsNewEvidence(t *testing.T) {
 		t.Fatalf("newer evidence must survive delayed success, got %d/%d", acct.AuthErrorCount, acct.AuthErrorWindowStart)
 	}
 
-	// 场景 2：同窗口内新 403 使计数增长（{3, oldWindow}），快照 count=1 → 保留。
+	// Scenario 2: a new 403 in the same window grows the count ({3, oldWindow});
+	// snapshot count=1 -> keep.
 	if err := pool.UpdateAccount(poolID, accountID, map[string]interface{}{
 		"auth_error_count":        3,
 		"auth_error_window_start": oldWindow,
@@ -289,7 +294,7 @@ func TestApplyReportToDB_DelayedSuccessKeepsNewEvidence(t *testing.T) {
 		t.Fatalf("grown evidence must survive, got %d", acct.AuthErrorCount)
 	}
 
-	// 场景 3：无新证据（镜像 == 快照）→ 正常清零。
+	// Scenario 3: no new evidence (mirror == snapshot) -> cleared normally.
 	if err := pool.UpdateAccount(poolID, accountID, map[string]interface{}{
 		"auth_error_count":        1,
 		"auth_error_window_start": oldWindow,

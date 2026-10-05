@@ -16,6 +16,7 @@ import (
 	"github.com/lingyuins/octopus/internal/conf"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/pool"
+	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/pkg/geminicli"
 	"github.com/lingyuins/octopus/internal/pkg/oauth"
 	"github.com/lingyuins/octopus/internal/pkg/openai"
@@ -136,6 +137,14 @@ func oauthInitiate(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"auth_url": authURL, "session_id": sessionID})
 
 	case model.PoolPlatformGemini:
+		// B3-#5: mode selects the OAuth flavor (code_assist default, ai_studio,
+		// google_one). It decides the authorize scopes now and the stored
+		// extra.oauth_type later (callback).
+		mode, err := normalizeGeminiModeParam(c.Query("mode"), c.Query("oauth_type"))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		state, err := geminicli.GenerateState()
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "generate state failed"})
@@ -157,9 +166,16 @@ func oauthInitiate(c *gin.Context) {
 			CodeVerifier: verifier,
 			RedirectURI:  redirectURI,
 			PoolID:       poolID,
+			OAuthType:    mode,
 			CreatedAt:    time.Now(),
 		})
-		authURL, err := geminicli.BuildAuthorizationURL(geminicli.OAuthConfig{}, state, challenge, redirectURI)
+		// B3-#5: the settings-level client secret override is resolved here and
+		// passed via cfg.ClientSecret; EffectiveOAuthConfig then falls back
+		// env -> built-in public credential (never fails on the built-in path).
+		authURL, err := geminicli.BuildAuthorizationURL(geminicli.OAuthConfig{
+			ClientSecret: geminiSettingsClientSecret(),
+			Scopes:       geminiScopesForMode(mode),
+		}, state, challenge, redirectURI)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -214,6 +230,18 @@ func oauthCallback(c *gin.Context) {
 	sessionID := c.Query("session_id")
 	platform := c.Query("platform")
 
+	// B3-#5: Google's redirect only carries code+state back to the callback
+	// URL — session_id/platform never arrive for real provider callbacks.
+	// When platform is missing, resolve it (and the session id) by looking up
+	// the gemini session store via state. The session_id query parameter (when
+	// present) still takes precedence for backward compatibility.
+	if platform == "" && sessionID == "" {
+		if _, id, ok := geminiSessions.GetByState(state); ok {
+			platform = model.PoolPlatformGemini
+			sessionID = id
+		}
+	}
+
 	if code == "" || state == "" {
 		oauthRedirectResult(c, false, 0, "missing code or state")
 		return
@@ -223,6 +251,7 @@ func oauthCallback(c *gin.Context) {
 	var credJSON string
 	var expiresAt int64
 	var err error
+	var geminiMode string
 
 	switch platform {
 	case model.PoolPlatformAnthropic:
@@ -230,7 +259,7 @@ func oauthCallback(c *gin.Context) {
 	case model.PoolPlatformOpenAI:
 		poolID, credJSON, expiresAt, err = handleOpenAICallback(c.Request.Context(), sessionID, state, code)
 	case model.PoolPlatformGemini:
-		poolID, credJSON, expiresAt, err = handleGeminiCallback(c.Request.Context(), sessionID, state, code)
+		poolID, credJSON, expiresAt, geminiMode, err = handleGeminiCallback(c.Request.Context(), sessionID, state, code)
 	case model.PoolPlatformGrok:
 		poolID, credJSON, expiresAt, err = handleGrokCallback(c.Request.Context(), sessionID, state, code)
 	default:
@@ -252,12 +281,21 @@ func oauthCallback(c *gin.Context) {
 		oauthRedirectResult(c, false, poolID, "dedupe lookup failed: "+err.Error())
 		return
 	}
-	// gemini OAuth 必须记录 code_assist 标记与 project id，否则出站会退化成
+	// gemini OAuth 必须记录 oauth_type 与 project id，否则出站会退化成
 	// 「把 OAuth token 当官方 API key 的 ?key= 参数」，必然 401/403。
+	// B3-#5: ai_studio 账号免 project 探测（官方端点不需要 project）；
+	// code_assist/google_one 保留探测（缺 project_id 出站必然 401/403）。
 	var geminiExtra *model.PoolAccountExtra
 	if platform == model.PoolPlatformGemini {
-		e := discoverGeminiExtra(c.Request.Context(), cred.AccessToken)
-		geminiExtra = &e
+		if geminiMode == model.OAuthTypeAIStudio {
+			geminiExtra = &model.PoolAccountExtra{OAuthType: model.OAuthTypeAIStudio}
+		} else {
+			e := discoverGeminiExtra(c.Request.Context(), cred.AccessToken)
+			if geminiMode != "" {
+				e.OAuthType = geminiMode
+			}
+			geminiExtra = &e
+		}
 	}
 
 	if existingID > 0 {
@@ -467,18 +505,28 @@ func handleOpenAICallback(ctx context.Context, sessionID, state, code string) (i
 	return session.PoolID, string(credBytes), expiresAt, nil
 }
 
-func handleGeminiCallback(ctx context.Context, sessionID, state, code string) (int, string, int64, error) {
+// handleGeminiCallback 处理 Gemini OAuth 回调：校验 session，code exchange。
+// 返回值多带 session.OAuthType（B3-#5 授权模式），供 callback 组装账号 extra。
+// sessionID 为空（或已失效）时按 state 回查会话（Google 回调只回 code+state）。
+func handleGeminiCallback(ctx context.Context, sessionID, state, code string) (int, string, int64, string, error) {
 	session, ok := geminiSessions.Get(sessionID)
 	if !ok {
-		return 0, "", 0, fmt.Errorf("session expired")
+		if s, id, found := geminiSessions.GetByState(state); found {
+			session, sessionID, ok = s, id, true
+		}
+	}
+	if !ok {
+		return 0, "", 0, "", fmt.Errorf("session expired")
 	}
 	defer geminiSessions.Delete(sessionID)
 	if session.State != state {
-		return 0, "", 0, fmt.Errorf("state mismatch")
+		return 0, "", 0, "", fmt.Errorf("state mismatch")
 	}
-	effective, err := geminicli.EffectiveOAuthConfig(geminicli.OAuthConfig{})
+	effective, err := geminicli.EffectiveOAuthConfig(geminicli.OAuthConfig{
+		ClientSecret: geminiSettingsClientSecret(),
+	})
 	if err != nil {
-		return 0, "", 0, err
+		return 0, "", 0, "", err
 	}
 	tok, err := exchangeCode(ctx, "https://oauth2.googleapis.com/token", url.Values{
 		"grant_type":    {"authorization_code"},
@@ -489,7 +537,7 @@ func handleGeminiCallback(ctx context.Context, sessionID, state, code string) (i
 		"redirect_uri":  {session.RedirectURI},
 	})
 	if err != nil {
-		return 0, "", 0, err
+		return 0, "", 0, "", err
 	}
 	cred := model.PoolCredential{
 		Type:         model.PoolTypeOAuth,
@@ -499,7 +547,46 @@ func handleGeminiCallback(ctx context.Context, sessionID, state, code string) (i
 	}
 	credBytes, _ := json.Marshal(cred)
 	expiresAt := time.Now().Unix() + tok.ExpiresIn
-	return session.PoolID, string(credBytes), expiresAt, nil
+	return session.PoolID, string(credBytes), expiresAt, session.OAuthType, nil
+}
+
+// normalizeGeminiModeParam canonicalizes the initiate mode parameter
+// (B3-#5). Accepts both "mode" and "oauth_type" spellings; an empty value
+// means the default code_assist mode. Unknown explicit values are rejected
+// so a typo cannot silently authorize with the wrong scope set.
+func normalizeGeminiModeParam(mode, oauthType string) (string, error) {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		mode = strings.TrimSpace(oauthType)
+	}
+	if mode == "" {
+		return model.OAuthTypeCodeAssist, nil
+	}
+	if !geminicli.IsKnownOAuthType(mode) {
+		return "", fmt.Errorf("unsupported gemini oauth mode: %s", mode)
+	}
+	return mode, nil
+}
+
+// geminiScopesForMode returns the authorize scope set for the given mode:
+// ai_studio uses the Generative Language scope set, everything else uses the
+// Code Assist scopes (google_one included — it is a code-assist-shaped mode).
+func geminiScopesForMode(mode string) string {
+	if mode == model.OAuthTypeAIStudio {
+		return geminicli.DefaultAIStudioScopes
+	}
+	return geminicli.DefaultCodeAssistScopes
+}
+
+// geminiSettingsClientSecret resolves the settings-level Gemini OAuth client
+// secret override (pool_gemini_client_secret, B3-#5). Empty on any error —
+// EffectiveOAuthConfig's env -> built-in fallback chain takes over.
+func geminiSettingsClientSecret() string {
+	v, err := setting.GetString(model.SettingKeyPoolGeminiClientSecret)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(v)
 }
 
 // discoverGeminiExtra 探测 gemini OAuth 账号的 Cloud Code Assist project，

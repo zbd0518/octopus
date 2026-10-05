@@ -6,6 +6,7 @@ import (
 
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/utils/crypto"
+	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
 // EncryptCredentials 加密凭据 JSON 字符串。空字符串原样返回。
@@ -18,6 +19,9 @@ func EncryptCredentials(raw string) string {
 	if err != nil {
 		// crypto 未初始化或加密失败：保持明文，避免阻断写入。
 		// 首次 UpdateAccount（crypto 已初始化）时会加密落盘。
+		// B2-#2: keep the compatibility fallback but make it observable —
+		// plaintext credentials at rest should never happen silently.
+		log.Warnf("pool: EncryptCredentials storing credentials as plaintext (crypto unavailable): %v", err)
 		return raw
 	}
 	return enc

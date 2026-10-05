@@ -28,13 +28,30 @@ const (
 	// Code Assist 默认 scopes
 	DefaultCodeAssistScopes = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile"
 
+	// DefaultAIStudioScopes is the scope set for AI Studio mode (official
+	// Generative Language API with OAuth, no project_id required).
+	// Ported from sub2api geminicli/constants.go.
+	DefaultAIStudioScopes = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/generative-language.retriever"
+
 	// 内置 Gemini CLI 公开 OAuth 客户端凭据。
 	GeminiCLIOAuthClientID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
+
+	// GeminiCLIOAuthClientSecret is the public OAuth client secret paired with
+	// GeminiCLIOAuthClientID. It is a public credential embedded in Google's
+	// own Gemini CLI distribution (mirrors sub2api geminicli/constants.go).
+	// B3-#5: with this built-in fallback, refresh/authorize work with zero
+	// configuration; operators can still override it via the
+	// pool_gemini_client_secret setting or the environment variable below.
+	GeminiCLIOAuthClientSecret = "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"
 
 	GeminiCLIOAuthClientSecretEnv = "GEMINI_CLI_OAUTH_CLIENT_SECRET"
 
 	SessionTTL = 30 * time.Minute
 )
+
+// envGetter reads environment variables (os.Getenv wrapper, overridable in
+// tests). Mirrors the pooltokenrefresh envGetter pattern.
+var envGetter = os.Getenv
 
 // OAuthConfig Gemini OAuth 客户端配置。
 type OAuthConfig struct {
@@ -49,6 +66,7 @@ type OAuthSession struct {
 	CodeVerifier string    `json:"code_verifier"`
 	RedirectURI  string    `json:"redirect_uri"`
 	PoolID       int       `json:"pool_id,omitempty"`
+	OAuthType    string    `json:"oauth_type,omitempty"` // B3-#5: code_assist / ai_studio / google_one
 	CreatedAt    time.Time `json:"created_at"`
 }
 
@@ -90,6 +108,29 @@ func (s *SessionStore) Get(sessionID string) (*OAuthSession, bool) {
 		return nil, false
 	}
 	return session, true
+}
+
+// GetByState returns the session matching an OAuth state value.
+//
+// B3-#5: Google's redirect only carries code+state back to the callback URL,
+// so the callback must be able to locate the session by state instead of the
+// session_id query parameter. Expired sessions are treated as not found.
+func (s *SessionStore) GetByState(state string) (*OAuthSession, string, bool) {
+	if state == "" {
+		return nil, "", false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for id, session := range s.sessions {
+		if session.State != state {
+			continue
+		}
+		if time.Since(session.CreatedAt) > SessionTTL {
+			return nil, "", false
+		}
+		return session, id, true
+	}
+	return nil, "", false
 }
 
 func (s *SessionStore) Delete(sessionID string) {
@@ -159,21 +200,27 @@ func base64URLEncode(data []byte) string {
 }
 
 // EffectiveOAuthConfig 返回生效的 OAuth 配置。
-// 未提供 client_id/secret 时回退内置 Gemini CLI 客户端（secret 需环境变量）。
+//
+// B3-#5: client secret 走三级回退链——调用方解析好的 settings 值（cfg.ClientSecret）
+// → 环境变量（GeminiCLIOAuthClientSecretEnv）→ 内置公开凭证。内置客户端路径
+// （client_id 为空）永不为缺 secret 报错；自定义 client_id 仍要求显式提供
+// secret（内置公开 secret 不得配自定义 client_id，与 sub2api 策略一致）。
 func EffectiveOAuthConfig(cfg OAuthConfig) (OAuthConfig, error) {
 	effective := OAuthConfig{
 		ClientID:     strings.TrimSpace(cfg.ClientID),
 		ClientSecret: strings.TrimSpace(cfg.ClientSecret),
 		Scopes:       strings.TrimSpace(cfg.Scopes),
 	}
-	if effective.ClientID == "" && effective.ClientSecret == "" {
-		secret := strings.TrimSpace(os.Getenv(GeminiCLIOAuthClientSecretEnv))
-		if secret == "" {
-			return OAuthConfig{}, fmt.Errorf("built-in Gemini CLI OAuth client_secret is not configured; set %s", GeminiCLIOAuthClientSecretEnv)
-		}
+	if effective.ClientID == "" {
+		// 内置 Gemini CLI 客户端：secret 按三级回退链解析，兜底内置公开凭证。
 		effective.ClientID = GeminiCLIOAuthClientID
-		effective.ClientSecret = secret
-	} else if effective.ClientID == "" || effective.ClientSecret == "" {
+		if effective.ClientSecret == "" {
+			effective.ClientSecret = strings.TrimSpace(envGetter(GeminiCLIOAuthClientSecretEnv))
+		}
+		if effective.ClientSecret == "" {
+			effective.ClientSecret = GeminiCLIOAuthClientSecret
+		}
+	} else if effective.ClientSecret == "" {
 		return OAuthConfig{}, fmt.Errorf("OAuth client not configured: set both client_id and client_secret (or leave both empty for built-in client)")
 	}
 	if effective.Scopes == "" {

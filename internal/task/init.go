@@ -18,6 +18,7 @@ import (
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/op/stats"
 	"github.com/lingyuins/octopus/internal/poolhealthcheck"
+	"github.com/lingyuins/octopus/internal/poolscheduledtest"
 	"github.com/lingyuins/octopus/internal/pooltokenrefresh"
 	"github.com/lingyuins/octopus/internal/price"
 	"github.com/lingyuins/octopus/internal/relay"
@@ -42,6 +43,7 @@ const (
 	TaskWebDAVBackup      = "webdav_backup"
 	TaskReportGenerate    = "report_generate"
 	TaskErrorLogCleanup   = "error_log_cleanup"
+	TaskPoolScheduledTest = "pool_scheduled_test"
 )
 
 func statsSaveTask() {
@@ -296,6 +298,12 @@ func Init() {
 
 	// 号池账号健康巡检（走 pool.TestAccount 主动探测，累计失败到阈值后 SetError）。
 	Register(string(model.SettingKeyPoolHealthCheckInterval), settingInterval(model.SettingKeyPoolHealthCheckInterval, time.Minute, 30*time.Minute), false, poolhealthcheck.Run)
+
+	// Pool scheduled test plans (B4-#11): fixed 1-minute tick; the runner
+	// only executes plans whose next_run_at has arrived, probes with 4-way
+	// concurrency and recovers accounts whose test passed when auto_recover
+	// is enabled on the plan.
+	Register(TaskPoolScheduledTest, time.Minute, false, poolscheduledtest.Run)
 
 	// 额度监控自动刷新：tick 固定 1 分钟，任务内部按单个覆盖/全局默认间隔到点刷新。
 	Register(TaskPlanProviderAutoRefresh, 1*time.Minute, false, PlanProviderAutoRefreshTask)

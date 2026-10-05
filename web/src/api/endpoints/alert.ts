@@ -17,6 +17,7 @@ export interface AlertRule {
     scope_api_key_id?: number;
     scope_group_id?: number;
     scope_model_name?: string;
+    scope_pool_account_id?: number;
 }
 
 export interface AlertNotifChannel {

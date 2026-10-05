@@ -22,6 +22,8 @@ import (
 
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/pool"
+	"github.com/lingyuins/octopus/internal/op/setting"
+	"github.com/lingyuins/octopus/internal/pkg/geminicli"
 	"github.com/lingyuins/octopus/internal/relay/poolscheduler"
 	"github.com/lingyuins/octopus/internal/utils/httpx"
 	"github.com/lingyuins/octopus/internal/utils/log"
@@ -47,19 +49,22 @@ const (
 	failureBackoffMax  = 2 * time.Hour
 )
 
-// refreshUnschedTrigger 是刷新在途期间写入 temp_unsched_reason 的 trigger 标记
-//（B1-#4：token 刷新进行中临时不可调度，留出刷新窗口）。
+// refreshUnschedTrigger is the trigger tag written into temp_unsched_reason
+// while a refresh is in flight (B1-#4: temp-unschedule during token refresh to
+// reserve a refresh window).
 const refreshUnschedTrigger = "token_refresh_inflight"
 
-// refreshUnschedBlockState 刷新在途块的 reason JSON 形状。与 relay 包私有
-// tempUnschedState（status_code/trigger/at，无 ruleID）保持兼容——只携带
-// 刷新语义所需的 trigger + at；条件清除按 "trigger" 字段匹配。
+// refreshUnschedBlockState is the reason JSON shape of the in-flight refresh
+// block. It stays compatible with the relay package's private tempUnschedState
+// (status_code/trigger/at, no ruleID) — it only carries the trigger + at fields
+// the refresh semantics need; the conditional clear matches on "trigger".
 type refreshUnschedBlockState struct {
 	Trigger string `json:"trigger"`
 	At      int64  `json:"at"`
 }
 
-// refreshByPlatformFunc 允许测试替换平台刷新实现（观察刷新在途窗口）。
+// refreshByPlatformFunc lets tests replace the per-platform refresh
+// implementation (to observe the in-flight refresh window).
 var refreshByPlatformFunc = refreshByPlatform
 
 func init() {
@@ -93,33 +98,72 @@ func refreshAccountImpl(ctx context.Context, poolID, accountID int) error {
 	if acct.Type != model.PoolTypeOAuth {
 		return fmt.Errorf("account %d is not oauth type", accountID)
 	}
+	// B2-#2: snapshot the raw credentials ciphertext BEFORE decryption mutates
+	// acct.Credentials in place. This snapshot is the CAS expectation of the
+	// success write-back: the refresh result is persisted only when the stored
+	// blob is still the one this attempt loaded, so a credential rotated
+	// concurrently (e.g. by another instance) is never overwritten with a
+	// stale token.
+	priorCredentials := acct.Credentials
 	// 解密凭据。
 	_ = pool.DecryptAccountCredentials(acct)
 	cred := model.ParsePoolCredential(acct.Credentials)
 	if cred.RefreshToken == "" {
-		// 无 refresh_token 的早返回发生在设块之前，不会留下孤儿块。
+		// The no-refresh_token early return happens before the block is set, so
+		// no orphan block is left behind.
 		return fmt.Errorf("account %d has no refresh_token", accountID)
 	}
 
-	// B1-#4：刷新在途期间临时不可调度（refreshLeadTime + 1min 余量）。
-	// 仅在账号当前未被临时禁用时设块——避免覆盖并发的 401 窗口 / 403 冷却 /
-	// 管理员手动块（那类块应在自身到期前保持语义）。
-	if !acct.IsTempUnsched() {
-		now := time.Now()
-		b, _ := json.Marshal(refreshUnschedBlockState{Trigger: refreshUnschedTrigger, At: now.Unix()})
-		poolscheduler.SetTempUnsched(poolID, accountID, now.Add(refreshLeadTime+time.Minute), string(b))
+	// B1-#4: temporarily unschedule the account while the refresh is in flight
+	// (refreshLeadTime + 1min margin). The block is acquired with a
+	// DB-conditional update (only rows whose temp_unsched_until has expired or
+	// is unset match), so a concurrent block created after the account snapshot
+	// above — 401 window / 403 cooldown / manual flag — is never overwritten;
+	// a snapshot IsTempUnsched precheck cannot close that race.
+	acquireAt := time.Now()
+	b, _ := json.Marshal(refreshUnschedBlockState{Trigger: refreshUnschedTrigger, At: acquireAt.Unix()})
+	acquired, acqErr := poolscheduler.AcquireTempUnschedIfFree(poolID, accountID, acquireAt.Add(refreshLeadTime+time.Minute), string(b))
+	if acqErr != nil {
+		log.Warnf("pooltokenrefresh: acquire temp-unsched block %d/%d failed: %v", poolID, accountID, acqErr)
+		acquired = false
 	}
-	// 条件清除：仅当 reason 仍是本流程写入的 token_refresh_inflight 时才清，
-	// defer 保证成功/失败路径都会清；不会擦掉并发 401/403/手动块。
-	defer func() {
-		if _, err := poolscheduler.ClearTempUnschedIfTrigger(poolID, accountID, refreshUnschedTrigger); err != nil {
-			log.Warnf("pooltokenrefresh: clear temp-unsched block %d/%d failed: %v", poolID, accountID, err)
-		}
-	}()
+	// Owner-precise cleanup: only registered when this flow actually acquired
+	// the block, and the trigger-conditional clear only fires while the stored
+	// reason still carries token_refresh_inflight — concurrent 401/403/manual
+	// blocks are never erased. When acquisition loses (including a stale
+	// inflight block left by a crashed refresh), the existing block is left
+	// untouched and expires on its own.
+	if acquired {
+		defer func() {
+			if _, err := poolscheduler.ClearTempUnschedIfTrigger(poolID, accountID, refreshUnschedTrigger); err != nil {
+				log.Warnf("pooltokenrefresh: clear temp-unsched block %d/%d failed: %v", poolID, accountID, err)
+			}
+		}()
+	}
 
 	newCred, expiresAt, err := refreshByPlatformFunc(ctx, acct.Platform, cred)
 	now := time.Now()
 	if err != nil {
+		// B2-#3: an invalid_grant rejection against our snapshot usually means
+		// another instance already rotated the refresh_token (multi-instance
+		// deployments share the DB but have no cross-process locks; in-process
+		// there is no manual-vs-loop race because RefreshAccount's singleflight
+		// is the single entry point for both). Re-read the stored credentials
+		// and, when they differ from our snapshot, retry exactly once with the
+		// rotated credential before giving up.
+		if isInvalidGrantError(err) {
+			recovered, retryErr := retryRefreshWithRotatedCredentials(ctx, poolID, accountID, priorCredentials)
+			if recovered {
+				if retryErr == nil {
+					return nil
+				}
+				// The one-shot retry failed too: route its error through the
+				// normal backoff path below so the failure is recorded.
+				err = retryErr
+			}
+			// recovered == false: stored credentials unchanged (or unreadable) —
+			// a genuine invalid_grant; fall through to the normal backoff path.
+		}
 		// 失败：写入 error_message + 退避窗口（供 RefreshLoop/triggerRefresh 跳过）。
 		extra := acct.GetExtra()
 		extra.RefreshFailureCount++
@@ -132,6 +176,27 @@ func refreshAccountImpl(ctx context.Context, poolID, accountID int) error {
 		return err
 	}
 
+	// 成功路径：退避清零 + CAS 写回（见 persistRefreshSuccess）。
+	applied, err := persistRefreshSuccess(poolID, accountID, acct, priorCredentials, newCred, expiresAt)
+	if err != nil {
+		return err
+	}
+	if !applied {
+		// B2-#2: a concurrent writer rotated the credentials while our refresh
+		// was in flight — discard our result, the newer token wins. Retrying
+		// the whole impl would only burn upstream quota for the same outcome.
+		log.Warnf("pooltokenrefresh: refresh result of account %d/%d discarded: credentials changed concurrently, keeping the newer token", poolID, accountID)
+	}
+	return nil
+}
+
+// persistRefreshSuccess builds the success updates (re-encrypted credentials,
+// new expiry, cleared error_message, reset backoff counters) and writes them
+// through the CAS variant, matching against storedCredentialsSnapshot — the
+// raw ciphertext the refresh attempt loaded. Returns applied=false when a
+// concurrent writer changed the credentials after the snapshot (the newer
+// token wins; our write is discarded).
+func persistRefreshSuccess(poolID, accountID int, acct *model.PoolAccount, storedCredentialsSnapshot string, newCred model.PoolCredential, expiresAt int64) (bool, error) {
 	// 成功：重置退避计数。
 	extra := acct.GetExtra()
 	extra.RefreshFailureCount = 0
@@ -146,7 +211,72 @@ func refreshAccountImpl(ctx context.Context, poolID, accountID int) error {
 		"error_message":    "",
 		"extra":            acct.Extra,
 	}
-	return pool.UpdateAccount(poolID, accountID, updates)
+	return pool.UpdateAccountCredentialsIfUnchanged(poolID, accountID, storedCredentialsSnapshot, updates)
+}
+
+// isInvalidGrantError reports whether an upstream refresh failure is an
+// invalid_grant rejection (sub2api-style string check: providers surface the
+// OAuth error with varying HTTP status codes, so the response body text is the
+// reliable signal).
+func isInvalidGrantError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "invalid_grant")
+}
+
+// retryRefreshWithRotatedCredentials implements the invalid_grant race
+// recovery (B2-#3): re-read the account and, when the stored credentials no
+// longer match the snapshot this attempt started from, another writer
+// (typically another octopus instance in a multi-instance deployment) already
+// rotated them — retry refreshByPlatform exactly once with the rotated
+// credential.
+//
+// Returns (true, nil) when the retry succeeded (the normal success path —
+// backoff reset + CAS write-back — has already run); (true, err) when the
+// one-shot retry itself failed (the caller routes the error into the normal
+// backoff path); (false, nil) when recovery does not apply — the stored
+// credentials are unchanged (a genuine invalid_grant rejection), the rotated
+// credential carries no refresh_token, or the re-read failed.
+//
+// In-process there is no manual-vs-loop race: RefreshAccount's singleflight
+// (key poolID:accountID) is the single entry point for both the refresh loop
+// and the manual refresh endpoint. The recovery deliberately targets only
+// multi-instance deployments; no cross-process locking is added here
+// (single-instance is the deployment assumption).
+func retryRefreshWithRotatedCredentials(ctx context.Context, poolID, accountID int, priorCredentials string) (bool, error) {
+	fresh, err := pool.GetAccount(poolID, accountID)
+	if err != nil {
+		log.Warnf("pooltokenrefresh: invalid_grant recovery re-read of account %d/%d failed: %v", poolID, accountID, err)
+		return false, nil
+	}
+	if fresh.Credentials == priorCredentials {
+		// Stored credentials unchanged: the invalid_grant is a genuine
+		// rejection of the current refresh_token.
+		return false, nil
+	}
+	// Someone else stored a rotated credential; retry once with it.
+	rotatedCiphertext := fresh.Credentials
+	_ = pool.DecryptAccountCredentials(fresh)
+	cred := model.ParsePoolCredential(fresh.Credentials)
+	if cred.RefreshToken == "" {
+		log.Warnf("pooltokenrefresh: invalid_grant recovery of account %d/%d skipped: rotated credential has no refresh_token", poolID, accountID)
+		return false, nil
+	}
+	newCred, expiresAt, retryErr := refreshByPlatformFunc(ctx, fresh.Platform, cred)
+	if retryErr != nil {
+		return true, retryErr
+	}
+	applied, err := persistRefreshSuccess(poolID, accountID, fresh, rotatedCiphertext, newCred, expiresAt)
+	if err != nil {
+		return true, err
+	}
+	if !applied {
+		// The rotated credential was replaced again while we refreshed — the
+		// newest token wins, same discard rule as the main success path.
+		log.Warnf("pooltokenrefresh: invalid_grant recovery write-back of account %d/%d discarded: credentials changed concurrently", poolID, accountID)
+	}
+	return true, nil
 }
 
 // computeNextBackoff 根据失败次数计算下一次允许刷新的时间（unix 秒）。
@@ -265,11 +395,13 @@ func refreshOpenAI(ctx context.Context, client *http.Client, cred model.PoolCred
 }
 
 func refreshGemini(ctx context.Context, client *http.Client, cred model.PoolCredential) (model.PoolCredential, int64, error) {
-	clientID := "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
-	clientSecret := strings.TrimSpace(getEnvDefault("GEMINI_CLI_OAUTH_CLIENT_SECRET", ""))
-	if clientSecret == "" {
-		return cred, 0, fmt.Errorf("gemini refresh requires GEMINI_CLI_OAUTH_CLIENT_SECRET env")
-	}
+	// B3-#5: the client secret is resolved through a three-level fallback
+	// chain — settings (pool_gemini_client_secret) -> environment
+	// (GEMINI_CLI_OAUTH_CLIENT_SECRET) -> built-in public credential — so a
+	// deployment with zero configuration can still refresh gemini accounts.
+	// Both code_assist and ai_studio accounts share the same token endpoint.
+	clientID := geminicli.GeminiCLIOAuthClientID
+	clientSecret := geminiClientSecret()
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"client_id":     {clientID},
@@ -290,6 +422,31 @@ func refreshGemini(ctx context.Context, client *http.Client, cred model.PoolCred
 	}
 	expiresAt := time.Now().Unix() + r.ExpiresIn
 	return newCred, expiresAt, nil
+}
+
+// geminiSettingsSecretFunc resolves the settings-level Gemini OAuth client
+// secret override (pool_gemini_client_secret). Read failures degrade to ""
+// so the fallback chain continues; overridable in tests.
+var geminiSettingsSecretFunc = func() string {
+	v, err := setting.GetString(model.SettingKeyPoolGeminiClientSecret)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(v)
+}
+
+// geminiClientSecret resolves the Gemini OAuth client secret through the
+// B3-#5 fallback chain: settings > environment > built-in public credential.
+// The built-in constant guarantees a non-empty result, so refresh never fails
+// merely because no secret was configured.
+func geminiClientSecret() string {
+	if v := geminiSettingsSecretFunc(); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(getEnvDefault(geminicli.GeminiCLIOAuthClientSecretEnv, "")); v != "" {
+		return v
+	}
+	return geminicli.GeminiCLIOAuthClientSecret
 }
 
 func refreshGrok(ctx context.Context, client *http.Client, cred model.PoolCredential) (model.PoolCredential, int64, error) {

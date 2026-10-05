@@ -25,6 +25,7 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { ProxySelector } from '@/components/modules/proxy-pool/ProxySelector';
+import { useProxyConfigurationList } from '@/api/endpoints/proxy-pool';
 import type { ProxyMode } from '@/api/endpoints/proxy-pool';
 import { toast } from '@/components/common/Toast';
 import { apiClient } from '@/api/client';
@@ -48,6 +49,7 @@ import {
     MAX_HEADER_ROWS,
     MODEL_PREVIEW_LIMIT,
     SELECT_NONE_SENTINEL,
+    applyBackupProxyToExtra,
     applyHeaderOverridesToExtra,
     dateTimeLocalToUnixSeconds,
     fromSelectSentinel,
@@ -120,6 +122,9 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
     const createAccount = useCreatePoolAccount(poolId);
     const updateAccount = useUpdatePoolAccount(poolId);
     const [proxyValue, setProxyValue] = useState<{ proxy_mode: ProxyMode; proxy_config_id: number | null }>({ proxy_mode: 'direct', proxy_config_id: null });
+    // B4-#13 备用代理（extra.backup_proxy_config_id，逐账号 opt-in，默认关闭）。
+    const [backupProxyId, setBackupProxyId] = useState<number | null>(null);
+    const { data: proxyConfigs } = useProxyConfigurationList();
     const [form, setForm] = useState<PoolAccountRequest>(emptyForm);
     // 数字字段以草稿字符串编辑，提交前统一做整数校验（invalidNumber 反馈），空串回落 0=继承。
     const [numDraft, setNumDraft] = useState<NumberDrafts>(emptyNumberDrafts);
@@ -165,10 +170,12 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
                 const extra = parsed.value as PoolAccountExtra;
                 setHeaderRows(headerRowsFromExtra(extra));
                 setHeaderEnabled(extra.header_overrides_enabled ?? false);
+                setBackupProxyId(extra.backup_proxy_config_id ?? null);
             } else {
                 // extra 非法：不能凭空猜出请求头行，置空并交给 invalidExtra 提示 + 禁保存兜底。
                 setHeaderRows([]);
                 setHeaderEnabled(false);
+                setBackupProxyId(null);
             }
         } else {
             setForm({ ...emptyForm, base_url: DEFAULT_BASE_URL_BY_PLATFORM.anthropic });
@@ -177,6 +184,7 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
             setExpiryDraft('');
             setHeaderRows([]);
             setHeaderEnabled(false);
+            setBackupProxyId(null);
         }
     }, [open, account]);
 
@@ -202,11 +210,19 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
         if (!platformSupportsOAuth(platform) || authorizing || isPending) return;
         setAuthorizing(true);
         try {
+            // B3-#5: gemini 的授权模式跟随 extra.oauth_type（ai_studio / code_assist），
+            // 空值由后端回落 code_assist；其他平台不带该参数。
+            const parsed = parseJsonObject(form.extra);
+            const oauthType = parsed.ok ? (parsed.value as PoolAccountExtra).oauth_type : undefined;
             // 先通过管理 API 发起 initiate（带 JWT），拿到 auth_url 后再跳转授权页。
             // 授权回调走既有流程创建账号；本弹窗手动保存仍要求凭据非空。
             const data = await apiClient.get<{ auth_url: string }>(
                 '/api/v1/pool/oauth/initiate',
-                { platform, pool_id: poolId },
+                {
+                    platform,
+                    pool_id: poolId,
+                    ...(platform === 'gemini' && oauthType ? { oauth_type: oauthType } : {}),
+                },
             );
             if (!data?.auth_url) {
                 throw new Error(t('oauthInitiateFailed'));
@@ -238,6 +254,7 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
             headerRows,
             headerEnabled,
         );
+        const extraWithBackup = applyBackupProxyToExtra(finalExtra, proxyValue.proxy_mode === 'pool' ? backupProxyId : null);
         const payload: PoolAccountRequest = {
             ...form,
             priority: priorityDraft.value,
@@ -245,7 +262,7 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
             weight: weightDraft.value,
             load_factor: loadFactorDraft.value,
             expires_at: expiresAt,
-            extra: JSON.stringify(finalExtra),
+            extra: JSON.stringify(extraWithBackup),
             proxy_config_id: proxyValue.proxy_mode === 'pool' ? proxyValue.proxy_config_id : null,
         };
         const onSuccess = () => {
@@ -501,6 +518,24 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
                                     </div>
                                 </div>
 
+                                {proxyValue.proxy_mode === 'pool' && (
+                                    <div className="min-w-0">
+                                        <Label htmlFor={fid('backup-proxy')}>{t('backupProxy')}</Label>
+                                        <select
+                                            id={fid('backup-proxy')}
+                                            value={backupProxyId ?? 0}
+                                            onChange={(e) => setBackupProxyId(Number(e.target.value) > 0 ? Number(e.target.value) : null)}
+                                            className="mt-1 h-10 w-full rounded-xl bg-background border border-border text-sm px-3"
+                                        >
+                                            <option value={0}>{t('backupProxyNone')}</option>
+                                            {(proxyConfigs || []).filter((cfg) => cfg.enabled).map((cfg) => (
+                                                <option key={cfg.id} value={cfg.id}>{cfg.name}</option>
+                                            ))}
+                                        </select>
+                                        <Hint text={t('backupProxyHint')} />
+                                    </div>
+                                )}
+
                                 <div className="min-w-0 sm:col-span-2">
                                     <Label htmlFor={fid('models')}>{t('models')}</Label>
                                     <Input
@@ -754,7 +789,10 @@ function ExtrasEditor({ platform, acctType, extra, onExtraChange, disabled, head
                         />
                     </div>
                     <div className="min-w-0">
-                        <Label htmlFor={`${prefix}-extras-oauth-type`} className="text-xs">{t('extras.oauthType')}</Label>
+                        <Label htmlFor={`${prefix}-extras-oauth-type`} className="text-xs">
+                            {t('extras.oauthType')}
+                            <Hint text={t('extras.oauthTypeHint')} />
+                        </Label>
                         <Select
                             value={toSelectSentinel(extra.oauth_type ?? '')}
                             onValueChange={(v) => onExtraChange({ oauth_type: fromSelectSentinel(v) })}
@@ -764,6 +802,7 @@ function ExtrasEditor({ platform, acctType, extra, onExtraChange, disabled, head
                             <SelectContent>
                                 <SelectItem value={SELECT_NONE_SENTINEL}>{t('extras.oauthTypeNone')}</SelectItem>
                                 <SelectItem value="code_assist">code_assist</SelectItem>
+                                <SelectItem value="ai_studio">ai_studio</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>

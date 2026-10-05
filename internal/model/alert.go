@@ -8,6 +8,9 @@ const (
 	AlertConditionErrorRate     AlertRuleConditionType = "error_rate"
 	AlertConditionQuotaExceeded AlertRuleConditionType = "quota_exceeded"
 	AlertConditionChannelDown   AlertRuleConditionType = "channel_down"
+	// AlertConditionPoolAccountError fires while any (or the scoped) pool
+	// account is in the "error" state (B4-#15, pull-style evaluation).
+	AlertConditionPoolAccountError AlertRuleConditionType = "pool_account_error"
 )
 
 // AlertRule defines an alert rule with condition, threshold, and notification channel.
@@ -25,6 +28,10 @@ type AlertRule struct {
 	ScopeAPIKeyID  int                    `json:"scope_api_key_id,omitempty"`
 	ScopeGroupID   int                    `json:"scope_group_id,omitempty"`
 	ScopeModelName string                 `json:"scope_model_name,omitempty" gorm:"size:191"`
+	// ScopePoolAccountID is the fifth dedicated scope column (B4-#15): 0 =
+	// any pool account in error, non-zero = that account only. Column added
+	// by migration 057 following the 029 scope-column pattern.
+	ScopePoolAccountID int `json:"scope_pool_account_id,omitempty"`
 }
 
 // AlertNotifChannelType defines the type of a notification channel.

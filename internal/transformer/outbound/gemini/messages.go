@@ -24,8 +24,17 @@ func (o *MessagesOutbound) TransformRequest(ctx context.Context, request *model.
 		return nil, fmt.Errorf("request is nil")
 	}
 
-	// OAuth（Gemini CLI）凭据走 Cloud Code Assist：报文/路径/鉴权与官方 API 均不同。
+	// OAuth（Gemini CLI）凭据走 OAuth 出站：报文/路径/鉴权与官方 API key 均不同。
+	// B3-#5: 按 oauth_type 分流——ai_studio 走官方 /v1beta 端点（Bearer），
+	// code_assist 走 Cloud Code Assist；google_one 接受但不硬拒，回落 Code
+	// Assist 行为并告警。
 	if cred, ok := geminicli.ParseCodeAssistCredential(key); ok {
+		if cred.OAuthType == geminicli.OAuthTypeAIStudio {
+			return transformAIStudioRequest(ctx, request, baseUrl, cred)
+		}
+		if cred.OAuthType == geminicli.OAuthTypeGoogleOne {
+			log.Warnf("gemini outbound: google_one oauth account falls back to Code Assist behavior")
+		}
 		return transformCodeAssistRequest(ctx, request, baseUrl, cred)
 	}
 

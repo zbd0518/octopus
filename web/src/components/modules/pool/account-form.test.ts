@@ -199,3 +199,18 @@ test('splitModels trims entries and drops empties', () => {
     assert.deepEqual(splitModels('a, b,,c '), ['a', 'b', 'c']);
     assert.deepEqual(splitModels(''), []);
 });
+
+// --- B4-#13 backup proxy extra merging ---
+
+test('applyBackupProxyToExtra writes and clears the backup proxy id', async () => {
+    const { applyBackupProxyToExtra } = await import('./account-form.ts');
+
+    const withBackup = applyBackupProxyToExtra({ existing: 'keep-me' }, 7);
+    assert.deepEqual(withBackup, { existing: 'keep-me', backup_proxy_config_id: 7 });
+
+    const cleared = applyBackupProxyToExtra({ existing: 'keep-me', backup_proxy_config_id: 7 }, null);
+    assert.deepEqual(cleared, { existing: 'keep-me' });
+
+    const zeroIsNone = applyBackupProxyToExtra({ backup_proxy_config_id: 7 }, 0);
+    assert.deepEqual(zeroIsNone, {});
+});

@@ -47,11 +47,12 @@ const (
 	SettingKeyPlanProviderRefreshInterval          SettingKey = "plan_provider_refresh_interval"           // 额度监控自动刷新默认间隔（分钟）
 	SettingKeyPoolMinPriority                      SettingKey = "pool_min_priority"                        // 号池分层过滤 minPriority 阈值（默认 -9999 表示关闭）
 	SettingKeyPoolLayeredFilterEnabled             SettingKey = "pool_layered_filter_enabled"              // 号池分层过滤开关：开启后 SelectAccount 过滤掉 priority < min_priority 的候选
-	SettingKeyPoolStickyEscapeEnabled              SettingKey = "pool_sticky_escape_enabled"               // 号池粘性逃逸开关：账号 EWMA 劣化时临时绕过粘性绑定（默认关闭）
-	SettingKeyPoolStickyEscapeErrorRate            SettingKey = "pool_sticky_escape_error_rate"            // 号池粘性逃逸错误率阈值（EWMA errorRate 超过即逃逸）
-	SettingKeyPoolStickyEscapeTTFTMs               SettingKey = "pool_sticky_escape_ttft_ms"               // 号池粘性逃逸 TTFT 阈值（毫秒，EWMA TTFT 超过即逃逸；0=禁用该维度）
-	SettingKeyPoolSchedulerWeightReset             SettingKey = "pool_scheduler_weight_reset"              // 号池 EWMA 因子权重：reset 逆就绪因子（默认 0=关闭，不改变现有行为）
-	SettingKeyPoolSchedulerWeightQuota             SettingKey = "pool_scheduler_weight_quota"              // 号池 EWMA 因子权重：额度余量因子（默认 0=关闭，不改变现有行为）
+	SettingKeyPoolStickyEscapeEnabled              SettingKey = "pool_sticky_escape_enabled"               // Pool sticky escape switch: temporarily bypass the sticky binding when the account's EWMA stats degrade (off by default)
+	SettingKeyPoolStickyEscapeErrorRate            SettingKey = "pool_sticky_escape_error_rate"            // Pool sticky escape error-rate threshold (escape when EWMA errorRate exceeds it)
+	SettingKeyPoolStickyEscapeTTFTMs               SettingKey = "pool_sticky_escape_ttft_ms"               // Pool sticky escape TTFT threshold (ms; escape when EWMA TTFT exceeds it; 0 disables the dimension)
+	SettingKeyPoolSchedulerWeightReset             SettingKey = "pool_scheduler_weight_reset"              // Pool EWMA factor weight: reset inverse-readiness factor (default 0 = off, no behavior change)
+	SettingKeyPoolSchedulerWeightQuota             SettingKey = "pool_scheduler_weight_quota"              // Pool EWMA factor weight: quota-headroom factor (default 0 = off, no behavior change)
+	SettingKeyPoolGeminiClientSecret               SettingKey = "pool_gemini_client_secret"                // Gemini OAuth client secret override for the built-in client (empty = env -> built-in public credential)
 	SettingKeyPoolHealthCheckEnabled               SettingKey = "pool_health_check_enabled"                // 号池账号健康巡检开关
 	SettingKeyPoolHealthCheckInterval              SettingKey = "pool_health_check_interval_minutes"       // 号池账号健康巡检间隔（分钟）
 	SettingKeyPoolHealthCheckFailThreshold         SettingKey = "pool_health_check_fail_threshold"         // 号池账号健康巡检失败阈值（连续 N 次后 SetError）
@@ -249,11 +250,12 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyPlanProviderRefreshInterval, Value: "30"},       // 默认 30 分钟自动刷新额度监控
 		{Key: SettingKeyPoolMinPriority, Value: "-9999"},                // 默认关闭分层过滤
 		{Key: SettingKeyPoolLayeredFilterEnabled, Value: "false"},       // 默认关闭号池分层过滤
-		{Key: SettingKeyPoolStickyEscapeEnabled, Value: "false"},        // 默认关闭粘性逃逸（sub2api 默认开启；octopus 约束：新行为默认关闭）
-		{Key: SettingKeyPoolStickyEscapeErrorRate, Value: "0.5"},        // 默认逃逸错误率阈值 0.5
-		{Key: SettingKeyPoolStickyEscapeTTFTMs, Value: "15000"},         // 默认逃逸 TTFT 阈值 15000ms
-		{Key: SettingKeyPoolSchedulerWeightReset, Value: "0"},           // 默认 0=关闭 reset 因子（镜像 sub2api：默认 0 不改变现有行为）
-		{Key: SettingKeyPoolSchedulerWeightQuota, Value: "0"},           // 默认 0=关闭额度余量因子（且避免每候选解密额度快照）
+		{Key: SettingKeyPoolStickyEscapeEnabled, Value: "false"},        // Sticky escape off by default (sub2api defaults to on; octopus policy: new behavior is off by default)
+		{Key: SettingKeyPoolStickyEscapeErrorRate, Value: "0.5"},        // Default escape error-rate threshold 0.5
+		{Key: SettingKeyPoolStickyEscapeTTFTMs, Value: "15000"},         // Default escape TTFT threshold 15000ms
+		{Key: SettingKeyPoolSchedulerWeightReset, Value: "0"},           // Default 0 = reset factor off (mirrors sub2api: default 0 keeps existing behavior)
+		{Key: SettingKeyPoolSchedulerWeightQuota, Value: "0"},           // Default 0 = quota-headroom factor off (also avoids per-candidate quota snapshot decryption)
+		{Key: SettingKeyPoolGeminiClientSecret, Value: ""},              // Default empty: env GEMINI_CLI_OAUTH_CLIENT_SECRET -> built-in public credential (B3-#5)
 		{Key: SettingKeyPoolHealthCheckEnabled, Value: "false"},         // 默认关闭号池巡检
 		{Key: SettingKeyPoolHealthCheckInterval, Value: "30"},           // 默认 30 分钟巡检
 		{Key: SettingKeyPoolHealthCheckFailThreshold, Value: "3"},       // 默认 3 次失败后 SetError

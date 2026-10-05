@@ -280,12 +280,15 @@ type relayAttempt struct {
 	// poolAccount 号池账号指针（号池模式时使用），供 applyPoolCredentialHeaders 读取 extra。
 	poolAccount *dbmodel.PoolAccount
 
-	// respHeaders 上游响应头快照（B1-#1）。forward() 在 sendRequest 成功后捕获，
-	// 附着到 RetryDecision.Headers，供 429 reset 头解析使用。nil 表示无上游响应
-	// （如连接失败、请求构建失败）。
+	// respHeaders snapshots the upstream response headers (B1-#1). Captured in
+	// forward() after sendRequest succeeds and attached to
+	// RetryDecision.Headers for 429 reset-header parsing. nil means no upstream
+	// response (e.g. dial failure, request build failure).
 	respHeaders http.Header
-	// errBodySnippet 上游错误响应体前 2KB 截断（B1-#1，B4-#12 规则匹配复用）。
-	// 仅在 handleForwardResponse 读取错误体时从已读内存截取，不额外消费 response.Body。
+	// errBodySnippet holds the first 2KB of the upstream error response body
+	// (B1-#1; reused by B4-#12 rule matching). Taken from the already-read
+	// in-memory body inside handleForwardResponse; response.Body is not
+	// consumed any further.
 	errBodySnippet string
 
 	// filterCfg 缓存本次尝试的响应关键词过滤配置，避免在流式响应的每个
@@ -354,12 +357,15 @@ type RetryDecision struct {
 	// 由 executeRelay 的熔断守卫执行。零值 false 保持全部现存构造点语义不变。
 	SkipFailureAccounting bool
 
-	// Headers 上游响应头快照（B1-#1），供 429 分支解析 reset 头
-	//（x-codex-* / Retry-After / anthropic-ratelimit-unified-reset）。
-	// 零值 nil 表示无上游响应证据，反馈段回落池级基础冷却，行为与旧硬编码一致。
+	// Headers snapshots the upstream response headers (B1-#1) for 429-branch
+	// reset-header parsing (x-codex-* / Retry-After /
+	// anthropic-ratelimit-unified-reset). Zero value nil means no upstream
+	// response evidence; the feedback segment falls back to the pool-level base
+	// cooldown, matching the old hardcoded behavior.
 	Headers http.Header
-	// BodySnippet 上游错误响应体前 2KB 截断（B1-#1 捕获，B4-#12 TempUnsched
-	// 规则按关键词匹配时复用）。零值空串表示无错误体证据。
+	// BodySnippet holds the first 2KB of the upstream error response body
+	// (captured in B1-#1; reused by B4-#12 TempUnsched keyword matching).
+	// Zero value empty string means no error-body evidence.
 	BodySnippet string
 }
 

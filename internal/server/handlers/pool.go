@@ -85,6 +85,13 @@ func init() {
 				Handle(tempUnschedPoolAccount),
 		).
 		AddRoute(
+			// B4-#13 proxy fallback restore: idempotent — the guarded update in
+			// op/pool only applies when proxy_fallback_origin_id is set.
+			router.NewRoute("/:id/account/restore-proxy/:aid", http.MethodPost).
+				Use(middleware.RequirePermission(auth.PermChannelsWrite)).
+				Handle(restorePoolAccountProxy),
+		).
+		AddRoute(
 			router.NewRoute("/:id/account/batch-refresh", http.MethodPost).
 				Use(middleware.RequirePermission(auth.PermChannelsWrite)).
 				Handle(batchRefreshPoolAccounts),
@@ -110,7 +117,12 @@ func init() {
 				Handle(batchTestPoolAccounts),
 		).
 		AddRoute(
-			router.NewRoute("/:id/account/export", http.MethodGet).
+			// Export is POST rather than GET: the audit middleware
+			// (isPotentialAuditRequest) short-circuits every non-POST/PUT/PATCH/
+			// DELETE method before the whitelist lookup, so a GET export could
+			// never be audited. The handler reads no body, so POST is compatible
+			// with all clients.
+			router.NewRoute("/:id/account/export", http.MethodPost).
 				Use(middleware.RequirePermission(auth.PermChannelsWrite)).
 				Handle(exportPoolAccounts),
 		).
@@ -573,6 +585,30 @@ func tempUnschedPoolAccount(c *gin.Context) {
 	}
 	poolscheduler.SetTempUnsched(poolID, accountID, time.Now().Add(time.Duration(req.Minutes)*time.Minute), req.Reason)
 	resp.Success(c, nil)
+}
+
+// restorePoolAccountProxy reverts a B4-#13 proxy fallback: proxy_config_id
+// returns to the recorded origin and the fallback marker is cleared. Idempotent
+// by construction — the guarded update only matches accounts whose
+// proxy_fallback_origin_id is set, so repeat calls (or an account not in
+// fallback) succeed without changing anything.
+func restorePoolAccountProxy(c *gin.Context) {
+	poolID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, "invalid pool id")
+		return
+	}
+	accountID, err := strconv.Atoi(c.Param("aid"))
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, "invalid account id")
+		return
+	}
+	restored, err := pool.RestoreProxyOrigin(poolID, accountID)
+	if err != nil {
+		resp.InternalError(c)
+		return
+	}
+	resp.Success(c, gin.H{"restored": restored})
 }
 
 type batchAccountIDsRequest struct {

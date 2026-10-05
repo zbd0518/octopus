@@ -168,13 +168,24 @@ var auditedManagementWriteRoutes = map[string]struct{}{
 	"POST /api/v1/pool/:id/account/refresh-token/:aid":                               {},
 	"POST /api/v1/pool/:id/account/recover/:aid":                                     {},
 	"POST /api/v1/pool/:id/account/temp-unsched/:aid":                                {},
+	"POST /api/v1/pool/:id/account/restore-proxy/:aid":                               {},
 	"POST /api/v1/pool/:id/account/batch-refresh":                                    {},
 	"POST /api/v1/pool/:id/account/batch-clear-error":                                {},
 	"POST /api/v1/pool/:id/account/batch-test":                                       {},
-	"POST /api/v1/pool/:id/account/batch-delete":                                     {},
-	"POST /api/v1/pool/:id/account/clear":                                            {},
-	"DELETE /api/v1/pool/:id/account/delete/:aid":                                    {},
-	"PUT /api/v1/plan-provider/credentials/:id":                                      {},
+	// NOTE: export must stay a POST. isPotentialAuditRequest short-circuits
+	// every non-POST/PUT/PATCH/DELETE method before this whitelist is ever
+	// consulted, so a GET entry here would audit nothing.
+	"POST /api/v1/pool/:id/account/export":               {},
+	"POST /api/v1/pool/:id/account/batch-delete":         {},
+	"POST /api/v1/pool/:id/account/clear":                {},
+	"DELETE /api/v1/pool/:id/account/delete/:aid":        {},
+	"POST /api/v1/pool/:id/scheduled-test/create":        {},
+	"POST /api/v1/pool/:id/scheduled-test/update/:tid":   {},
+	"DELETE /api/v1/pool/:id/scheduled-test/delete/:tid": {},
+	"POST /api/v1/pool/unsched-rules/create":             {},
+	"POST /api/v1/pool/unsched-rules/update/:id":         {},
+	"DELETE /api/v1/pool/unsched-rules/delete/:id":       {},
+	"PUT /api/v1/plan-provider/credentials/:id":          {},
 }
 
 func AuditManagementWrite() gin.HandlerFunc {

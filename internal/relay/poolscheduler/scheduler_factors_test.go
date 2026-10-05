@@ -11,7 +11,8 @@ import (
 	"github.com/lingyuins/octopus/internal/utils/crypto"
 )
 
-// setSchedulerWeightsForTest 设置两个因子权重并在测试后还原默认值 0（默认关闭）。
+// setSchedulerWeightsForTest sets the two factor weights and restores the
+// defaults (0 = off) after the test.
 func setSchedulerWeightsForTest(t *testing.T, wReset, wQuota string) {
 	t.Helper()
 	set := func(key model.SettingKey, value string) {
@@ -27,7 +28,8 @@ func setSchedulerWeightsForTest(t *testing.T, wReset, wQuota string) {
 	})
 }
 
-// countingQuotaParser 在真实解析器外套一层计数观测点（golden 测试用）。
+// countingQuotaParser wraps the real parser with a counting observation point
+// (used by the golden tests).
 func countingQuotaParser(t *testing.T) *int64 {
 	t.Helper()
 	var calls int64
@@ -42,38 +44,41 @@ func countingQuotaParser(t *testing.T) *int64 {
 
 func initCryptoForQuotaTest(t *testing.T) {
 	t.Helper()
-	// 与全仓测试约定一致的密钥（勿改字符串）；sync.Once 保证幂等。
+	// The key shared by the whole-repo test convention (never change the string);
+	// sync.Once makes it idempotent.
 	crypto.Init("octopus-test-encryption-key")
 }
 
 func TestResetReadinessFactor_NeutralAndMinPositive(t *testing.T) {
 	now := time.Now().Unix()
 
-	// 未设置（0）→ 中性。
+	// Unset (0) -> neutral.
 	if got := resetReadinessFactor(&model.PoolAccount{}); got != 0 {
 		t.Fatalf("unset reset should be neutral, got %v", got)
 	}
-	// 已过期（负差）→ 中性。
+	// Already elapsed (negative difference) -> neutral.
 	if got := resetReadinessFactor(&model.PoolAccount{ExpiresAt: now - 100}); got != 0 {
 		t.Fatalf("expired reset should be neutral, got %v", got)
 	}
 
-	// 最小正差：RateLimitResetAt(+30min) 早于 ExpiresAt(+1h) → 按 30min 折算。
+	// Smallest positive difference: RateLimitResetAt(+30min) precedes
+	// ExpiresAt(+1h) -> folded over 30min.
 	a := &model.PoolAccount{ExpiresAt: now + 3600, RateLimitResetAt: now + 1800}
 	want := 1 - 1800.0/float64(int64(resetFactorHorizon/time.Second))
 	if got := resetReadinessFactor(a); diff(got, want) > 1e-9 {
 		t.Fatalf("min-positive factor=%v want %v", got, want)
 	}
 
-	// 剩余越短因子越高（短 reset 更好）。
+	// The shorter the remainder the higher the factor (a near reset is better).
 	long := &model.PoolAccount{ExpiresAt: now + 6*24*3600}
 	if resetReadinessFactor(a) <= resetReadinessFactor(long) {
 		t.Fatalf("shorter remaining reset must yield a higher factor")
 	}
 }
 
-// TestSelectByEWMA_WeightZeroGolden（golden）：默认权重 0 时不做任何因子计算
-//（零解密调用），选择结果与旧实现一致。
+// TestSelectByEWMA_WeightZeroGolden (golden): with the default weight 0 no
+// factor computation happens (zero decrypt calls) and the selection matches the
+// old implementation.
 func TestSelectByEWMA_WeightZeroGolden(t *testing.T) {
 	poolID, _ := setupSchedulerPoolDB(t)
 	a1 := addAccount(t, poolID, &model.PoolAccount{Name: "factor-a1"})
@@ -100,7 +105,8 @@ func TestSelectByEWMA_WeightZeroGolden(t *testing.T) {
 	}
 }
 
-// TestSelectByEWMA_ShorterResetWins：wReset>0 时，reset 剩余更短的账号更优先。
+// TestSelectByEWMA_ShorterResetWins: with wReset>0 the account whose reset is
+// nearer wins.
 func TestSelectByEWMA_ShorterResetWins(t *testing.T) {
 	poolID, _ := setupSchedulerPoolDB(t)
 	setSchedulerWeightsForTest(t, "1", "0")
@@ -118,8 +124,9 @@ func TestSelectByEWMA_ShorterResetWins(t *testing.T) {
 	}
 }
 
-// TestSelectByEWMA_UnsetResetNeutral：无未来 reset 的账号因子恒为 0（中性、
-// 无加分），reset 明确且临近的账号获得优先。
+// TestSelectByEWMA_UnsetResetNeutral: accounts without a future reset always
+// get factor 0 (neutral, no bonus); an account with a concrete near reset is
+// preferred.
 func TestSelectByEWMA_UnsetResetNeutral(t *testing.T) {
 	poolID, _ := setupSchedulerPoolDB(t)
 	setSchedulerWeightsForTest(t, "1", "0")
@@ -134,8 +141,8 @@ func TestSelectByEWMA_UnsetResetNeutral(t *testing.T) {
 	}
 }
 
-// TestSelectByEWMA_QuotaHeadroomWins：wQuota>0 时，额度余量更大的账号更优先；
-// 快照缺失的账号因子中性（0）。
+// TestSelectByEWMA_QuotaHeadroomWins: with wQuota>0 the account with more quota
+// headroom wins; a missing snapshot yields the neutral factor (0).
 func TestSelectByEWMA_QuotaHeadroomWins(t *testing.T) {
 	initCryptoForQuotaTest(t)
 	poolID, _ := setupSchedulerPoolDB(t)
@@ -145,7 +152,7 @@ func TestSelectByEWMA_QuotaHeadroomWins(t *testing.T) {
 	a2 := addAccount(t, poolID, &model.PoolAccount{Name: "quota-high"})
 	a3 := addAccount(t, poolID, &model.PoolAccount{Name: "quota-missing"})
 
-	// 真实加密链路：加密快照落库形状与生产一致。
+	// Real crypto path: the encrypted snapshot is stored in the production shape.
 	a1Quota := pool.EncryptCredentials(`{"used":90,"total":100,"reset_at":0}`)
 	a2Quota := pool.EncryptCredentials(`{"used":10,"total":100,"reset_at":0}`)
 
@@ -159,8 +166,9 @@ func TestSelectByEWMA_QuotaHeadroomWins(t *testing.T) {
 	}
 }
 
-// TestSelectByEWMA_BothWeightsZeroNoDecryption：reset 与 quota 权重同时非 0 时
-// 才会触碰解析器；仅 reset 权重非 0 时不做任何解密（成本守卫）。
+// TestSelectByEWMA_BothWeightsZeroNoDecryption: the parser is only touched when
+// the quota weight is non-zero; with only the reset weight non-zero no
+// decryption happens at all (cost guard).
 func TestSelectByEWMA_BothWeightsZeroNoDecryption(t *testing.T) {
 	poolID, _ := setupSchedulerPoolDB(t)
 	setSchedulerWeightsForTest(t, "1", "0")
@@ -175,7 +183,8 @@ func TestSelectByEWMA_BothWeightsZeroNoDecryption(t *testing.T) {
 	}
 }
 
-// TestParseQuotaSnapshot_Shapes：加密 / 明文 / 非法 / total<=0 的解析矩阵。
+// TestParseQuotaSnapshot_Shapes: parse matrix over encrypted / plaintext /
+// invalid / total<=0 inputs.
 func TestParseQuotaSnapshot_Shapes(t *testing.T) {
 	initCryptoForQuotaTest(t)
 

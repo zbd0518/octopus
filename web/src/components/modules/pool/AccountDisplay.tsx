@@ -25,6 +25,13 @@ export function AccountStatus({ account, now }: { account: PoolAccount; now: num
   return <Badge variant="secondary" title={account.error_message}>{t(known ? `ui.statusLabels.${account.status}` : 'ui.unavailable')}</Badge>;
 }
 
+/** B4-#13: shown while the account runs on its backup proxy (origin recorded). */
+export function ProxyFallbackBadge({ account }: { account: PoolAccount }) {
+  const t = useTranslations('pool');
+  if (!account.proxy_fallback_origin_id) return null;
+  return <Badge variant="outline" className="text-amber-700 dark:text-amber-400">{t('proxyFallbackBadge')}</Badge>;
+}
+
 export function ModelBadges({ models }: { models: string }) {
   const t = useTranslations('pool');
   const names = modelNames(models);

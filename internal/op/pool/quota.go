@@ -63,10 +63,12 @@ func SyncAllQuotas(ctx context.Context) {
 // RefreshAccountTokenFunc 由 pooltokenrefresh 包注入。
 var RefreshAccountTokenFunc func(ctx context.Context, poolID, accountID int) error
 
-// ParseQuotaSnapshot 只读解析账号上缓存的额度快照（PoolAccount.Quota：加密 JSON，
-// QuotaResult 形状 used/total/reset_at）。不做 DB 访问、不发网络请求，仅供调度器
-// 在候选结构体上就地消费（B1-#8；调用方须自行保证仅在 quota 权重非 0 时调用，
-// 避免默认路径上的 AES 解密开销）。快照缺失/解密失败/JSON 非法/total<=0 → ok=false。
+// ParseQuotaSnapshot read-only parses the quota snapshot cached on the account
+// (PoolAccount.Quota: encrypted JSON in the QuotaResult shape used/total/reset_at).
+// No DB access, no network calls; meant to be consumed in place by the
+// scheduler on candidate structs (B1-#8; callers must ensure it is only invoked
+// when the quota weight is non-zero, avoiding AES decryption on the default
+// path). Missing snapshot / decrypt failure / invalid JSON / total<=0 → ok=false.
 func ParseQuotaSnapshot(acct *model.PoolAccount) (used, total float64, ok bool) {
 	if acct == nil || acct.Quota == "" {
 		return 0, 0, false

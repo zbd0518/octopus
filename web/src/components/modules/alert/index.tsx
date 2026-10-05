@@ -18,6 +18,7 @@ import {
     type AlertNotifChannel,
     type NotifChannelType,
 } from '@/api/endpoints/alert';
+import { usePoolAccounts, usePoolList } from '@/api/endpoints/pool';
 import { PageWrapper } from '@/components/common/PageWrapper';
 import { Input } from '@/components/ui/input';
 import { Hint } from '@/components/ui/hint';
@@ -35,7 +36,7 @@ import {
 import { ReportScheduleManager } from '../report/ReportScheduleManager';
 import { ReportHistoryList } from '../report/ReportHistoryList';
 
-const CONDITION_TYPES = ['cost_threshold', 'error_rate', 'quota_exceeded', 'channel_down'] as const;
+const CONDITION_TYPES = ['cost_threshold', 'error_rate', 'quota_exceeded', 'channel_down', 'pool_account_error'] as const;
 type ConditionType = (typeof CONDITION_TYPES)[number];
 
 function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
@@ -48,6 +49,45 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
         >
             {children}
         </button>
+    );
+}
+
+// PoolAccountScopePicker is the scope selector for pool_account_error rules
+// (B4-#15): pick a pool, then an account within it. A non-zero value scopes
+// the rule to that account; zero fires on any pool account in error. When a
+// rule targets an account whose pool has not been picked yet the raw ID is
+// shown so the value never silently disappears.
+function PoolAccountScopePicker({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+    const t = useTranslations('alert');
+    const { data: pools = [] } = usePoolList();
+    const [poolId, setPoolId] = useState<number | null>(null);
+    const { data: accounts = [] } = usePoolAccounts(poolId);
+    return (
+        <div className="grid gap-1">
+            <span className="text-xs font-medium text-muted-foreground">{t('rules.form.scopePoolAccountId')}</span>
+            <div className="flex flex-col gap-1.5">
+                <select
+                    value={poolId ?? 0}
+                    onChange={(e) => { setPoolId(Number(e.target.value) || null); onChange(0); }}
+                    className="h-10 rounded-xl bg-background border border-border text-sm px-3"
+                >
+                    <option value={0}>{t('rules.form.selectPool')}</option>
+                    {pools.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <select
+                    value={value}
+                    onChange={(e) => onChange(Number(e.target.value))}
+                    disabled={poolId === null}
+                    className="h-10 rounded-xl bg-background border border-border text-sm px-3 disabled:opacity-60"
+                >
+                    <option value={0}>{t('rules.form.scopeAnyPoolAccount')}</option>
+                    {accounts.map((a) => <option key={a.id} value={a.id}>{a.name || `#${a.id}`}</option>)}
+                </select>
+                {value > 0 && poolId === null && (
+                    <span className="text-[11px] text-muted-foreground">{t('rules.form.scopePoolAccountId')}: {value}</span>
+                )}
+            </div>
+        </div>
     );
 }
 
@@ -343,6 +383,8 @@ export function AlertSections({ section, showTabs = false }: { section?: AlertSe
                 return t('conditions.quota_exceeded');
             case 'channel_down':
                 return t('conditions.channel_down');
+            case 'pool_account_error':
+                return t('conditions.pool_account_error');
             default:
                 return conditionType;
         }
@@ -650,6 +692,7 @@ export function AlertSections({ section, showTabs = false }: { section?: AlertSe
                                                             <span className="text-xs font-medium text-muted-foreground">{t('rules.form.scopeModelName')}</span>
                                                             <Input value={newRule.scope_model_name || ''} onChange={(e) => setNewRule({ ...newRule, scope_model_name: e.target.value })} placeholder="gpt-4o" className="rounded-xl" />
                                                         </label>
+                                                        <PoolAccountScopePicker value={newRule.scope_pool_account_id || 0} onChange={(v) => setNewRule({ ...newRule, scope_pool_account_id: v })} />
                                                         <label className="grid gap-1">
                                                             <span className="text-xs font-medium text-muted-foreground">{t('rules.form.conditionJson')}</span>
                                                             <Input value={newRule.condition_json || ''} onChange={(e) => setNewRule({ ...newRule, condition_json: e.target.value })} placeholder="{}" className="rounded-xl" />
@@ -791,6 +834,7 @@ export function AlertSections({ section, showTabs = false }: { section?: AlertSe
                                                             <span className="text-xs font-medium text-muted-foreground">{t('rules.form.scopeModelName')}</span>
                                                             <Input value={editingRule.scope_model_name || ''} onChange={(e) => setEditingRule({ ...editingRule, scope_model_name: e.target.value })} placeholder="gpt-4o" className="rounded-xl" />
                                                         </label>
+                                                        <PoolAccountScopePicker value={editingRule.scope_pool_account_id || 0} onChange={(v) => setEditingRule({ ...editingRule, scope_pool_account_id: v })} />
                                                         <label className="grid gap-1">
                                                             <span className="text-xs font-medium text-muted-foreground">{t('rules.form.conditionJson')}</span>
                                                             <Input value={editingRule.condition_json || ''} onChange={(e) => setEditingRule({ ...editingRule, condition_json: e.target.value })} placeholder="{}" className="rounded-xl" />

@@ -12,6 +12,7 @@ import (
 
 	"github.com/lingyuins/octopus/internal/helper"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/pkg/geminicli"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 	"github.com/lingyuins/octopus/internal/utils/httpx"
 )
@@ -72,8 +73,16 @@ func TestAccount(poolID, accountID int, modelName string) (*AccountTestResult, e
 		return nil, err
 	}
 
-	// 决定请求路径与鉴权头。
+	// 决定请求路径与鉴权头。gemini 账号按 oauth_type 单独分流（oauth 需要平台化
+	// 报文/端点，apikey 保持既有 ?key= 形式）。
 	reqURL, headers := buildTestRequest(acct, cred, baseURL, modelName)
+	if acct.Platform == model.PoolPlatformGemini {
+		var bodyOverride []byte
+		reqURL, bodyOverride, headers = buildGeminiTestRequest(acct, cred, baseURL, modelName, bodyBytes)
+		if len(bodyOverride) > 0 {
+			bodyBytes = bodyOverride
+		}
+	}
 	if reqURL == "" {
 		return &AccountTestResult{Success: false, Error: "unsupported platform for test"}, nil
 	}
@@ -118,6 +127,65 @@ func TestAccount(poolID, accountID int, modelName string) (*AccountTestResult, e
 		result.Error = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(errBody))
 	}
 	return result, nil
+}
+
+// buildGeminiTestRequest 按 oauth_type 分流 gemini 账号的连通性测试请求，
+// 返回（URL, 覆盖用请求体, 鉴权头）。请求体非空时覆盖调用方的 OpenAI 格式体。
+//
+// oauth 账号此前把整段 OAuth JSON 塞进 ?key=（必然 401/403），现按模式发真实
+// 报文：ai_studio → 官方 /v1beta/models/{model}:generateContent + Bearer；
+// code_assist / google_one → Cloud Code Assist /v1internal:generateContent +
+// Bearer（google_one 出站口径回落 code_assist，与 transformer 一致）。
+// apikey 等其他凭据保持既有 ?key= 形式与请求体不变。
+func buildGeminiTestRequest(acct *model.PoolAccount, cred model.PoolCredential, baseURL, modelName string, fallbackBody []byte) (string, []byte, map[string]string) {
+	headers := map[string]string{}
+	if cred.Type != model.PoolTypeOAuth || strings.TrimSpace(cred.AccessToken) == "" {
+		reqURL := baseURL + fmt.Sprintf("/v1beta/models/%s:generateContent?key=%s", modelName, cred.EffectiveKey(model.PoolPlatformGemini))
+		return reqURL, nil, headers
+	}
+
+	// 最小 Gemini generateContent 报文。
+	geminiBody := map[string]interface{}{
+		"contents": []map[string]interface{}{
+			{"role": "user", "parts": []map[string]string{{"text": "hi"}}},
+		},
+	}
+	extra := acct.GetExtra()
+
+	if extra.OAuthType == model.OAuthTypeAIStudio {
+		endpoint := strings.TrimSuffix(baseURL, "/")
+		if endpoint == "" || isCloudCodeAssistEndpoint(endpoint) {
+			// ai_studio 的 token 不发往 Code Assist 域名（scope 不匹配）。
+			endpoint = geminicli.AIStudioEndpoint
+		}
+		headers["Authorization"] = "Bearer " + cred.AccessToken
+		b, _ := json.Marshal(geminiBody)
+		return endpoint + fmt.Sprintf("/v1beta/models/%s:generateContent", modelName), b, headers
+	}
+
+	// code_assist / google_one / 空：Cloud Code Assist 端点。
+	endpoint := strings.TrimSuffix(baseURL, "/")
+	if endpoint == "" || isOfficialGeminiEndpointLoose(endpoint) {
+		endpoint = geminicli.CodeAssistEndpoint
+	}
+	headers["Authorization"] = "Bearer " + cred.AccessToken
+	body := map[string]interface{}{
+		"model":   strings.TrimPrefix(strings.TrimSpace(modelName), "models/"),
+		"project": extra.ProjectID,
+		"request": geminiBody,
+	}
+	b, _ := json.Marshal(body)
+	return endpoint + "/" + geminicli.CodeAssistAPIVersion + ":generateContent", b, headers
+}
+
+// isOfficialGeminiEndpointLoose 判断端点是否为官方 Generative Language API 域名。
+func isOfficialGeminiEndpointLoose(endpoint string) bool {
+	return strings.Contains(strings.ToLower(endpoint), "generativelanguage.googleapis.com")
+}
+
+// isCloudCodeAssistEndpoint 判断端点是否为 Cloud Code Assist 域名。
+func isCloudCodeAssistEndpoint(endpoint string) bool {
+	return strings.Contains(strings.ToLower(endpoint), "cloudcode-pa.googleapis.com")
 }
 
 // buildTestRequest 按 platform/type 构造测试请求 URL 与鉴权头。

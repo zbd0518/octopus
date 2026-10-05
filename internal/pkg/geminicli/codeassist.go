@@ -25,6 +25,10 @@ const (
 	// CodeAssistEndpoint 是 Cloud Code Assist 的默认接入点。
 	CodeAssistEndpoint = "https://cloudcode-pa.googleapis.com"
 
+	// AIStudioEndpoint 是官方 Generative Language API 的默认接入点
+	// （ai_studio 模式 OAuth 账号走这里，免 project_id）。
+	AIStudioEndpoint = "https://generativelanguage.googleapis.com"
+
 	// CodeAssistAPIVersion 与 Gemini CLI 保持一致。
 	CodeAssistAPIVersion = "v1internal"
 
@@ -37,6 +41,23 @@ const (
 // 取值须与 model.OAuthTypeCodeAssist 一致（此处不 import model 以免依赖倒置）。
 const OAuthTypeCodeAssist = "code_assist"
 
+// OAuthTypeAIStudio 标记该 OAuth 账号走官方 Generative Language API
+// （AI Studio 模式，免 project_id）。取值须与 model.OAuthTypeAIStudio 一致。
+const OAuthTypeAIStudio = "ai_studio"
+
+// OAuthTypeGoogleOne 标记 Google One 渠道授权的 OAuth 账号。接受并存储该值，
+// 出站回落 Cloud Code Assist 行为（与 sub2api 的兼容口径一致，不硬拒）。
+const OAuthTypeGoogleOne = "google_one"
+
+// IsKnownOAuthType 判断 oauth_type 是否为已识别的 Gemini OAuth 模式。
+func IsKnownOAuthType(oauthType string) bool {
+	switch oauthType {
+	case OAuthTypeCodeAssist, OAuthTypeAIStudio, OAuthTypeGoogleOne:
+		return true
+	}
+	return false
+}
+
 // CodeAssistCredential 是 gemini oauth 账号在出站时携带的凭据结构。
 //
 // 与 openai/codex 的做法一致：把出站需要的字段序列化成 JSON 作为 ChannelKey，
@@ -48,9 +69,11 @@ type CodeAssistCredential struct {
 	OAuthType   string `json:"oauth_type,omitempty"`
 }
 
-// IsCodeAssist 判断该凭据是否应走 Cloud Code Assist。
+// IsCodeAssist 判断该凭据是否应按 OAuth 凭据出站（放行 code_assist / ai_studio /
+// google_one 三种已识别模式，B3-#5）。具体走哪个端点由调用方按 OAuthType 分流，
+// 这里只负责把 OAuth 凭据与裸 API key 区分开。
 func (c CodeAssistCredential) IsCodeAssist() bool {
-	return strings.TrimSpace(c.AccessToken) != "" && c.OAuthType == OAuthTypeCodeAssist
+	return strings.TrimSpace(c.AccessToken) != "" && IsKnownOAuthType(c.OAuthType)
 }
 
 // MarshalCodeAssistCredential 构造出站凭据 JSON。

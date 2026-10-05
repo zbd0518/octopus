@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Database, Layers, Timer, Gauge, Filter, TrendingDown } from 'lucide-react';
+import { Database, Layers, Timer, Gauge, Filter, TrendingDown, KeyRound } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Hint } from '@/components/ui/hint';
 import { Switch } from '@/components/ui/switch';
 import { useSettingList, useSetSetting, SettingKey } from '@/api/endpoints/setting';
+import { PoolUnschedRulesCard } from '@/components/modules/pool/PoolUnschedRulesCard';
 import { toast } from '@/components/common/Toast';
 
 export function SettingPool() {
@@ -24,6 +25,7 @@ export function SettingPool() {
     const [stickyEscapeTTFTMs, setStickyEscapeTTFTMs] = useState('');
     const [weightReset, setWeightReset] = useState('');
     const [weightQuota, setWeightQuota] = useState('');
+    const [geminiSecret, setGeminiSecret] = useState('');
 
     const initInterval = useRef('');
     const initThreshold = useRef('');
@@ -35,6 +37,7 @@ export function SettingPool() {
     const initStickyEscapeTTFTMs = useRef('');
     const initWeightReset = useRef('');
     const initWeightQuota = useRef('');
+    const initGeminiSecret = useRef('');
 
     useEffect(() => {
         if (!settings) return;
@@ -49,6 +52,7 @@ export function SettingPool() {
         const st = get(SettingKey.PoolStickyEscapeTTFTMs);
         const wr = get(SettingKey.PoolSchedulerWeightReset);
         const wq = get(SettingKey.PoolSchedulerWeightQuota);
+        const gs = get(SettingKey.PoolGeminiClientSecret);
         queueMicrotask(() => {
             if (im !== undefined) { setIntervalMin(im); initInterval.current = im; }
             if (ft !== undefined) { setFailThreshold(ft); initThreshold.current = ft; }
@@ -60,6 +64,7 @@ export function SettingPool() {
             if (st !== undefined) { setStickyEscapeTTFTMs(st); initStickyEscapeTTFTMs.current = st; }
             if (wr !== undefined) { setWeightReset(wr); initWeightReset.current = wr; }
             if (wq !== undefined) { setWeightQuota(wq); initWeightQuota.current = wq; }
+            if (gs !== undefined) { setGeminiSecret(gs); initGeminiSecret.current = gs; }
         });
     }, [settings]);
 
@@ -75,6 +80,7 @@ export function SettingPool() {
                 else if (key === SettingKey.PoolStickyEscapeTTFTMs) initStickyEscapeTTFTMs.current = value;
                 else if (key === SettingKey.PoolSchedulerWeightReset) initWeightReset.current = value;
                 else if (key === SettingKey.PoolSchedulerWeightQuota) initWeightQuota.current = value;
+                else if (key === SettingKey.PoolGeminiClientSecret) initGeminiSecret.current = value;
             },
         });
     };
@@ -177,7 +183,7 @@ export function SettingPool() {
                     />
                 </div>
 
-                {/* 粘性逃逸 */}
+                {/* Sticky escape */}
                 <div className="flex items-center justify-between rounded-lg border border-border/50 p-3">
                     <div className="space-y-1">
                         <div className="text-sm font-medium flex items-center gap-2">
@@ -227,7 +233,7 @@ export function SettingPool() {
                     </div>
                 </div>
 
-                {/* 调度因子权重（默认 0 = 关闭） */}
+                {/* Scheduler factor weights (default 0 = off) */}
                 <div className="grid grid-cols-2 gap-3">
                     <div>
                         <label className="text-xs text-muted-foreground flex items-center gap-1">
@@ -262,7 +268,28 @@ export function SettingPool() {
                         />
                     </div>
                 </div>
+
+                {/* Gemini OAuth client secret override (empty = env -> built-in credential) */}
+                <div>
+                    <label className="text-xs text-muted-foreground flex items-center gap-1">
+                        <KeyRound className="h-3 w-3" />
+                        {t('pool.geminiClientSecret')}
+                        <Hint text={t('pool.geminiClientSecretHint')} />
+                    </label>
+                    <Input
+                        className="mt-1"
+                        type="password"
+                        autoComplete="off"
+                        value={geminiSecret}
+                        onChange={(e) => setGeminiSecret(e.target.value)}
+                        onBlur={() => saveValue(SettingKey.PoolGeminiClientSecret, geminiSecret, initGeminiSecret.current)}
+                        placeholder="GOCSPX-..."
+                    />
+                </div>
             </div>
+
+            {/* Temp-unsched rules (B4-#12): rule-driven pool cooldowns, global scope. */}
+            <PoolUnschedRulesCard />
         </div>
     );
 }

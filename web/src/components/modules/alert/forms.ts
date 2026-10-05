@@ -22,6 +22,7 @@ export interface AlertRuleDraft {
     scope_api_key_id?: number;
     scope_group_id?: number;
     scope_model_name?: string;
+    scope_pool_account_id?: number;
 }
 
 export interface AlertRuleEditable extends AlertRuleDraft {
@@ -32,6 +33,7 @@ export interface AlertRuleEditable extends AlertRuleDraft {
     scope_api_key_id?: number;
     scope_group_id?: number;
     scope_model_name?: string;
+    scope_pool_account_id?: number;
 }
 
 export type AlertChannelEditable = AlertNotifChannel;
@@ -63,6 +65,7 @@ export function createAlertRuleDraft(rule: Partial<AlertRuleDraft> = {}): AlertR
         scope_api_key_id: rule.scope_api_key_id ?? 0,
         scope_group_id: rule.scope_group_id ?? 0,
         scope_model_name: rule.scope_model_name ?? '',
+        scope_pool_account_id: rule.scope_pool_account_id ?? 0,
     };
 }
 

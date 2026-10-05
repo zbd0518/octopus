@@ -13,6 +13,7 @@ import (
 	"github.com/lingyuins/octopus/internal/op/alert"
 	"github.com/lingyuins/octopus/internal/op/channel"
 	"github.com/lingyuins/octopus/internal/op/notification"
+	porop "github.com/lingyuins/octopus/internal/op/pool"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/op/stats"
 	"github.com/lingyuins/octopus/internal/utils/log"
@@ -110,9 +111,48 @@ func evaluateRule(ctx context.Context, rule *model.AlertRule) alertEvaluation {
 		return evaluateChannelDown(ctx, rule)
 	case model.AlertConditionQuotaExceeded:
 		return evaluateQuotaExceeded(rule)
+	case model.AlertConditionPoolAccountError:
+		return evaluatePoolAccountError(rule)
 	default:
 		return alertEvaluation{}
 	}
+}
+
+// evaluatePoolAccountError implements the pool_account_error condition
+// (B4-#15, pull-style): the evaluator scans the pool accounts (SetError
+// persists status="error" to the DB) instead of subscribing to scheduler
+// events, so the scheduler hot path stays untouched. A non-zero
+// ScopePoolAccountID narrows the check to one account; zero fires when any
+// account is in error. The existing firing/resolve state machine, cooldown
+// dedup and notification delivery are shared with the other conditions.
+func evaluatePoolAccountError(rule *model.AlertRule) alertEvaluation {
+	accounts, err := porop.ListAllAccounts()
+	if err != nil {
+		return alertEvaluation{Detail: err.Error()}
+	}
+	errored := make([]string, 0)
+	for i := range accounts {
+		acct := &accounts[i]
+		if acct.Status != "error" {
+			continue
+		}
+		if rule.ScopePoolAccountID > 0 && acct.ID != rule.ScopePoolAccountID {
+			continue
+		}
+		errored = append(errored, fmt.Sprintf("%s (pool %d, account %d)", acct.Name, acct.PoolID, acct.ID))
+	}
+	if len(errored) > 0 {
+		return alertEvaluation{
+			Firing:       true,
+			CurrentValue: float64(len(errored)),
+			Detail:       fmt.Sprintf("pool accounts in error: %s", strings.Join(errored, ", ")),
+		}
+	}
+	scope := "any pool account"
+	if rule.ScopePoolAccountID > 0 {
+		scope = fmt.Sprintf("pool account %d", rule.ScopePoolAccountID)
+	}
+	return alertEvaluation{CurrentValue: 0, Detail: fmt.Sprintf("%s is active", scope)}
 }
 
 func evaluateErrorRate(ctx context.Context, rule *model.AlertRule) alertEvaluation {
@@ -356,19 +396,20 @@ func createAlertNotification(ctx context.Context, rule *model.AlertRule, state m
 		severity = model.NotificationSeveritySuccess
 	}
 	metadata, _ := json.Marshal(map[string]any{
-		"rule_id":          rule.ID,
-		"rule_name":        rule.Name,
-		"condition_type":   rule.ConditionType,
-		"threshold":        rule.Threshold,
-		"current_value":    eval.CurrentValue,
-		"detail":           eval.Detail,
-		"scope_channel_id": rule.ScopeChannelID,
-		"scope_api_key_id": rule.ScopeAPIKeyID,
-		"scope_group_id":   rule.ScopeGroupID,
-		"scope_model_name": rule.ScopeModelName,
-		"window_sec":       rule.WindowSec,
-		"state":            state,
-		"notification":     notify,
+		"rule_id":               rule.ID,
+		"rule_name":             rule.Name,
+		"condition_type":        rule.ConditionType,
+		"threshold":             rule.Threshold,
+		"current_value":         eval.CurrentValue,
+		"detail":                eval.Detail,
+		"scope_channel_id":      rule.ScopeChannelID,
+		"scope_api_key_id":      rule.ScopeAPIKeyID,
+		"scope_group_id":        rule.ScopeGroupID,
+		"scope_model_name":      rule.ScopeModelName,
+		"scope_pool_account_id": rule.ScopePoolAccountID,
+		"window_sec":            rule.WindowSec,
+		"state":                 state,
+		"notification":          notify,
 	})
 	n := &model.Notification{
 		Type:         model.NotificationTypeAlert,
