@@ -85,6 +85,8 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         [routeGroups, channel.id],
     );
     const [isEditing, setIsEditing] = useState(false);
+    // 编辑态默认收起内置供应商模板，点击「使用预设」才展开（与新建渠道一致）
+    const [showTemplatePicker, setShowTemplatePicker] = useState(false);
     const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
     // 检查全部 Key 后的结果；当 passed === false 表示全部 Key 都不可用，
     // 此时弹出确认对话框允许直接删除该渠道。
@@ -113,6 +115,11 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         setSelectedModel(availableModels[0] ?? '');
         setCurrentTestId(null);
     }, [channel.id, availableModels]);
+
+    // 切换渠道或退出编辑态时，模板面板回到收起状态。
+    useEffect(() => {
+        setShowTemplatePicker(false);
+    }, [channel.id, isEditing]);
 
     const isTestingModel = testChannelModel.isPending
         || (currentTestId !== null && testProgress !== undefined && !testProgress.done);
@@ -853,6 +860,9 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                 onCancel={() => setIsEditing(false)}
                                 cancelText={t('actions.cancel')}
                                 idPrefix="channel"
+                                showTemplatePicker={showTemplatePicker}
+                                onShowTemplatePicker={() => setShowTemplatePicker(true)}
+                                onHideTemplatePicker={() => setShowTemplatePicker(false)}
                             />
                         </TabsContent>
                     </TabsContents>

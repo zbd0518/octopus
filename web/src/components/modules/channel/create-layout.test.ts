@@ -15,6 +15,18 @@ test('channel creation starts with the form and allows presets on every viewport
   assert.match(create, /cancelText=\{tForm\('modelPicker.cancel'\)\}/);
 });
 
+test('channel edit dialog collapses built-in templates behind a preset toggle', () => {
+  const cardContent = readFileSync(new URL('./CardContent.tsx', import.meta.url), 'utf8');
+  assert.match(cardContent, /\[showTemplatePicker, setShowTemplatePicker\] = useState\(false\)/);
+  assert.match(cardContent, /showTemplatePicker=\{showTemplatePicker\}/);
+  assert.match(cardContent, /onShowTemplatePicker=\{\(\) => setShowTemplatePicker\(true\)\}/);
+  assert.match(cardContent, /onHideTemplatePicker=\{\(\) => setShowTemplatePicker\(false\)\}/);
+  assert.doesNotMatch(cardContent, /<ChannelForm[\s\S]*?showTemplatePicker=\{true\}/);
+  // 编辑态不允许默认展开模板网格
+  assert.match(form, /showTemplatePicker = false,/);
+  assert.match(form, /onHideTemplatePicker\?\.\(\)/);
+});
+
 test('channel create dialog reuses the edit dialog sizing (no custom overrides)', () => {
   const editDialog = readFileSync(new URL('./Card.tsx', import.meta.url), 'utf8')
     .match(/<MorphingDialogContent className="([^"]*)"/)?.[1];

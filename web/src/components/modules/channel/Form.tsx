@@ -171,6 +171,8 @@ export interface ChannelFormProps {
     idPrefix?: string;
     showTemplatePicker?: boolean;
     onShowTemplatePicker?: () => void;
+    /** 应用模板或跳过预设后收起模板面板（编辑态用） */
+    onHideTemplatePicker?: () => void;
     layout?: 'default' | 'create';
 }
 
@@ -685,8 +687,9 @@ export function ChannelForm({
     onCancel,
     cancelText,
     idPrefix = 'channel',
-    showTemplatePicker = true,
+    showTemplatePicker = false,
     onShowTemplatePicker,
+    onHideTemplatePicker,
     layout = 'default',
 }: ChannelFormProps) {
     const t = useTranslations('channel.form');
@@ -1129,6 +1132,7 @@ export function ChannelForm({
         if (!template) return;
         onFormDataChange(template.apply(formData));
         setTestSummary(null);
+        onHideTemplatePicker?.();
     };
 
     return (
@@ -1141,7 +1145,20 @@ export function ChannelForm({
             )}>
             {showTemplatePicker ? (
                 <section className={sectionClassName}>
-                    <SectionHeader icon={Sparkles} title={t('template.label')} hint={t('template.hint')} />
+                    <div className="flex items-center justify-between gap-3">
+                        <SectionHeader icon={Sparkles} title={t('template.label')} hint={t('template.hint')} />
+                        {onHideTemplatePicker ? (
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={onHideTemplatePicker}
+                                className="h-8 shrink-0 rounded-lg text-xs text-muted-foreground transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-100 ease-out active:scale-[0.98]"
+                            >
+                                {t('template.skip')}
+                            </Button>
+                        ) : null}
+                    </div>
                     {isMobile ? (
                         <TemplatePickerSelect onApplyTemplate={handleApplyTemplate} />
                     ) : (
