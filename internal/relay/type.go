@@ -109,7 +109,7 @@ func isRetryEmptyOutputEnabled() bool {
 // 2. 长思考请求默认 immediate：避免 reasoning-only 阶段长时间无 SSE 输出导致
 //    客户端/反代空闲超时断开（client disconnected，首字 0ms）
 // 3. 回退到全局设置 reasoning_buffer_strategy
-// 4. 最终默认 "buffer"（兼容旧行为）
+// 4. 最终默认 "immediate"（与上游 v2.6.3 默认一致）
 // 返回 "buffer" 或 "immediate"。
 func getReasoningBufferStrategy(group *dbmodel.Group, req *model.InternalLLMRequest) string {
 	if group != nil {
@@ -129,7 +129,7 @@ func getReasoningBufferStrategy(group *dbmodel.Group, req *model.InternalLLMRequ
 			return strategy
 		}
 	}
-	return "buffer" // 默认缓冲策略，保持向后兼容
+	return "immediate"
 }
 
 // prefersImmediateReasoningStream 判断请求是否属于“长思考”场景。
