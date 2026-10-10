@@ -173,12 +173,22 @@ func (i *ChatInbound) foldStreamChunk(chunk *model.InternalLLMResponse) {
 				*existingChoice.Message.ReasoningContent += delta.GetReasoningContent()
 			}
 
+			if delta.ReasoningSignature != nil {
+				signature := *delta.ReasoningSignature
+				if delta.ReasoningSignatureFormat != model.APIFormatOpenAIResponse && existingChoice.Message.ReasoningSignature != nil {
+					signature = *existingChoice.Message.ReasoningSignature + signature
+				}
+				existingChoice.Message.ReasoningSignature = &signature
+				existingChoice.Message.ReasoningSignatureFormat = delta.ReasoningSignatureFormat
+			}
+
 			for _, toolCall := range delta.ToolCalls {
 				existingChoice.Message.ToolCalls = mergeToolCall(existingChoice.Message.ToolCalls, toolCall)
 			}
 
 			if delta.Refusal != "" {
-				existingChoice.Message.Refusal = delta.Refusal
+				// Append（而非覆盖）：拒答可能跨多个 chunk 到达（上游 fix(relay): preserve refusals）。
+				existingChoice.Message.Refusal += delta.Refusal
 			}
 		}
 

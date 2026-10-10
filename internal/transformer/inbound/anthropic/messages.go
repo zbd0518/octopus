@@ -3,8 +3,9 @@ package anthropic
 import (
 	"context"
 	"fmt"
-	"github.com/lingyuins/octopus/internal/transformer"
+	"sort"
 
+	"github.com/lingyuins/octopus/internal/transformer"
 	"github.com/lingyuins/octopus/internal/transformer/model"
 	"github.com/lingyuins/octopus/internal/utils/log"
 	"github.com/lingyuins/octopus/internal/utils/tokenizer"
@@ -14,24 +15,35 @@ import (
 
 type MessagesInbound struct {
 	// Stream state tracking
-	hasStarted                bool
-	hasTextContentStarted     bool
-	hasThinkingContentStarted bool
-	hasToolContentStarted     bool
-	hasFinished               bool
-	messageStopped            bool
-	messageID                 string
-	modelName                 string
-	contentIndex              int64
-	stopReason                *string
-	// toolCallBlockIndex maps upstream tool-call index (e.g. OpenAI Responses
-	// output_index) to the Anthropic content block index. Upstream indices may
-	// start at 1 or skip values when reasoning/message items occupy earlier
-	// slots — never assume 0-based contiguous OpenAI indices.
-	toolCallBlockIndex map[int]int64
-	inputToken         int64
+	hasStarted  bool
+	hasFinished bool
+	messageID   string
+	modelName   string
+	stopReason  *string
 
-	// streamResponse / streamChoices 在流式路径上在线聚合，避免全量缓存每个 chunk。
+	// Block tracking: every block owns a stable Anthropic content index for
+	// its whole lifecycle; deltas and stops must target that index.
+	thinkingBlockIndex *int64
+	textBlockIndex     *int64
+	// toolBlockIndex maps each OpenAI tool call index to its block's content
+	// index. Tool blocks stay open concurrently; fragments are routed by the
+	// owning tool's index.
+	toolBlockIndex map[int]int64
+	// toolBlockStopped marks tool blocks already closed; no delta after stop.
+	toolBlockStopped map[int]bool
+
+	// nextIndex allocates new content block indexes.
+	nextIndex int64
+
+	// messageStopped guards the terminal pair is emitted at most once.
+	messageStopped bool
+	// terminalUsage caches the last usage seen, before or after finish.
+	terminalUsage *model.Usage
+
+	inputToken int64
+
+	// streamResponse / streamChoices 在流式路径上在线聚合，避免把每个 SSE chunk
+	// 完整对象都 append 进切片（长流/大图/并发下堆峰值可冲到 GB 级）。
 	streamResponse *model.InternalLLMResponse
 	streamChoices  map[int]*model.Choice
 	// storedResponse stores the non-stream response
@@ -258,6 +270,7 @@ func (i *MessagesInbound) TransformRequest(ctx context.Context, body []byte) (*m
 
 			if reasoningSignature != "" {
 				chatMsg.ReasoningSignature = &reasoningSignature
+				chatMsg.ReasoningSignatureFormat = model.APIFormatAnthropicMessage
 			}
 		}
 
@@ -369,8 +382,8 @@ func (i *MessagesInbound) TransformResponse(ctx context.Context, response *model
 					Type:     "thinking",
 					Thinking: message.ReasoningContent,
 				}
-				if message.ReasoningSignature != nil && *message.ReasoningSignature != "" {
-					thinkingBlock.Signature = message.ReasoningSignature
+				if signature := message.ReasoningSignatureFor(model.APIFormatAnthropicMessage); signature != nil && *signature != "" {
+					thinkingBlock.Signature = signature
 				} else {
 					thinkingBlock.Signature = lo.ToPtr("ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB")
 				}
@@ -483,12 +496,20 @@ func (i *MessagesInbound) TransformResponse(ctx context.Context, response *model
 }
 
 func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.InternalLLMResponse) ([]byte, error) {
-	// Handle [DONE] marker
+	// [DONE] marker: upstream terminal or relay-synthesized EOF. Finalizes the
+	// protocol even when no usage ever arrived.
 	if stream.Object == "[DONE]" {
-		return nil, nil
+		if i.messageStopped || !i.hasStarted {
+			return nil, nil
+		}
+		events, err := i.finalizeMessage()
+		if err != nil || len(events) == 0 {
+			return nil, err
+		}
+		return joinSSEEvents(events), nil
 	}
 
-	// Online-aggregate: keep only the final result, not the full chunk list.
+	// 在线聚合：只保留最终文本/工具调用等结果，不缓存完整 chunk 列表。
 	i.foldStreamChunk(stream)
 
 	var events [][]byte
@@ -532,53 +553,27 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 		events = append(events, formatSSEEvent("message_start", data))
 	}
 
+	// Cache usage whenever it appears; the terminal message_delta carries it.
+	if stream.Usage != nil {
+		i.terminalUsage = stream.Usage
+	}
+
 	// Process the current chunk
 	if len(stream.Choices) > 0 {
 		choice := stream.Choices[0]
 
 		// Handle reasoning content (thinking) delta
 		if choice.Delta != nil && choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
-			// Close any open non-thinking blocks before starting/continuing thinking.
-			// Claude Code rejects content_block_delta/stop against a missing block
-			// with "Content block not found" and aborts the stream.
-			if i.hasToolContentStarted {
-				i.hasToolContentStarted = false
+			i.stopTextBlock(&events)
 
-				stopEvent := StreamEvent{
-					Type:  "content_block_stop",
-					Index: &i.contentIndex,
-				}
-				data, err := transformer.Marshal(stopEvent)
-				if err != nil {
-					return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
-				}
-				events = append(events, formatSSEEvent("content_block_stop", data))
-
-				i.contentIndex++
-			}
-			if i.hasTextContentStarted {
-				i.hasTextContentStarted = false
-
-				stopEvent := StreamEvent{
-					Type:  "content_block_stop",
-					Index: &i.contentIndex,
-				}
-				data, err := transformer.Marshal(stopEvent)
-				if err != nil {
-					return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
-				}
-				events = append(events, formatSSEEvent("content_block_stop", data))
-
-				i.contentIndex++
-			}
-
-			// Generate content_block_start if this is the first thinking content
-			if !i.hasThinkingContentStarted {
-				i.hasThinkingContentStarted = true
+			if i.thinkingBlockIndex == nil {
+				idx := i.nextIndex
+				i.thinkingBlockIndex = &idx
+				i.nextIndex++
 
 				startEvent := StreamEvent{
 					Type:  "content_block_start",
-					Index: &i.contentIndex,
+					Index: i.thinkingBlockIndex,
 					ContentBlock: &MessageContentBlock{
 						Type:      "thinking",
 						Thinking:  lo.ToPtr(""),
@@ -592,10 +587,9 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 				events = append(events, formatSSEEvent("content_block_start", data))
 			}
 
-			// Generate content_block_delta for thinking
 			deltaEvent := StreamEvent{
 				Type:  "content_block_delta",
-				Index: &i.contentIndex,
+				Index: i.thinkingBlockIndex,
 				Delta: &StreamDelta{
 					Type:     lo.ToPtr("thinking_delta"),
 					Thinking: choice.Delta.ReasoningContent,
@@ -608,13 +602,12 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 			events = append(events, formatSSEEvent("content_block_delta", data))
 		}
 
-		// Add signature delta only while a thinking block is open. Emitting a
-		// signature_delta without a matching content_block_start causes Claude
-		// Code to fail with "Content block not found".
-		if choice.Delta != nil && choice.Delta.ReasoningSignature != nil && *choice.Delta.ReasoningSignature != "" && i.hasThinkingContentStarted {
+		// Add signature delta if signature is available; it targets the active
+		// thinking block only.
+		if choice.Delta != nil && choice.Delta.ReasoningSignatureFor(model.APIFormatAnthropicMessage) != nil && *choice.Delta.ReasoningSignature != "" && i.thinkingBlockIndex != nil {
 			sigEvent := StreamEvent{
 				Type:  "content_block_delta",
-				Index: &i.contentIndex,
+				Index: i.thinkingBlockIndex,
 				Delta: &StreamDelta{
 					Type:      lo.ToPtr("signature_delta"),
 					Signature: choice.Delta.ReasoningSignature,
@@ -627,49 +620,19 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 			events = append(events, formatSSEEvent("content_block_delta", data))
 		}
 
-		// Handle content delta
+		// Handle content delta. Text and tool arguments may interleave; text
+		// gets its own stable block and never closes open tool blocks.
 		if choice.Delta != nil && choice.Delta.Content.Content != nil && *choice.Delta.Content.Content != "" {
-			// If the thinking content has started before the text content, we need to stop it
-			if i.hasThinkingContentStarted {
-				i.hasThinkingContentStarted = false
+			i.stopThinkingBlock(&events)
 
-				stopEvent := StreamEvent{
-					Type:  "content_block_stop",
-					Index: &i.contentIndex,
-				}
-				data, err := transformer.Marshal(stopEvent)
-				if err != nil {
-					return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
-				}
-				events = append(events, formatSSEEvent("content_block_stop", data))
-
-				i.contentIndex++
-			}
-
-			// If the tool content has started before the content block, we need to stop it
-			if i.hasToolContentStarted {
-				i.hasToolContentStarted = false
-
-				stopEvent := StreamEvent{
-					Type:  "content_block_stop",
-					Index: &i.contentIndex,
-				}
-				data, err := transformer.Marshal(stopEvent)
-				if err != nil {
-					return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
-				}
-				events = append(events, formatSSEEvent("content_block_stop", data))
-
-				i.contentIndex++
-			}
-
-			// Generate content_block_start if this is the first content
-			if !i.hasTextContentStarted {
-				i.hasTextContentStarted = true
+			if i.textBlockIndex == nil {
+				idx := i.nextIndex
+				i.textBlockIndex = &idx
+				i.nextIndex++
 
 				startEvent := StreamEvent{
 					Type:  "content_block_start",
-					Index: &i.contentIndex,
+					Index: i.textBlockIndex,
 					ContentBlock: &MessageContentBlock{
 						Type: "text",
 						Text: lo.ToPtr(""),
@@ -682,10 +645,9 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 				events = append(events, formatSSEEvent("content_block_start", data))
 			}
 
-			// Generate content_block_delta
 			deltaEvent := StreamEvent{
 				Type:  "content_block_delta",
-				Index: &i.contentIndex,
+				Index: i.textBlockIndex,
 				Delta: &StreamDelta{
 					Type: lo.ToPtr("text_delta"),
 					Text: choice.Delta.Content.Content,
@@ -698,78 +660,31 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 			events = append(events, formatSSEEvent("content_block_delta", data))
 		}
 
-		// Handle tool calls
+		// Handle tool calls: one stable block per OpenAI tool index, blocks
+		// stay open concurrently until finish/DONE.
 		if choice.Delta != nil && len(choice.Delta.ToolCalls) > 0 {
-			// If the thinking content has started before the tool content, we need to stop it
-			if i.hasThinkingContentStarted {
-				i.hasThinkingContentStarted = false
+			i.stopThinkingBlock(&events)
+			// Note: text block stays open alongside tool blocks.
 
-				stopEvent := StreamEvent{
-					Type:  "content_block_stop",
-					Index: &i.contentIndex,
-				}
-				data, err := transformer.Marshal(stopEvent)
-				if err != nil {
-					return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
-				}
-				events = append(events, formatSSEEvent("content_block_stop", data))
-
-				i.contentIndex++
+			if i.toolBlockIndex == nil {
+				i.toolBlockIndex = make(map[int]int64)
 			}
-
-			// If the text content has started before the tool content, we need to stop it
-			if i.hasTextContentStarted {
-				i.hasTextContentStarted = false
-
-				stopEvent := StreamEvent{
-					Type:  "content_block_stop",
-					Index: &i.contentIndex,
-				}
-				data, err := transformer.Marshal(stopEvent)
-				if err != nil {
-					return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
-				}
-				events = append(events, formatSSEEvent("content_block_stop", data))
-
-				i.contentIndex++
-			}
-
-			// Initialize tool call index tracking if needed
-			if i.toolCallBlockIndex == nil {
-				i.toolCallBlockIndex = make(map[int]int64)
+			if i.toolBlockStopped == nil {
+				i.toolBlockStopped = make(map[int]bool)
 			}
 
 			for _, deltaToolCall := range choice.Delta.ToolCalls {
 				toolCallIndex := deltaToolCall.Index
 
-				// Initialize tool call if it doesn't exist
-				if _, seen := i.toolCallBlockIndex[toolCallIndex]; !seen {
-					// Only stop a previous tool block when one is actually open.
-					// Do NOT use `toolCallIndex > 0`: Responses API output_index
-					// commonly starts at 1 after a reasoning/message item, and a
-					// spurious content_block_stop makes Claude Code abort with
-					// "Content block not found".
-					if i.hasToolContentStarted {
-						stopEvent := StreamEvent{
-							Type:  "content_block_stop",
-							Index: &i.contentIndex,
-						}
-						data, err := transformer.Marshal(stopEvent)
-						if err != nil {
-							return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
-						}
-						events = append(events, formatSSEEvent("content_block_stop", data))
+				if _, seen := i.toolBlockIndex[toolCallIndex]; !seen {
+					i.toolBlockIndex[toolCallIndex] = i.nextIndex
+					i.toolBlockStopped[toolCallIndex] = false
+					i.nextIndex++
 
-						i.contentIndex++
-					}
-
-					i.hasToolContentStarted = true
-					i.toolCallBlockIndex[toolCallIndex] = i.contentIndex
-					blockIndex := i.contentIndex
-
+					startIndex := i.toolBlockIndex[toolCallIndex]
 					startEvent := StreamEvent{
 						Type:  "content_block_start",
-						Index: &blockIndex,
+						Index: &startIndex,
 						ContentBlock: &MessageContentBlock{
 							Type:  "tool_use",
 							ID:    deltaToolCall.ID,
@@ -782,31 +697,15 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 						return nil, fmt.Errorf("failed to marshal content_block_start event: %w", err)
 					}
 					events = append(events, formatSSEEvent("content_block_start", data))
+				}
 
-					// If the tool call has arguments, we need to generate a content_block_delta
-					if deltaToolCall.Function.Arguments != "" {
-						deltaEvent := StreamEvent{
-							Type:  "content_block_delta",
-							Index: &blockIndex,
-							Delta: &StreamDelta{
-								Type:        lo.ToPtr("input_json_delta"),
-								PartialJSON: &deltaToolCall.Function.Arguments,
-							},
-						}
-						data, err := transformer.Marshal(deltaEvent)
-						if err != nil {
-							return nil, fmt.Errorf("failed to marshal content_block_delta event: %w", err)
-						}
-						events = append(events, formatSSEEvent("content_block_delta", data))
-					}
-				} else if deltaToolCall.Function.Arguments != "" {
-					// Continue on the Anthropic block that was started for this
-					// upstream tool index — not necessarily the current contentIndex
-					// if another block was interleaved (defensive).
-					blockIndex := i.toolCallBlockIndex[toolCallIndex]
+				// Route fragments to the owning tool's block; drop them after
+				// the block was stopped.
+				if deltaToolCall.Function.Arguments != "" && !i.toolBlockStopped[toolCallIndex] {
+					idx := i.toolBlockIndex[toolCallIndex]
 					deltaEvent := StreamEvent{
 						Type:  "content_block_delta",
-						Index: &blockIndex,
+						Index: &idx,
 						Delta: &StreamDelta{
 							Type:        lo.ToPtr("input_json_delta"),
 							PartialJSON: &deltaToolCall.Function.Arguments,
@@ -825,20 +724,6 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 		if choice.FinishReason != nil && !i.hasFinished {
 			i.hasFinished = true
 
-			// Only emit content_block_stop if a content block is currently open
-			if i.hasTextContentStarted || i.hasThinkingContentStarted || i.hasToolContentStarted {
-				stopEvent := StreamEvent{
-					Type:  "content_block_stop",
-					Index: &i.contentIndex,
-				}
-				data, err := transformer.Marshal(stopEvent)
-				if err != nil {
-					return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
-				}
-				events = append(events, formatSSEEvent("content_block_stop", data))
-			}
-
-			// Convert finish reason to Anthropic format
 			var stopReason string
 			switch *choice.FinishReason {
 			case "stop":
@@ -851,50 +736,148 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 				stopReason = "end_turn"
 			}
 
-			// Store the stop reason, but don't generate message_delta yet
-			// We'll wait for the usage chunk to combine them
+			// Final usage is only known at the protocol terminal marker.
 			i.stopReason = &stopReason
-		}
-	}
 
-	// Handle usage chunk after finish_reason
-	if stream.Usage != nil && i.hasFinished && !i.messageStopped {
-		msgDeltaEvent := StreamEvent{
-			Type: "message_delta",
+			i.closeAllBlocks(&events)
 		}
-
-		if i.stopReason != nil {
-			msgDeltaEvent.Delta = &StreamDelta{
-				StopReason: i.stopReason,
-			}
-		}
-
-		msgDeltaEvent.Usage = i.convertUsage(stream.Usage)
-
-		data, err := transformer.Marshal(msgDeltaEvent)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal message_delta event: %w", err)
-		}
-		events = append(events, formatSSEEvent("message_delta", data))
-
-		// Generate message_stop
-		msgStopEvent := StreamEvent{
-			Type: "message_stop",
-		}
-		data, err = transformer.Marshal(msgStopEvent)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal message_stop event: %w", err)
-		}
-		events = append(events, formatSSEEvent("message_stop", data))
-
-		i.messageStopped = true
 	}
 
 	if len(events) == 0 {
 		return nil, nil
 	}
 
-	// Join events with newlines for SSE format
+	return joinSSEEvents(events), nil
+}
+
+func (i *MessagesInbound) finalizeMessage() ([][]byte, error) {
+	if i.messageStopped {
+		return nil, nil
+	}
+
+	var events [][]byte
+
+	i.closeAllBlocks(&events)
+
+	// No finish reason ever arrived (EOF without finish): still emit a
+	// terminal pair so the client protocol completes.
+	stopReason := "end_turn"
+	if i.stopReason != nil {
+		stopReason = *i.stopReason
+	} else if len(i.toolBlockIndex) > 0 {
+		stopReason = "tool_use"
+	}
+
+	msgDeltaEvent := StreamEvent{
+		Type: "message_delta",
+		Delta: &StreamDelta{
+			StopReason: &stopReason,
+		},
+	}
+
+	if i.terminalUsage != nil {
+		msgDeltaEvent.Usage = i.convertUsage(i.terminalUsage)
+	}
+
+	data, err := transformer.Marshal(msgDeltaEvent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal message_delta event: %w", err)
+	}
+	events = append(events, formatSSEEvent("message_delta", data))
+
+	// Generate message_stop
+	msgStopEvent := StreamEvent{
+		Type: "message_stop",
+	}
+	data, err = transformer.Marshal(msgStopEvent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal message_stop event: %w", err)
+	}
+	events = append(events, formatSSEEvent("message_stop", data))
+
+	i.messageStopped = true
+
+	return events, nil
+}
+
+// closeAllBlocks closes every still-open block, each exactly once.
+func (i *MessagesInbound) closeAllBlocks(events *[][]byte) {
+	i.stopThinkingBlock(events)
+	i.stopTextBlock(events)
+	i.stopAllToolBlocks(events)
+}
+
+// stopThinkingBlock closes the thinking block, if open.
+func (i *MessagesInbound) stopThinkingBlock(events *[][]byte) {
+	if i.thinkingBlockIndex == nil {
+		return
+	}
+	idx := *i.thinkingBlockIndex
+	i.thinkingBlockIndex = nil
+
+	stopEvent := StreamEvent{
+		Type:  "content_block_stop",
+		Index: &idx,
+	}
+	data, err := transformer.Marshal(stopEvent)
+	if err != nil {
+		return
+	}
+	*events = append(*events, formatSSEEvent("content_block_stop", data))
+}
+
+// stopTextBlock closes the text block, if open.
+func (i *MessagesInbound) stopTextBlock(events *[][]byte) {
+	if i.textBlockIndex == nil {
+		return
+	}
+	idx := *i.textBlockIndex
+	i.textBlockIndex = nil
+
+	stopEvent := StreamEvent{
+		Type:  "content_block_stop",
+		Index: &idx,
+	}
+	data, err := transformer.Marshal(stopEvent)
+	if err != nil {
+		return
+	}
+	*events = append(*events, formatSSEEvent("content_block_stop", data))
+}
+
+// stopAllToolBlocks closes every open tool block exactly once, in ascending
+// tool index order.
+func (i *MessagesInbound) stopAllToolBlocks(events *[][]byte) {
+	if len(i.toolBlockIndex) == 0 {
+		return
+	}
+
+	indices := make([]int, 0, len(i.toolBlockIndex))
+	for toolIdx := range i.toolBlockIndex {
+		if !i.toolBlockStopped[toolIdx] {
+			indices = append(indices, toolIdx)
+		}
+	}
+	sort.Ints(indices)
+
+	for _, toolIdx := range indices {
+		i.toolBlockStopped[toolIdx] = true
+		idx := i.toolBlockIndex[toolIdx]
+
+		stopEvent := StreamEvent{
+			Type:  "content_block_stop",
+			Index: &idx,
+		}
+		data, err := transformer.Marshal(stopEvent)
+		if err != nil {
+			continue
+		}
+		*events = append(*events, formatSSEEvent("content_block_stop", data))
+	}
+}
+
+// joinSSEEvents concatenates events with newlines for SSE format.
+func joinSSEEvents(events [][]byte) []byte {
 	result := make([]byte, 0)
 	for idx, event := range events {
 		if idx > 0 {
@@ -902,8 +885,7 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 		}
 		result = append(result, event...)
 	}
-
-	return result, nil
+	return result
 }
 
 func (i *MessagesInbound) convertUsage(usage *model.Usage) *Usage {
@@ -918,7 +900,12 @@ func (i *MessagesInbound) convertUsage(usage *model.Usage) *Usage {
 	return anthropicUsage
 }
 
+// GetInternalResponse returns the complete internal response for logging, statistics, etc.
+// For streaming: aggregates all stored stream chunks into a complete response
+// For non-streaming: returns the stored response
 // foldStreamChunk merges one stream chunk into the running aggregation.
+// 语义与「缓存全部 chunks 再一次性聚合」一致（content/推理签名 append、tool merge、refusal append），
+// 但内存只保留最终结果，避免长流/大图/并发下把每个 SSE chunk 完整对象都 append 进切片。
 func (i *MessagesInbound) foldStreamChunk(chunk *model.InternalLLMResponse) {
 	if chunk == nil {
 		return
@@ -978,12 +965,21 @@ func (i *MessagesInbound) foldStreamChunk(chunk *model.InternalLLMResponse) {
 				*existingChoice.Message.ReasoningContent += *delta.ReasoningContent
 			}
 
+			if delta.ReasoningSignature != nil {
+				if existingChoice.Message.ReasoningSignature == nil {
+					existingChoice.Message.ReasoningSignature = new(string)
+				}
+				*existingChoice.Message.ReasoningSignature += *delta.ReasoningSignature
+				existingChoice.Message.ReasoningSignatureFormat = delta.ReasoningSignatureFormat
+			}
+
 			for _, toolCall := range delta.ToolCalls {
 				existingChoice.Message.ToolCalls = mergeToolCall(existingChoice.Message.ToolCalls, toolCall)
 			}
 
 			if delta.Refusal != "" {
-				existingChoice.Message.Refusal = delta.Refusal
+				// Append（而非覆盖）：拒答可能跨多个 chunk 到达。
+				existingChoice.Message.Refusal += delta.Refusal
 			}
 		}
 
@@ -1000,14 +996,14 @@ func (i *MessagesInbound) foldStreamChunk(chunk *model.InternalLLMResponse) {
 	}
 }
 
-// GetInternalResponse returns the complete internal response for logging, statistics, etc.
-// For streaming: returns the online-aggregated response
-// For non-streaming: returns the stored response
 func (i *MessagesInbound) GetInternalResponse(ctx context.Context) (*model.InternalLLMResponse, error) {
+	// Return stored response for non-stream scenario
 	if i.storedResponse != nil {
 		return i.storedResponse, nil
 	}
 
+	// streaming：返回在线聚合结果（foldStreamChunk 在 TransformStream 内逐 chunk 累积，
+	// 语义与缓存全部 chunks 再一次性聚合一致，但内存只保留最终结果）
 	if i.streamResponse == nil {
 		return nil, nil
 	}
