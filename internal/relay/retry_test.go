@@ -423,6 +423,56 @@ func TestExtractUpstreamErrorDetailFromWrappedAttemptError(t *testing.T) {
 	}
 }
 
+func TestWriteClientTerminalErrorRestoresPrivacyPlaceholder(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	pm := newPrivacyPlaceholderMap()
+	ph := pm.mask("13812345678")
+	upstreamBody := `{"error":{"message":"invalid phone ` + ph + `","type":"invalid_request_error","code":"invalid_request_error"}}`
+	err := fmt.Errorf("upstream error: 400: %s", upstreamBody)
+
+	writeClientTerminalError(c, http.StatusBadRequest, err, pm)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "⟪PII-") {
+		t.Fatalf("placeholder leaked in error body: %s", body)
+	}
+	if !strings.Contains(body, "13812345678") {
+		t.Fatalf("placeholder not restored in error body: %s", body)
+	}
+}
+
+func TestWriteClientTerminalErrorRestoreKeepsValidJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	pm := newPrivacyPlaceholderMap()
+	ph := pm.mask(`pa"ss`) // 原文含 JSON 特殊字符
+	upstreamBody := `{"error":{"message":"bad ` + ph + `","type":"invalid_request_error"}}`
+	err := fmt.Errorf("upstream error: 400: %s", upstreamBody)
+
+	writeClientTerminalError(c, http.StatusBadRequest, err, pm)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	body := w.Body.Bytes()
+	if !jsonAPI.Valid(body) {
+		t.Fatalf("restored error body is not valid JSON: %s", body)
+	}
+	if !strings.Contains(string(body), `pa\"ss`) {
+		t.Fatalf("restored value missing or unescaped: %s", body)
+	}
+}
+
 func TestWriteClientTerminalErrorPassesUpstreamJSONBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -432,7 +482,7 @@ func TestWriteClientTerminalErrorPassesUpstreamJSONBody(t *testing.T) {
 	upstreamBody := `{"error":{"message":"输入内容过长，已超过当前模型的上下文限制，请减少历史消息、文件内容或提示词后重试。","type":"invalid_request_error","param":"","code":"context_length_exceeded"}}`
 	err := fmt.Errorf("channel demo adapter=openai-chat attempt 1/4: upstream error: 400: %s", upstreamBody)
 
-	writeClientTerminalError(c, http.StatusBadRequest, err)
+	writeClientTerminalError(c, http.StatusBadRequest, err, nil)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusBadRequest, w.Body.String())
@@ -455,7 +505,7 @@ func TestWriteClientTerminalErrorWrapsPlainTextBody(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
 	err := errors.New("upstream error: 400: prompt is too long")
-	writeClientTerminalError(c, http.StatusBadRequest, err)
+	writeClientTerminalError(c, http.StatusBadRequest, err, nil)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusBadRequest, w.Body.String())
@@ -483,7 +533,7 @@ func TestWriteClientTerminalErrorFallsBackToBadGatewayWithoutHTTPStatus(t *testi
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
-	writeClientTerminalError(c, 0, errors.New("connection refused"))
+	writeClientTerminalError(c, 0, errors.New("connection refused"), nil)
 
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusBadGateway, w.Body.String())

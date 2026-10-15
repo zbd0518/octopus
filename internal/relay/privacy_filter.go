@@ -277,6 +277,18 @@ func restorePrivacyPlaceholders(resp *model.InternalLLMResponse, pm *privacyPlac
 				*part.Text = pm.restore(*part.Text)
 			}
 		}
+		// reasoning_content / reasoning：推理模型常在思维链里复述用户输入，
+		// 复述的正是脱敏后的占位符，必须一并还原（与流式 restoreChunk 对齐）。
+		if msg.ReasoningContent != nil && *msg.ReasoningContent != "" {
+			*msg.ReasoningContent = pm.restore(*msg.ReasoningContent)
+		}
+		if msg.Reasoning != nil && *msg.Reasoning != "" {
+			*msg.Reasoning = pm.restore(*msg.Reasoning)
+		}
+		// refusal：拒答文本同样可能回显占位符。
+		if msg.Refusal != "" {
+			msg.Refusal = pm.restore(msg.Refusal)
+		}
 		for j := range msg.ToolCalls {
 			tc := &msg.ToolCalls[j]
 			if tc.Function.Arguments != "" {

@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -9,21 +10,27 @@ import (
 
 // privacyStreamRestorer 流式响应的占位符还原（issue 020）。
 //
-// 上游可能把占位符（⟪PII-N⟫）按 token 边界拆进多个 SSE 事件的 delta 文本里。
+// 上游可能把占位符（⟪PII-N⟫）按 token 边界拆进多个 SSE 事件的文本里。
 // 逐 chunk 独立替换会漏掉跨 chunk 的占位符。本还原器作用在内部 chunk 的
-// Delta/Message 文本上（outAdapter 转换后、inAdapter 序列化前），持有尾部
-// 「可能是占位符前缀」的 carry，与下一个 chunk 的文本拼接后再扫描。
+// Delta/Message 文本上（outAdapter 转换后、inAdapter 序列化前），为每个
+// 「逻辑流」持有尾部「可能是占位符前缀」的 carry，与下一个 chunk 的文本
+// 拼接后再扫描。
+//
+// 每个文本字段（content / 每个 multiple_content part / reasoning /
+// 每个 tool call 的 arguments / refusal）各自维护 carry，避免不同字段之间的
+// 半截占位符互相污染；reasoning 与 tool arguments 同样走 carry——上游按 token
+// 边界切分这些字段，只还原「chunk 内完整占位符」会漏掉绝大多数被拆开的占位符。
 //
 // 已知边界：流结束时若 carry 仍有残留（上游发出被截断的占位符），残留字节
 // 随尝试结束丢弃——只丢失几个占位符骨架字符，无隐私泄漏。仅当请求发生过
 // 脱敏（privacyMap 非空）时启用，零脱敏请求零开销。
 type privacyStreamRestorer struct {
 	pm    *privacyPlaceholderMap
-	carry []byte // 尾部扣留的部分占位符前缀，与下一 chunk 文本拼接
+	carry map[string][]byte // 逻辑流 key → 尾部扣留的部分占位符前缀
 }
 
 func newPrivacyStreamRestorer(pm *privacyPlaceholderMap) *privacyStreamRestorer {
-	return &privacyStreamRestorer{pm: pm}
+	return &privacyStreamRestorer{pm: pm, carry: make(map[string][]byte)}
 }
 
 // placeholderLead 占位符首字符 ⟪（UTF-8 3 字节）。扫描以它为锚点。
@@ -32,9 +39,8 @@ const placeholderLead = "⟪"
 // maxPlaceholderDigits 占位符序号最大位数（防御上限）。
 const maxPlaceholderDigits = 10
 
-// restoreChunk 对内部 chunk 做占位符还原（就地改写）。content 走 carry 语义
-// （支持跨 chunk 拆分）；reasoning 与 tool arguments 只还原 chunk 内完整的
-// 占位符（片段化 JSON 中跨 chunk 还原收益低，见方法注释）。
+// restoreChunk 对内部 chunk 做占位符还原（就地改写）。所有文本字段都走 carry
+// 语义（支持跨 chunk 拆分），每个字段用独立的 carry key 隔离。
 func (r *privacyStreamRestorer) restoreChunk(stream *tmodel.InternalLLMResponse) {
 	if r == nil || r.pm == nil || stream == nil {
 		return
@@ -50,36 +56,40 @@ func (r *privacyStreamRestorer) restoreChunk(stream *tmodel.InternalLLMResponse)
 		if msg == nil {
 			continue
 		}
+		base := strconv.Itoa(choice.Index)
 		if msg.Content.Content != nil && *msg.Content.Content != "" {
-			*msg.Content.Content = r.restoreText(*msg.Content.Content)
+			*msg.Content.Content = r.restoreText(base+":content", *msg.Content.Content)
 		}
 		for j := range msg.Content.MultipleContent {
 			part := &msg.Content.MultipleContent[j]
 			if part.Type == "text" && part.Text != nil && *part.Text != "" {
-				*part.Text = r.restoreText(*part.Text)
+				*part.Text = r.restoreText(base+":part:"+strconv.Itoa(j), *part.Text)
 			}
 		}
-		// reasoning 与 tool arguments：只还原 chunk 内完整占位符，不做 carry
 		if msg.ReasoningContent != nil && *msg.ReasoningContent != "" {
-			*msg.ReasoningContent = r.restoreCompleteOnly(*msg.ReasoningContent)
+			*msg.ReasoningContent = r.restoreText(base+":reasoning", *msg.ReasoningContent)
 		}
 		if msg.Reasoning != nil && *msg.Reasoning != "" {
-			*msg.Reasoning = r.restoreCompleteOnly(*msg.Reasoning)
+			*msg.Reasoning = r.restoreText(base+":reasoning_alt", *msg.Reasoning)
+		}
+		if msg.Refusal != "" {
+			msg.Refusal = r.restoreText(base+":refusal", msg.Refusal)
 		}
 		for j := range msg.ToolCalls {
 			tc := &msg.ToolCalls[j]
 			if tc.Function.Arguments != "" {
-				tc.Function.Arguments = r.restoreCompleteOnly(tc.Function.Arguments)
+				tc.Function.Arguments = r.restoreText(base+":tool:"+strconv.Itoa(tc.Index), tc.Function.Arguments)
 			}
 		}
 	}
 }
 
 // restoreText 带 carry 的文本还原：还原完整占位符，尾部部分前缀扣留到下一 chunk。
-func (r *privacyStreamRestorer) restoreText(text string) string {
-	if len(r.carry) > 0 {
-		text = string(r.carry) + text
-		r.carry = r.carry[:0]
+// key 标识逻辑流（choice + 字段），不同逻辑流的 carry 互不影响。
+func (r *privacyStreamRestorer) restoreText(key, text string) string {
+	if held := r.carry[key]; len(held) > 0 {
+		text = string(held) + text
+		delete(r.carry, key)
 	}
 	var out strings.Builder
 	i := 0
@@ -91,7 +101,7 @@ func (r *privacyStreamRestorer) restoreText(text string) string {
 			rest := text[i:]
 			if hold := leadPrefixHoldLen(rest); hold > 0 {
 				out.WriteString(rest[:len(rest)-hold])
-				r.carry = append(r.carry[:0], rest[len(rest)-hold:]...)
+				r.carry[key] = append(r.carry[key][:0], rest[len(rest)-hold:]...)
 				return out.String()
 			}
 			out.WriteString(rest)
@@ -109,7 +119,7 @@ func (r *privacyStreamRestorer) restoreText(text string) string {
 		}
 		// 不完整：可能是被拆断的占位符前缀 → 扣留到下一 chunk；否则放行锚点继续扫
 		if isPatternPrefix(text[i:]) {
-			r.carry = append(r.carry[:0], text[i:]...)
+			r.carry[key] = append(r.carry[key][:0], text[i:]...)
 			return out.String()
 		}
 		out.WriteString(placeholderLead)
@@ -130,36 +140,17 @@ func leadPrefixHoldLen(s string) int {
 	return 0
 }
 
-// restoreCompleteOnly 无 carry 的还原：只替换 chunk 内完整占位符。
-func (r *privacyStreamRestorer) restoreCompleteOnly(text string) string {
-	if !strings.Contains(text, placeholderLead) {
-		return text
-	}
-	var out strings.Builder
-	i := 0
-	for i < len(text) {
-		idx := strings.Index(text[i:], placeholderLead)
-		if idx < 0 {
-			out.WriteString(text[i:])
-			break
-		}
-		abs := i + idx
-		out.WriteString(text[i:abs])
-		i = abs
-		if end := matchPlaceholder(text[i:]); end > 0 {
-			out.WriteString(r.pm.restore(text[i : i+end]))
-			i += end
-			continue
-		}
-		out.WriteString(placeholderLead)
-		i += len(placeholderLead)
-	}
-	return out.String()
-}
-
-// HasPending 流结束时 carry 是否仍有残留（被截断的占位符骨架，随尝试丢弃）。
+// HasPending 流结束时是否有 carry 残留（被截断的占位符骨架，随尝试丢弃）。
 func (r *privacyStreamRestorer) HasPending() bool {
-	return r != nil && len(r.carry) > 0
+	if r == nil {
+		return false
+	}
+	for _, held := range r.carry {
+		if len(held) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // isPatternPrefix 判断 s 是否可能是占位符 ⟪PII-<digits>⟫ 的真前缀（可被后续数据补全）。

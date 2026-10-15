@@ -158,7 +158,7 @@ func TestPrivacyStreamRestorer_LoneBraceReleased(t *testing.T) {
 	}
 }
 
-func TestPrivacyStreamRestorer_ToolCallArgumentsCompleteOnly(t *testing.T) {
+func TestPrivacyStreamRestorer_ToolCallArgumentsRestored(t *testing.T) {
 	pm := newPrivacyPlaceholderMap()
 	ph := pm.mask("13812345678")
 	r := pm.newStreamRestorer()
@@ -178,6 +178,29 @@ func TestPrivacyStreamRestorer_ToolCallArgumentsCompleteOnly(t *testing.T) {
 	}
 }
 
+func TestPrivacyStreamRestorer_ToolCallArgumentsSplitAcrossChunks(t *testing.T) {
+	pm := newPrivacyPlaceholderMap()
+	ph := pm.mask("13812345678")
+	r := pm.newStreamRestorer()
+
+	// 上游按 token 边界把 arguments 拆开，占位符被切成两半
+	first := &tmodel.InternalLLMResponse{Choices: []tmodel.Choice{{Delta: &tmodel.Message{
+		ToolCalls: []tmodel.ToolCall{{Index: 0, Function: tmodel.FunctionCall{Name: "lookup", Arguments: `{"phone":"` + ph[:4]}}},
+	}}}}
+	second := &tmodel.InternalLLMResponse{Choices: []tmodel.Choice{{Delta: &tmodel.Message{
+		ToolCalls: []tmodel.ToolCall{{Index: 0, Function: tmodel.FunctionCall{Arguments: ph[4:] + `"}`}}},
+	}}}}
+	r.restoreChunk(first)
+	r.restoreChunk(second)
+	got := first.Choices[0].Delta.ToolCalls[0].Function.Arguments + second.Choices[0].Delta.ToolCalls[0].Function.Arguments
+	if got != `{"phone":"13812345678"}` {
+		t.Fatalf("split tool arguments not restored: %q", got)
+	}
+	if r.HasPending() {
+		t.Fatal("carry should be consumed after the placeholder completes")
+	}
+}
+
 func TestPrivacyStreamRestorer_ReasoningRestored(t *testing.T) {
 	pm := newPrivacyPlaceholderMap()
 	ph := pm.mask("sk-abcdefghij1234567890")
@@ -190,5 +213,68 @@ func TestPrivacyStreamRestorer_ReasoningRestored(t *testing.T) {
 	r.restoreChunk(chunk)
 	if got := *chunk.Choices[0].Delta.ReasoningContent; got != "thinking about sk-abcdefghij1234567890" {
 		t.Fatalf("reasoning not restored: %q", got)
+	}
+}
+
+func TestPrivacyStreamRestorer_ReasoningSplitAcrossChunks(t *testing.T) {
+	pm := newPrivacyPlaceholderMap()
+	ph := pm.mask("sk-abcdefghij1234567890")
+	r := pm.newStreamRestorer()
+
+	r1 := "thinking " + ph[:5]
+	r2 := ph[5:]
+	first := &tmodel.InternalLLMResponse{Choices: []tmodel.Choice{{Delta: &tmodel.Message{ReasoningContent: &r1}}}}
+	second := &tmodel.InternalLLMResponse{Choices: []tmodel.Choice{{Delta: &tmodel.Message{ReasoningContent: &r2}}}}
+	r.restoreChunk(first)
+	r.restoreChunk(second)
+	got := *first.Choices[0].Delta.ReasoningContent + *second.Choices[0].Delta.ReasoningContent
+	if got != "thinking sk-abcdefghij1234567890" {
+		t.Fatalf("split reasoning not restored: %q", got)
+	}
+}
+
+func TestPrivacyStreamRestorer_RefusalRestored(t *testing.T) {
+	pm := newPrivacyPlaceholderMap()
+	ph := pm.mask("13812345678")
+	r := pm.newStreamRestorer()
+
+	chunk := &tmodel.InternalLLMResponse{Choices: []tmodel.Choice{{Delta: &tmodel.Message{Refusal: "I cannot share " + ph}}}}
+	r.restoreChunk(chunk)
+	if got := chunk.Choices[0].Delta.Refusal; got != "I cannot share 13812345678" {
+		t.Fatalf("refusal not restored: %q", got)
+	}
+}
+
+func TestPrivacyStreamRestorer_FieldsDoNotShareCarry(t *testing.T) {
+	pm := newPrivacyPlaceholderMap()
+	ph1 := pm.mask("13812345678")       // ⟪PII-1⟫
+	ph2 := pm.mask("alice@example.com") // ⟪PII-2⟫
+	r := pm.newStreamRestorer()
+
+	// 同一 chunk 里 content 以 ph1 的半截结尾、reasoning 以 ph2 的半截结尾：
+	// 两者的 carry 必须互相隔离，否则 chunk2 里会串味。
+	c1 := "content " + ph1[:5]
+	rc1 := "reason " + ph2[:7]
+	chunk1 := &tmodel.InternalLLMResponse{Choices: []tmodel.Choice{{Index: 0, Delta: &tmodel.Message{
+		Content:          tmodel.MessageContent{Content: &c1},
+		ReasoningContent: &rc1,
+	}}}}
+	r.restoreChunk(chunk1)
+
+	c2 := ph1[5:]
+	rc2 := ph2[7:]
+	chunk2 := &tmodel.InternalLLMResponse{Choices: []tmodel.Choice{{Index: 0, Delta: &tmodel.Message{
+		Content:          tmodel.MessageContent{Content: &c2},
+		ReasoningContent: &rc2,
+	}}}}
+	r.restoreChunk(chunk2)
+
+	gotContent := *chunk1.Choices[0].Delta.Content.Content + *chunk2.Choices[0].Delta.Content.Content
+	gotReasoning := *chunk1.Choices[0].Delta.ReasoningContent + *chunk2.Choices[0].Delta.ReasoningContent
+	if gotContent != "content 13812345678" {
+		t.Fatalf("content carry crossed fields: %q", gotContent)
+	}
+	if gotReasoning != "reason alice@example.com" {
+		t.Fatalf("reasoning carry crossed fields: %q", gotReasoning)
 	}
 }

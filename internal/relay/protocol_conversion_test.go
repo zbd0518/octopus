@@ -198,7 +198,7 @@ func TestRelayProtocolErrorKeepsStatusAndDetail(t *testing.T) {
 		t.Fatalf("status = %d, want 400", got)
 	}
 	ra, recorder := newStreamTestAttempt(t, context.Background())
-	writeClientTerminalError(ra.c, http.StatusBadRequest, wrapped)
+	writeClientTerminalError(ra.c, http.StatusBadRequest, wrapped, nil)
 	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), `"code":"invalid_prompt"`) {
 		t.Fatalf("protocol detail lost: status=%d body=%s", recorder.Code, recorder.Body.String())
 	}

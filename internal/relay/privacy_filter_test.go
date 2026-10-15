@@ -209,6 +209,38 @@ func TestRestorePrivacyPlaceholders_ToolCallArguments(t *testing.T) {
 	_ = ph
 }
 
+func TestRestorePrivacyPlaceholders_ReasoningAndRefusal(t *testing.T) {
+	pm := newPrivacyPlaceholderMap()
+	ph := pm.mask("13812345678")
+
+	content := "ok"
+	reasoning := "the user's number is " + ph
+	altReasoning := "alt " + ph
+	resp := &tmodel.InternalLLMResponse{
+		Choices: []tmodel.Choice{{
+			Message: &tmodel.Message{
+				Content:          tmodel.MessageContent{Content: &content},
+				ReasoningContent: &reasoning,
+				Reasoning:        &altReasoning,
+				Refusal:          "I cannot share " + ph,
+			},
+		}},
+	}
+
+	restorePrivacyPlaceholders(resp, pm)
+
+	msg := resp.Choices[0].Message
+	if got := *msg.ReasoningContent; got != "the user's number is 13812345678" {
+		t.Fatalf("reasoning_content not restored: %q", got)
+	}
+	if got := *msg.Reasoning; got != "alt 13812345678" {
+		t.Fatalf("reasoning not restored: %q", got)
+	}
+	if got := msg.Refusal; got != "I cannot share 13812345678" {
+		t.Fatalf("refusal not restored: %q", got)
+	}
+}
+
 func TestRestorePrivacyPlaceholders_NilMap(t *testing.T) {
 	content := "no placeholders ⟨never⟩"
 	resp := &tmodel.InternalLLMResponse{

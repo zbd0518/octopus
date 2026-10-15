@@ -919,12 +919,16 @@ func clientErrorType(statusCode int) string {
 // 这样下游（如 omp/oh-my-pi）才能识别 context_length_exceeded / prompt is too long
 // 等溢出信号并自动触发上下文压缩，而不是被网关伪装错误挡住。
 //
+// 隐私保护（issue 020）：上游错误体可能回显脱敏后的占位符，pm 非空时在序列化前
+// 先还原文本，避免占位符泄漏到下游（先还原再 JSON 处理，避免把含 JSON 特殊字符的
+// 原文注入已序列化的 JSON 造成非法 body）。
+//
 // 策略：
 //  1. statusCode>=400 且错误中带有上游 JSON body → 原样 HTTP 状态 + 原样 body；
 //  2. 有上游纯文本 body → 包成 OpenAI 兼容 {"error":{...}}，状态码仍用上游；
 //  3. 没有可用 body → 合成最小 OpenAI 兼容错误；
 //  4. 非 HTTP 错误 / 无效状态 → 回退 BadGateway。
-func writeClientTerminalError(c *gin.Context, statusCode int, err error) {
+func writeClientTerminalError(c *gin.Context, statusCode int, err error, pm *privacyPlaceholderMap) {
 	if c == nil || c.Writer.Written() {
 		return
 	}
@@ -935,6 +939,9 @@ func writeClientTerminalError(c *gin.Context, statusCode int, err error) {
 
 	var protocolErr *model.ResponseError
 	if errors.As(err, &protocolErr) {
+		if pm != nil {
+			protocolErr.Detail.Message = pm.restore(protocolErr.Detail.Message)
+		}
 		if body, marshalErr := jsonAPI.Marshal(protocolErr); marshalErr == nil {
 			c.Data(statusCode, "application/json", body)
 			c.Abort()
@@ -945,6 +952,9 @@ func writeClientTerminalError(c *gin.Context, statusCode int, err error) {
 	bodyText := strings.TrimSpace(detail)
 	if prefix := fmt.Sprintf("%d: ", statusCode); strings.HasPrefix(bodyText, prefix) {
 		bodyText = strings.TrimSpace(bodyText[len(prefix):])
+	}
+	if pm != nil {
+		bodyText = pm.restore(bodyText)
 	}
 
 	if bodyText != "" && bodyText != "response body too large" {
@@ -1997,7 +2007,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					req.metrics.Save(false, lastErr, currentAttempts)
 					// 400 类客户端错误不再重试，把上游错误体原样回给下游，
 					// 避免吞成 502 导致客户端无法识别 context_length_exceeded。
-					writeClientTerminalError(req.c, result.Decision.Code, result.Err)
+					writeClientTerminalError(req.c, result.Decision.Code, result.Err, req.privacyMap)
 					return nil, result.Err
 				case ScopeAbortAll:
 					lastErr = result.Err

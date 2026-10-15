@@ -164,6 +164,17 @@ created: 2026-09-18
 
 五步全部完成。`go build ./...`、`go test ./internal/relay/ ./internal/relay/privacy/ ./internal/model/`、`go vet` 全绿；前端 eslint 与 i18n 测试通过。
 
+### 第 6 步：响应还原补漏（2026-10-15）
+
+审核响应还原覆盖度，发现多处占位符未还原（用户实测在返回数据里看到 `⟪PII-N⟫`）。根因：还原只覆盖 `content` / `multiple_content(text)` / `tool_calls.arguments`，而响应里还有 `reasoning_content` / `reasoning` / `refusal`，且流式对 reasoning / tool args 只还原「chunk 内完整占位符」。
+
+- **非流式**：`restorePrivacyPlaceholders`（`privacy_filter.go`）补 `ReasoningContent` / `Reasoning` / `Refusal`，与流式 `restoreChunk` 对齐。推理模型常在思维链里复述用户输入，复述的正是脱敏后的占位符。
+- **流式**：`privacy_stream.go` 重构 carry 为 `map[string][]byte`，按「choice + 字段」逻辑流隔离，reasoning / tool arguments / refusal 也走 carry（上游按 token 边界切分这些字段，只还原完整占位符会漏掉绝大多数被拆开的占位符）；删除 `restoreCompleteOnly`，`HasPending` 改为遍历 map。
+- **上游错误体**：`writeClientTerminalError` 增加 `pm *privacyPlaceholderMap` 参数，回客户端前还原错误体（上游报错回显请求时会带出占位符）；`executeRelay` 传 `req.privacyMap`，media 路径传 `nil`。
+- 测试：新增非流式 reasoning/refusal、流式拆分 reasoning/拆分 tool args/refusal、字段 carry 隔离、错误体还原等用例；原 `ToolCallArgumentsCompleteOnly` 更名为 `ToolCallArgumentsRestored`。
+- 验证：`go build ./...`、`go vet ./internal/relay/...`、`go test ./internal/relay/...` 全绿。
+- 与方案偏差：无。
+
 ### 构建与端到端验证（2026-09-19）
 
 - **本地可执行文件已构建**：`build/bin/octopus-windows-x86_64.exe`（69.4 MB，含内嵌前端，`static/out` 为 9-18 重建）。流程：`pnpm build` → `web/out` 移到 `static/out` → `go build -tags jsoniter -ldflags`（Version/BuildTime/Author/Commit 从 git 注入）。`version` 子命令验证元数据正确。
