@@ -1294,6 +1294,17 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			}
 		case r, ok := <-results:
 			if !ok {
+				// 结果通道关闭既可能是上游真的提前断流，也可能是本次 attempt 的
+				// 上下文到期（attempt_time_out / 全局上游超时）后传输层关闭响应体。
+				// 先区分二者，避免把自身超时误报成上游断流——分组配了 20s 转发
+				// 超时时，长回答被掐断却记成 "upstream stream ended before
+				// completion: unexpected EOF"，会严重误导排障。
+				if ctxErr := ctx.Err(); errors.Is(ctxErr, context.DeadlineExceeded) {
+					if ra.attemptTimeOutSec > 0 && ra.operationCtx.Err() == nil {
+						return fmt.Errorf("attempt timeout (%ds) while streaming: %w", ra.attemptTimeOutSec, ctxErr)
+					}
+					return fmt.Errorf("stream interrupted: %w", ctxErr)
+				}
 				// A closed response body alone is not evidence of completed generation.
 				if len(seenChoices) == 0 || len(finishedChoices) != len(seenChoices) {
 					return fmt.Errorf("upstream stream ended before completion: %w", io.ErrUnexpectedEOF)
