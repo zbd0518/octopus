@@ -741,8 +741,8 @@ export function GroupEditor({
                                 ) : null}
                             </div>
 
-                            {/* ── 高级配置（低频字段折叠） ── */}
-                            <Accordion type="single" collapsible className="w-full">
+                            {/* ── 高级配置（默认展开，低频字段可直接编辑） ── */}
+                            <Accordion type="single" collapsible defaultValue="advanced" className="w-full">
                                 <AccordionItem value="advanced" className="border-none">
                                     <AccordionTrigger className="py-2 text-xs text-muted-foreground hover:text-foreground hover:no-underline">
                                         <span className="inline-flex items-center gap-1.5">

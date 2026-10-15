@@ -117,3 +117,7 @@ test('shared editor view keeps form mounted while switching to results', () => {
     assert.match(shared, /resultsTab/);
     assert.match(shared, /setView\('results'\)/);
 });
+
+test('group editor advanced settings expand by default in create and edit dialogs', () => {
+    assert.match(editor, /<Accordion type="single" collapsible defaultValue="advanced"/);
+});
