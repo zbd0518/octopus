@@ -3331,6 +3331,22 @@
         "noNew": "No new keys added ({skipped} duplicates skipped)",
         "success": "Imported {added} keys, skipped {skipped} duplicates"
       },
+      "bulkBase64": {
+        "button": "Bulk Import Base64",
+        "title": "Bulk Import Base64 Keys",
+        "description": "Paste Base64-encoded secrets. They are decoded back to plaintext keys and appended to this channel.",
+        "placeholder": "One Base64 string per line, for example:\nc2stYWFhYWFhYQ==\nc2stYmJiYmJiYmI=",
+        "hint": "One per line, or separated by spaces/commas. Plaintext with multiple lines or key|remark also works. Chinese characters and punctuation are stripped from the decoded text. Lines that fail to decode are listed and skipped.",
+        "cancel": "Cancel",
+        "preview": "Decoded Preview",
+        "previewEmpty": "Decoded results appear here once you paste something",
+        "invalid": "Cannot decode",
+        "total": "{total} payloads, {decoded} decoded, {failed} failed",
+        "empty": "No keys to import",
+        "noNew": "No new keys added ({skipped} duplicates skipped)",
+        "success": "Imported {added} keys, skipped {skipped} duplicates",
+        "successPartial": "Imported {added} keys, skipped {skipped} duplicates, {failed} payloads failed to decode"
+      },
       "customHeader": "Custom Headers",
       "customHeaderKey": "Header Key",
       "customHeaderValue": "Header Value",

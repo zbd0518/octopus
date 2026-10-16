@@ -3284,6 +3284,22 @@
         "noNew": "沒有新增 Key（已略過重複 {skipped} 個）",
         "success": "已匯入 {added} 個 Key，略過重複 {skipped} 個"
       },
+      "bulkBase64": {
+        "button": "批量匯入 Base64",
+        "title": "批量匯入 Base64 密鑰",
+        "description": "貼上經過 Base64 編碼的密鑰，匯入時會自動解碼還原為明文 Key，再追加到目前渠道。",
+        "placeholder": "每行一個 Base64 串，例如：\nc2stYWFhYWFhYQ==\nc2stYmJiYmJiYmI=",
+        "hint": "支援每行一個，也可用空格/逗號分隔；編碼前為多行或 key|備註 的明文同樣支援。解碼後的中文與中文標點會自動剔除，解碼失敗的行會單獨列出並略過。",
+        "cancel": "取消",
+        "preview": "解碼預覽",
+        "previewEmpty": "貼上內容後這裡會顯示解碼結果",
+        "invalid": "無法解碼",
+        "total": "共 {total} 段，成功 {decoded} 段，失敗 {failed} 段",
+        "empty": "沒有可匯入的 Key",
+        "noNew": "沒有新增 Key（已略過重複 {skipped} 個）",
+        "success": "已匯入 {added} 個 Key，略過重複 {skipped} 個",
+        "successPartial": "已匯入 {added} 個 Key，略過重複 {skipped} 個，{failed} 段無法解碼"
+      },
       "customHeader": "自定義 Header",
       "customHeaderKey": "Header Key",
       "customHeaderValue": "Header Value",

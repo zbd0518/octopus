@@ -63,9 +63,9 @@ import { cn } from '@/lib/utils';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useTranslations } from 'next-intl';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw, X, Plus, FlaskConical, CheckCircle2, AlertTriangle, Trash2, Sparkles, Orbit, Layers3, KeyRound, Cable, Search, Check, ListFilter, ChevronRight, ClipboardPaste } from 'lucide-react';
+import { RefreshCw, X, Plus, FlaskConical, CheckCircle2, AlertTriangle, Trash2, Sparkles, Orbit, Layers3, KeyRound, Cable, Search, Check, ListFilter, ChevronRight, ClipboardPaste, FileCode2 } from 'lucide-react';
 import { getModelIcon } from '@/lib/model-icons';
-import { mergeBulkKeys, parseBulkKeys } from './bulk-keys';
+import { decodeBulkBase64Keys, mergeBulkKeys, parseBulkKeys } from './bulk-keys';
 
 export interface ChannelKeyFormItem {
     id?: number;
@@ -707,6 +707,8 @@ export function ChannelForm({
     const fieldGroupClassName = 'space-y-2';
     const [bulkImportOpen, setBulkImportOpen] = useState(false);
     const [bulkImportText, setBulkImportText] = useState('');
+    const [bulkBase64Open, setBulkBase64Open] = useState(false);
+    const [bulkBase64Text, setBulkBase64Text] = useState('');
 
     const globalKeyStrategy = settings?.find((s) => s.key === SettingKey.KeySelectionStrategy)?.value ?? 'cost';
     const effectiveKeyStrategy = formData.key_selection_strategy || globalKeyStrategy;
@@ -1069,6 +1071,46 @@ export function ChannelForm({
     const handleOpenBulkImport = () => {
         setBulkImportText('');
         setBulkImportOpen(true);
+    };
+
+    const handleOpenBulkBase64 = () => {
+        setBulkBase64Text('');
+        setBulkBase64Open(true);
+    };
+
+    const bulkBase64Preview = useMemo(
+        () => (bulkBase64Text.trim() ? decodeBulkBase64Keys(bulkBase64Text) : null),
+        [bulkBase64Text],
+    );
+
+    const handleApplyBulkBase64 = () => {
+        if (!bulkBase64Text.trim()) {
+            toast.error(t('bulkBase64.empty'));
+            return;
+        }
+
+        const { decoded, failed } = decodeBulkBase64Keys(bulkBase64Text);
+        if (decoded.length === 0) {
+            toast.error(t('bulkBase64.empty'));
+            return;
+        }
+
+        const parsed = decoded.map(({ channel_key, remark }) => ({ channel_key, remark }));
+        const { keys, added, skippedDuplicate } = mergeBulkKeys(formData.keys ?? [], parsed);
+        if (added === 0) {
+            toast.error(t('bulkBase64.noNew', { skipped: skippedDuplicate }));
+            return;
+        }
+
+        onFormDataChange({ ...formData, keys });
+        setBulkBase64Open(false);
+        setBulkBase64Text('');
+        setTestSummary(null);
+        if (failed.length > 0) {
+            toast.warning(t('bulkBase64.successPartial', { added, skipped: skippedDuplicate, failed: failed.length }));
+        } else {
+            toast.success(t('bulkBase64.success', { added, skipped: skippedDuplicate }));
+        }
     };
 
     const handleApplyBulkImport = () => {
@@ -1443,6 +1485,16 @@ export function ChannelForm({
                             type="button"
                             variant="ghost"
                             size="sm"
+                            onClick={handleOpenBulkBase64}
+                            className="h-6 px-2 text-xs text-muted-foreground/70 hover:text-muted-foreground hover:bg-transparent"
+                        >
+                            <FileCode2 className="h-3 w-3 mr-1" />
+                            {t('bulkBase64.button')}
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
                             onClick={handleAddKey}
                             className="h-10 rounded-lg px-3 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
                         >
@@ -1478,6 +1530,75 @@ export function ChannelForm({
                                 {t('bulkImport.cancel')}
                             </Button>
                             <Button type="button" onClick={handleApplyBulkImport}>
+                                {t('bulkImport.apply')}
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+
+                <Dialog open={bulkBase64Open} onOpenChange={setBulkBase64Open}>
+                    <DialogContent className="sm:max-w-2xl">
+                        <DialogHeader>
+                            <DialogTitle>{t('bulkBase64.title')}</DialogTitle>
+                            <DialogDescription>{t('bulkBase64.description')}</DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-2">
+                            <textarea
+                                id={`${idPrefix}-bulk-base64`}
+                                value={bulkBase64Text}
+                                onChange={(event) => setBulkBase64Text(event.target.value)}
+                                placeholder={t('bulkBase64.placeholder')}
+                                rows={8}
+                                className="w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            />
+                            <p className="text-xs text-muted-foreground">{t('bulkBase64.hint')}</p>
+                            <div className="space-y-2">
+                                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                    <span className="font-medium">{t('bulkBase64.preview')}</span>
+                                    {bulkBase64Preview ? (
+                                        <span>{t('bulkBase64.total', {
+                                            total: bulkBase64Preview.decoded.length + bulkBase64Preview.failed.length,
+                                            decoded: bulkBase64Preview.decoded.length,
+                                            failed: bulkBase64Preview.failed.length,
+                                        })}</span>
+                                    ) : null}
+                                </div>
+                                <div className="max-h-48 overflow-y-auto rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm">
+                                    {!bulkBase64Preview ? (
+                                        <p className="py-3 text-center text-xs text-muted-foreground">{t('bulkBase64.previewEmpty')}</p>
+                                    ) : (
+                                        <ul className="space-y-1">
+                                            {bulkBase64Preview.decoded.map((item, idx) => (
+                                                <li key={`decoded-${idx}`} className="flex items-baseline gap-2 text-xs">
+                                                    <span className="shrink-0 text-primary">✓</span>
+                                                    <span className="min-w-0 break-all text-foreground">{item.channel_key}</span>
+                                                    {item.remark ? <span className="shrink-0 text-muted-foreground">| {item.remark}</span> : null}
+                                                </li>
+                                            ))}
+                                            {bulkBase64Preview.failed.map((item, idx) => (
+                                                <li key={`failed-${idx}`} className="flex items-baseline gap-2 text-xs">
+                                                    <span className="shrink-0 text-destructive">✗ {t('bulkBase64.invalid')}</span>
+                                                    <span className="min-w-0 break-all text-muted-foreground">{item.source}</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                        <DialogFooter>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => setBulkBase64Open(false)}
+                            >
+                                {t('bulkBase64.cancel')}
+                            </Button>
+                            <Button
+                                type="button"
+                                onClick={handleApplyBulkBase64}
+                                disabled={!bulkBase64Preview || bulkBase64Preview.decoded.length === 0}
+                            >
                                 {t('bulkImport.apply')}
                             </Button>
                         </DialogFooter>
