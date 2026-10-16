@@ -369,6 +369,18 @@ func TestOpsRangeWindow_DayBucketsForMultiDayRanges(t *testing.T) {
 		}
 	})
 
+	// today：今日 0 点起，小时桶，桶数 = 已过小时数（含当前小时）
+	t.Run("today", func(t *testing.T) {
+		start, bucketHours, bucketCount := opsRangeWindow(now, loc, model.AnalyticsRangeToday)
+		wantStart := time.Date(2026, 5, 24, 0, 0, 0, 0, loc).In(time.UTC)
+		if !start.Equal(wantStart) {
+			t.Fatalf("start = %s, want %s", start.Format(time.RFC3339), wantStart.Format(time.RFC3339))
+		}
+		if bucketHours != 1 || bucketCount != 11 {
+			t.Fatalf("bucketHours = %d, bucketCount = %d, want 1, 11", bucketHours, bucketCount)
+		}
+	})
+
 	// 1d 保持历史语义：过去 24 小时，小时桶 ×24
 	t.Run("1d", func(t *testing.T) {
 		start, bucketHours, bucketCount := opsRangeWindow(now, loc, model.AnalyticsRange1D)

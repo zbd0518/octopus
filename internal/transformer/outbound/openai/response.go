@@ -33,8 +33,17 @@ func (o *ResponseOutbound) TransformRequest(ctx context.Context, request *model.
 		return nil, fmt.Errorf("request is nil")
 	}
 
+	// 克隆后补齐历史中缺失的工具调用 id：空 id 会生成无 call_id 的 function_call，
+	// 被中转站的 Responses 协议转换整单拒绝（缺少 call_id 或 name）。克隆避免
+	// 污染与重试缓存/日志共享的内部请求。
+	cloned := CloneRequestForOpenAICompat(request)
+	if cloned == nil {
+		return nil, fmt.Errorf("request is nil")
+	}
+	ensureToolCallIDs(cloned.Messages)
+
 	// Convert to Responses API request format
-	responsesReq := ConvertToResponsesRequest(request)
+	responsesReq := ConvertToResponsesRequest(cloned)
 	// Third-party OpenAI-compatible Responses endpoints (free relays, Grok
 	// proxies, etc.) often reject OpenAI-only optional fields. Claude Code's
 	// Anthropic metadata.user_id is mapped into Metadata and commonly triggers:

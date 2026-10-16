@@ -8,12 +8,15 @@ import (
 type AnalyticsRange string
 
 const (
-	AnalyticsRange1D  AnalyticsRange = "1d"
-	AnalyticsRange7D  AnalyticsRange = "7d"
-	AnalyticsRange30D AnalyticsRange = "30d"
-	AnalyticsRange90D AnalyticsRange = "90d"
-	AnalyticsRangeYTD AnalyticsRange = "ytd"
-	AnalyticsRangeAll AnalyticsRange = "all"
+	// AnalyticsRangeToday 为自然日口径：今日 0 点起至当前时刻。
+	// 与 AnalyticsRange1D（滚动 24 小时、跨两天）语义不同。
+	AnalyticsRangeToday AnalyticsRange = "today"
+	AnalyticsRange1D    AnalyticsRange = "1d"
+	AnalyticsRange7D    AnalyticsRange = "7d"
+	AnalyticsRange30D   AnalyticsRange = "30d"
+	AnalyticsRange90D   AnalyticsRange = "90d"
+	AnalyticsRangeYTD   AnalyticsRange = "ytd"
+	AnalyticsRangeAll   AnalyticsRange = "all"
 )
 
 func ParseAnalyticsRange(raw string) (AnalyticsRange, error) {
@@ -23,7 +26,7 @@ func ParseAnalyticsRange(raw string) (AnalyticsRange, error) {
 	}
 
 	switch value {
-	case AnalyticsRange1D, AnalyticsRange7D, AnalyticsRange30D, AnalyticsRange90D, AnalyticsRangeYTD, AnalyticsRangeAll:
+	case AnalyticsRangeToday, AnalyticsRange1D, AnalyticsRange7D, AnalyticsRange30D, AnalyticsRange90D, AnalyticsRangeYTD, AnalyticsRangeAll:
 		return value, nil
 	default:
 		return "", fmt.Errorf("invalid analytics range: %s", raw)

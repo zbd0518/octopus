@@ -384,7 +384,8 @@ func TestAnalyticsStartTime_Ranges(t *testing.T) {
 		r        model.AnalyticsRange
 		expected *time.Time
 	}{
-		{"1D", model.AnalyticsRange1D, &dayStart},
+		{"Today", model.AnalyticsRangeToday, timePtr(dayStart)},
+		{"1D", model.AnalyticsRange1D, timePtr(time.Date(2026, 1, 14, 15, 0, 0, 0, time.UTC))},
 		{"7D", model.AnalyticsRange7D, timePtr(dayStart.AddDate(0, 0, -6))},
 		{"30D", model.AnalyticsRange30D, timePtr(dayStart.AddDate(0, 0, -29))},
 		{"90D", model.AnalyticsRange90D, timePtr(dayStart.AddDate(0, 0, -89))},
@@ -459,7 +460,7 @@ func TestMakeAnalyticsFailureKey_FallsBackToRequestModel(t *testing.T) {
 	}
 }
 
-func TestAnalyticsStartTime_UsesProvidedLocationBoundary(t *testing.T) {
+func TestAnalyticsStartTime_1DUsesRolling24hWindowInProvidedLocation(t *testing.T) {
 	shanghai := time.FixedZone("UTC+8", 8*3600)
 	now := time.Date(2026, 1, 15, 14, 30, 0, 0, shanghai)
 
@@ -468,7 +469,8 @@ func TestAnalyticsStartTime_UsesProvidedLocationBoundary(t *testing.T) {
 		t.Fatal("expected non-nil start time")
 	}
 
-	expected := time.Date(2026, 1, 15, 0, 0, 0, 0, shanghai)
+	// 1d 为滚动 24 小时窗口：now-23h 后截断到整点，与 opsRangeWindow（缓存页）一致。
+	expected := time.Date(2026, 1, 14, 15, 0, 0, 0, shanghai)
 	if !got.Equal(expected) {
 		t.Fatalf("expected %v, got %v", expected, got)
 	}

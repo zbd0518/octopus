@@ -79,6 +79,8 @@ export interface LogListParams {
     api_key_id?: number;
     endpoint_type?: string;
     status?: 'success' | 'error';
+    // 路由分组筛选：按 request_model_name 精确匹配分组名（即用户请求时选择的路由分组）
+    group?: string;
 }
 
 /**
@@ -96,6 +98,8 @@ export interface LogFilter {
     status?: 'success' | 'error';
     start_time?: number;
     end_time?: number;
+    // 路由分组筛选：按 request_model_name 精确匹配分组名（即用户请求时选择的路由分组）
+    group?: string;
     // 是否"穿透"到单次尝试维度：按渠道A 筛选时也能命中"在A 失败、重试到B 成功"
     // 的请求。后端在指定 channel_id 且未显式传 include_attempts 时默认开启。
     include_attempts?: boolean;
@@ -209,6 +213,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
         filter.api_key_id,
         filter.endpoint_type,
         filter.status,
+        filter.group,
         filter.start_time,
         filter.end_time,
         filter.include_attempts,
@@ -230,6 +235,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
             if (stableFilter.api_key_id != null) params.set('api_key_id', String(stableFilter.api_key_id));
             if (stableFilter.endpoint_type) params.set('endpoint_type', stableFilter.endpoint_type);
             if (stableFilter.status) params.set('status', stableFilter.status);
+            if (stableFilter.group) params.set('group', stableFilter.group);
             if (stableFilter.start_time != null) params.set('start_time', String(stableFilter.start_time));
             if (stableFilter.end_time != null) params.set('end_time', String(stableFilter.end_time));
             if (stableFilter.include_attempts != null) params.set('include_attempts', String(stableFilter.include_attempts));
@@ -297,7 +303,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
                 }, delayMs);
             });
 
-        const hasActiveFilter = !!(stableFilter.model || (stableFilter.models && stableFilter.models.length > 0) || stableFilter.channel_id != null || stableFilter.api_key_id != null || stableFilter.endpoint_type || stableFilter.status || stableFilter.start_time != null || stableFilter.end_time != null || stableFilter.include_attempts != null || stableFilter.is_test != null);
+        const hasActiveFilter = !!(stableFilter.model || (stableFilter.models && stableFilter.models.length > 0) || stableFilter.channel_id != null || stableFilter.api_key_id != null || stableFilter.endpoint_type || stableFilter.status || stableFilter.group || stableFilter.start_time != null || stableFilter.end_time != null || stableFilter.include_attempts != null || stableFilter.is_test != null);
 
         const mergeIncomingLog = (log: RelayLog) => {
             // When a filter is active, skip merging SSE logs to avoid showing unfiltered results

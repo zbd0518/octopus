@@ -1166,6 +1166,58 @@ func HourlyGet() []model.StatsHourly {
 	return result
 }
 
+// HourlyGetRolling24h 返回按统计时区整点对齐的滚动 24 小时序列：
+// 昨天 (currentHour, 23] 的剩余小时 + 今天 [0, currentHour] 的已过小时，升序共 24 桶。
+// 与 HourlyGet（今日口径，供首页"今日"图表）不同，本函数供分析中心"用量明细"
+// 1d 趋势图使用，与缓存页 ops 窗口（opsRangeWindow 的 24 小时滚动）保持一致。
+// 昨天已完整落盘，直接查主库 stats_hourlies；今天仍走内存缓存。无行的小时补 0 占位。
+func HourlyGetRolling24h() []model.StatsHourly {
+	nowTime := now()
+	currentHour := nowTime.Hour()
+	todayDate := nowTime.Format("20060102")
+	yesterdayDate := nowTime.AddDate(0, 0, -1).Format("20060102")
+
+	result := make([]model.StatsHourly, 0, 24)
+
+	// 昨天剩余小时：从主库补齐。
+	yesterdayByHour := make(map[int]model.StatsHourly, 24)
+	if conn := db.GetDB(); conn != nil {
+		var yesterdayRows []model.StatsHourly
+		if err := conn.WithContext(context.Background()).
+			Where("date = ?", yesterdayDate).
+			Find(&yesterdayRows).Error; err == nil {
+			for _, row := range yesterdayRows {
+				if row.Hour >= 0 && row.Hour < 24 {
+					yesterdayByHour[row.Hour] = row
+				}
+			}
+		}
+	}
+	for hour := currentHour + 1; hour < 24; hour++ {
+		if row, ok := yesterdayByHour[hour]; ok {
+			result = append(result, row)
+		} else {
+			result = append(result, model.StatsHourly{Hour: hour, Date: yesterdayDate})
+		}
+	}
+
+	// 今天已过小时：与 HourlyGet 相同的内存缓存逻辑。
+	hourlyCacheLock.RLock()
+	for hour := 0; hour <= currentHour; hour++ {
+		if hourlyCache[hour].Date == todayDate {
+			result = append(result, hourlyCache[hour])
+		} else {
+			result = append(result, model.StatsHourly{
+				Hour: hour,
+				Date: todayDate,
+			})
+		}
+	}
+	hourlyCacheLock.RUnlock()
+
+	return result
+}
+
 var (
 	dailyAllCacheMu sync.RWMutex
 	dailyAllCache   []model.StatsDaily

@@ -168,13 +168,15 @@ export function useStatsDaily(options?: { refetchIntervalMs?: number | false }) 
 }
 /**
  * 获取总统计数据 Hook
+ * window='24h'：滚动 24 小时窗口（分析中心"用量明细"1d 趋势图用）；
+ * 缺省保持今日口径（首页"今日"图表用）。
  */
-export function useStatsHourly(options?: { refetchIntervalMs?: number | false }) {
-    const { refetchIntervalMs = REFETCH_INTERVAL_CONFIG } = options ?? {};
+export function useStatsHourly(options?: { refetchIntervalMs?: number | false; window?: '24h' }) {
+    const { refetchIntervalMs = REFETCH_INTERVAL_CONFIG, window } = options ?? {};
     return useQuery({
-        queryKey: ['stats', 'hourly'],
+        queryKey: window ? ['stats', 'hourly', window] : ['stats', 'hourly'],
         queryFn: async () => {
-            return apiClient.get<StatsHourly[]>('/api/v1/stats/hourly');
+            return apiClient.get<StatsHourly[]>('/api/v1/stats/hourly', window ? { window } : undefined);
         },
         select: (data) => data.map((item): StatsHourlyFormatted => ({
             hour: item.hour,

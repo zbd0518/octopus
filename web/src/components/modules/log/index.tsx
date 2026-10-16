@@ -5,6 +5,7 @@ import { useChannelList } from '@/api/endpoints/channel';
 import { useAPIKeyList } from '@/api/endpoints/apikey';
 import { useLogs, type LogFilter } from '@/api/endpoints/log';
 import { useModelList } from '@/api/endpoints/model';
+import { useGroupList } from '@/api/endpoints/group';
 import { LogCard } from './Item';
 import { ErrorLogView } from './ErrorLogView';
 import { Loader2, X, Columns3, Check, ChevronsUpDown, Search } from 'lucide-react';
@@ -42,14 +43,16 @@ function LogFilterBar({
     const { data: channels = [] } = useChannelList();
     const { data: apiKeys = [] } = useAPIKeyList();
     const { data: models = [] } = useModelList();
+    const { data: groups = [] } = useGroupList();
     const visibility = useLogFieldVisibilityStore((s) => s.visibility);
 
-    const hasFilter = !!(
+    const hasFilter = !!( 
         filter.channel_id != null ||
         filter.api_key_id != null ||
         filter.endpoint_type ||
         filter.status ||
         filter.is_test != null ||
+        filter.group ||
         (filter.models && filter.models.length > 0)
     );
 
@@ -158,6 +161,31 @@ function LogFilterBar({
                     {ENDPOINT_TYPE_OPTIONS.map((opt) => (
                         <SelectItem key={opt.value} value={opt.value}>
                             {tGroup(opt.labelKey)}
+                        </SelectItem>
+                    ))}
+                </SelectContent>
+            </Select>
+
+            <Select
+                value={filter.group ?? ''}
+                onValueChange={(v) => {
+                    const next = { ...filter };
+                    if (v && v !== '' && v !== '__all__') {
+                        next.group = v;
+                    } else {
+                        delete next.group;
+                    }
+                    onChange(next);
+                }}
+            >
+                <SelectTrigger size="sm" className="h-7 text-xs min-w-[7rem]">
+                    <SelectValue placeholder={t('allGroups') ?? 'All groups'} />
+                </SelectTrigger>
+                <SelectContent>
+                    <SelectItem value="__all__">{t('allGroups') ?? 'All groups'}</SelectItem>
+                    {groups.map((g) => (
+                        <SelectItem key={g.id} value={g.name}>
+                            {g.name}
                         </SelectItem>
                     ))}
                 </SelectContent>

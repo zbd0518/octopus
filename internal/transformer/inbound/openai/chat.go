@@ -2,18 +2,24 @@ package openai
 
 import (
 	"context"
-	"github.com/lingyuins/octopus/internal/transformer"
+	"fmt"
 
+	"github.com/lingyuins/octopus/internal/transformer"
 	"github.com/lingyuins/octopus/internal/transformer/model"
+	"github.com/samber/lo"
 )
 
 type ChatInbound struct {
-	// streamResponse / streamChoices 在流式路径上在线聚合，避免把每个 SSE chunk
-	// 完整对象都 append 进切片（长流/大图/并发下堆峰值可冲到 GB 级）。
-	streamResponse *model.InternalLLMResponse
-	streamChoices  map[int]*model.Choice
-	// storedResponse stores the non-stream response
-	storedResponse *model.InternalLLMResponse
+        // streamResponse / streamChoices 在流式路径上在线聚合，避免把每个 SSE chunk
+        // 完整对象都 append 进切片（长流/大图/并发下堆峰值可冲到 GB 级）。
+        streamResponse *model.InternalLLMResponse
+        streamChoices  map[int]*model.Choice
+        // storedResponse stores the non-stream response
+        storedResponse *model.InternalLLMResponse
+        // canonicalToolCallIDs 记录 (choice.Index:toolCall.Index) 的规范化 id：
+        // 上游缺失 id 时写入合成值，后续携带真实 id 的 chunk 覆盖为真实值，
+        // 使后续空 id 的增量与客户端聚合结果始终引用同一 id。
+        canonicalToolCallIDs map[string]string
 }
 
 func (i *ChatInbound) TransformRequest(ctx context.Context, body []byte) (*model.InternalLLMRequest, error) {
@@ -26,8 +32,9 @@ func (i *ChatInbound) TransformRequest(ctx context.Context, body []byte) (*model
 }
 
 func (i *ChatInbound) TransformResponse(ctx context.Context, response *model.InternalLLMResponse) ([]byte, error) {
-	// Store the response for later retrieval
-	i.storedResponse = response
+	        ensureNonStreamToolCallIDs(response)
+	        // Store the response for later retrieval
+	        i.storedResponse = response
 
 	body, err := transformer.Marshal(response)
 	if err != nil {
@@ -37,12 +44,14 @@ func (i *ChatInbound) TransformResponse(ctx context.Context, response *model.Int
 }
 
 func (i *ChatInbound) TransformStream(ctx context.Context, stream *model.InternalLLMResponse) ([]byte, error) {
-	if stream.Object == "[DONE]" {
-		return []byte("data: [DONE]\n\n"), nil
-	}
+        if stream.Object == "[DONE]" {
+                return []byte("data: [DONE]\n\n"), nil
+        }
 
-	// 在线聚合：只保留最终文本/工具调用等结果，不缓存完整 chunk 列表。
-	i.foldStreamChunk(stream)
+        i.ensureStreamToolCallIDs(stream)
+
+        // 在线聚合：只保留最终文本/工具调用等结果，不缓存完整 chunk 列表。
+        i.foldStreamChunk(stream)
 
 	var body []byte
 	var err error
@@ -232,7 +241,63 @@ func (i *ChatInbound) GetInternalResponse(ctx context.Context) (*model.InternalL
 	return result, nil
 }
 
-// mergeToolCall merges a tool call delta into the existing tool calls slice
+// ensureStreamToolCallIDs 为上游流式 chunk 中缺失 id 的 tool_call 增量补一个
+// (choice, toolCall index) 维度稳定的合成 id；后续携带真实 id 的 chunk 会把规范值
+// 覆盖为真实 id。避免客户端聚合出无 id 的 tool_calls 后原样回灌，被严格上游
+// （Vercel Zod 校验、中转站协议转换）整单拒绝。
+func (i *ChatInbound) ensureStreamToolCallIDs(chunk *model.InternalLLMResponse) {
+	if chunk == nil {
+		return
+	}
+	for ci := range chunk.Choices {
+		choice := &chunk.Choices[ci]
+		if choice.Delta == nil {
+			continue
+		}
+		for ti := range choice.Delta.ToolCalls {
+			tc := &choice.Delta.ToolCalls[ti]
+			key := fmt.Sprintf("%d:%d", choice.Index, tc.Index)
+			if tc.ID != "" {
+				// 携带真实 id：覆盖规范值（可能覆盖此前的合成占位）。
+				if i.canonicalToolCallIDs == nil {
+					i.canonicalToolCallIDs = make(map[string]string)
+				}
+				i.canonicalToolCallIDs[key] = tc.ID
+				continue
+			}
+			if id, ok := i.canonicalToolCallIDs[key]; ok {
+				tc.ID = id
+			} else {
+				id := "call_" + lo.RandomString(16, lo.AlphanumericCharset)
+				if i.canonicalToolCallIDs == nil {
+					i.canonicalToolCallIDs = make(map[string]string)
+				}
+				i.canonicalToolCallIDs[key] = id
+				tc.ID = id
+			}
+		}
+	}
+}
+
+// ensureNonStreamToolCallIDs 为非流式响应中缺失 id 的 tool_call 合成 id，避免
+// 客户端回灌无 id 的 tool_calls 后被严格上游整单拒绝。
+func ensureNonStreamToolCallIDs(response *model.InternalLLMResponse) {
+	if response == nil {
+		return
+	}
+	for ci := range response.Choices {
+		choice := &response.Choices[ci]
+		if choice.Message == nil {
+			continue
+		}
+		for ti := range choice.Message.ToolCalls {
+			if choice.Message.ToolCalls[ti].ID == "" {
+				choice.Message.ToolCalls[ti].ID = "call_" + lo.RandomString(16, lo.AlphanumericCharset)
+			}
+		}
+	}
+}
+
 func mergeToolCall(toolCalls []model.ToolCall, delta model.ToolCall) []model.ToolCall {
 	// Find existing tool call by index
 	for i, tc := range toolCalls {

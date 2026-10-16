@@ -27,7 +27,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn, formatCount, formatMoney } from '@/lib/utils';
 import { useHomeStatsRefreshMs, useHomeViewStore, type OverviewCountMode, type OverviewMetricKey, type OverviewRange } from './store';
 
-const RANGE_OPTIONS: readonly OverviewRange[] = ['7d', '30d', '90d', 'all'];
+const RANGE_OPTIONS: readonly OverviewRange[] = ['today', '7d', '30d', '90d', 'all'];
 const COUNT_MODE_OPTIONS: readonly OverviewCountMode[] = ['active', 'all'];
 
 type OverviewData = NonNullable<ReturnType<typeof useAnalyticsOverview>['data']>;

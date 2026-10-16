@@ -471,7 +471,8 @@
     },
     "note": "This phase only establishes the page shell and navigation. Real aggregates are added in the next step.",
     "range": {
-      "1d": "1D",
+      "today": "Today",
+      "1d": "24H",
       "7d": "7D",
       "30d": "30D",
       "90d": "90D",
@@ -781,7 +782,7 @@
         },
         "trend": {
           "title": "Cache Trend (24h)",
-          "description": "Hourly view of cache read activity and reuse."
+          "description": "Time-bucketed view of cache read activity and reuse."
         }
       }
     },
@@ -1315,6 +1316,7 @@
       "customizeTitle": "Metric Visibility & Order",
       "customizeReset": "Reset",
       "range": {
+        "today": "Today",
         "7d": "7D",
         "30d": "30D",
         "90d": "90D",
@@ -3045,7 +3047,8 @@
       "allLogs": "All logs",
       "testOnly": "Test only",
       "nonTest": "Non-test",
-      "clear": "Clear"
+      "clear": "Clear",
+      "allGroups": "All groups"
     },
     "viewOptions": {
       "title": "Display Fields",

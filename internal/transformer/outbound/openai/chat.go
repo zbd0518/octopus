@@ -100,6 +100,11 @@ func SanitizeRequestForOpenAICompat(request *model.InternalLLMRequest, baseURL s
 	normalizeDeepSeekReasoningCompat(request, baseURL, isMimoChannel)
 	applyReasoningCompatTokenBudget(request, baseURL, isMimoChannel)
 
+	// 历史回灌中缺失 id 的工具调用会被严格上游整单拒绝
+	// （messages.41.tool_calls.1.id: expected string, received undefined）。
+	// 先补齐 id 再做配对清洗，让严格路径保留（而非丢弃）这类调用。
+	ensureToolCallIDs(request.Messages)
+
 	// Only apply generic reasoning-effort normalization to non-provider-specific
 	// reasoning-compatible targets. DeepSeek and Mimo already handle effort
 	// mapping in the call above.

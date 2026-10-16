@@ -583,40 +583,52 @@ func (i *ResponseInbound) handleToolCalls(toolCalls []model.ToolCall) [][]byte {
 		events = append(events, i.closeReasoningItem()...)
 	}
 
-	for _, tc := range toolCalls {
-		toolCallIndex := tc.Index
+	        for _, tc := range toolCalls {
+	                toolCallIndex := tc.Index
 
-		// Initialize tool call tracking if needed
-		if _, ok := i.toolCalls[toolCallIndex]; !ok {
-			i.toolCalls[toolCallIndex] = &model.ToolCall{
-				Index:     toolCallIndex,
-				ID:        tc.ID,
-				Type:      tc.Type,
-				Namespace: tc.Namespace,
-				Function: model.FunctionCall{
-					Name:      tc.Function.Name,
-					Arguments: "",
-				},
-			}
+	                // Initialize tool call tracking if needed
+	                if existing, ok := i.toolCalls[toolCallIndex]; ok {
+	                        // 后续 chunk 携带真实 id 时以真实 id 为准（覆盖此前合成的占位）。
+	                        if tc.ID != "" && existing.ID != tc.ID {
+	                                existing.ID = tc.ID
+	                        }
+	                } else {
+	                        callID := tc.ID
+	                        if callID == "" {
+	                                // 上游返回不带 id 的 tool_call：合成 call_id，避免客户端把无
+	                                // call_id 的 function_call 回灌后被严格上游整单拒绝。
+	                                callID = generateItemCallID()
+	                        }
+	                        i.toolCalls[toolCallIndex] = &model.ToolCall{
+	                                Index:     toolCallIndex,
+	                                ID:        callID,
+	                                Type:      tc.Type,
+	                                Namespace: tc.Namespace,
+	                                Function: model.FunctionCall{
+	                                        Name:      tc.Function.Name,
+	                                        Arguments: "",
+	                                },
+	                        }
 
-			itemID := tc.ID
-			if itemID == "" {
-				itemID = generateItemID()
-			}
+	                        itemID := tc.ID
+	                        if itemID == "" {
+	                                itemID = generateItemID()
+	                        }
 
-			item := newNativeToolCallItem(itemID, tc)
+	                        // 事件中的 call_id 取聚合后的规范 id（可能为合成值），而非原始 delta。
+	                        item := newNativeToolCallItem(itemID, *i.toolCalls[toolCallIndex])
 
-			events = append(events, i.enqueueEvent(&ResponsesStreamEvent{
-				Type:        "response.output_item.added",
-				OutputIndex: lo.ToPtr(i.outputIndex),
-				Item:        item,
-			}))
+	                        events = append(events, i.enqueueEvent(&ResponsesStreamEvent{
+	                                Type:        "response.output_item.added",
+	                                OutputIndex: lo.ToPtr(i.outputIndex),
+	                                Item:        item,
+	                        }))
 
-			i.toolCallItemStarted[toolCallIndex] = true
-			i.toolCallOutputIndex[toolCallIndex] = i.outputIndex
-			i.toolCallItemID[toolCallIndex] = itemID
-			i.outputIndex++
-		}
+	                        i.toolCallItemStarted[toolCallIndex] = true
+	                        i.toolCallOutputIndex[toolCallIndex] = i.outputIndex
+	                        i.toolCallItemID[toolCallIndex] = itemID
+	                        i.outputIndex++
+	                }
 
 		// Accumulate arguments
 		i.toolCalls[toolCallIndex].Function.Arguments += tc.Function.Arguments
@@ -1712,19 +1724,29 @@ func convertToResponsesAPIResponse(resp *model.InternalLLMResponse) *ResponsesRe
 			result.Output = append(result.Output, item)
 		}
 
-		// Handle tool calls
-		if len(message.ToolCalls) > 0 {
-			for _, toolCall := range message.ToolCalls {
-				result.Output = append(result.Output, ResponsesItem{
-					ID:        toolCall.ID,
-					Type:      "function_call",
-					CallID:    toolCall.ID,
-					Name:      toolCall.Function.Name,
-					Arguments: toolCall.Function.Arguments,
-					Status:    lo.ToPtr("completed"),
-				})
-			}
-		}
+		                // Handle tool calls
+		                if len(message.ToolCalls) > 0 {
+		                        for _, toolCall := range message.ToolCalls {
+		                                callID := toolCall.ID
+		                                itemID := toolCall.ID
+		                                if callID == "" {
+		                                        // 上游返回不带 id 的 tool_call：合成 call_id，避免客户端回灌无
+		                                        // call_id 的 function_call 后被严格上游整单拒绝。
+		                                        callID = generateItemCallID()
+		                                }
+		                                if itemID == "" {
+		                                        itemID = generateItemID()
+		                                }
+		                                result.Output = append(result.Output, ResponsesItem{
+		                                        ID:        itemID,
+		                                        Type:      "function_call",
+		                                        CallID:    callID,
+		                                        Name:      toolCall.Function.Name,
+		                                        Arguments: toolCall.Function.Arguments,
+		                                        Status:    lo.ToPtr("completed"),
+		                                })
+		                        }
+		                }
 
 		contentItems := make([]ResponsesItem, 0)
 		if message.Content.Content != nil && *message.Content.Content != "" {
@@ -1828,4 +1850,10 @@ func convertUsageToResponses(usage *model.Usage) *ResponsesUsage {
 
 func generateItemID() string {
 	return fmt.Sprintf("item_%s", lo.RandomString(16, lo.AlphanumericCharset))
+}
+
+// generateItemCallID 生成 function_call 的合成 call_id（call_ 前缀），用于上游
+// 返回不带 id 的 tool_call，保证回灌历史不携带空 call_id。
+func generateItemCallID() string {
+	return fmt.Sprintf("call_%s", lo.RandomString(16, lo.AlphanumericCharset))
 }

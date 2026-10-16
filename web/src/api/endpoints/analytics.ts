@@ -20,7 +20,7 @@ import {
     type StoredGroupTestTask,
 } from '@/components/modules/group/task-storage';
 
-export type AnalyticsRange = '1d' | '7d' | '30d' | '90d' | 'ytd' | 'all';
+export type AnalyticsRange = 'today' | '1d' | '7d' | '30d' | '90d' | 'ytd' | 'all';
 
 /** 分析中心查询结果缓存 TTL。off=禁用（每次直查 DB）。 */
 export type AnalyticsCacheTtl = '10s' | '30s' | '1m' | 'off';

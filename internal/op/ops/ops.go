@@ -313,6 +313,7 @@ func buildOpsProviderPromptCacheSummary(ctx context.Context, r model.AnalyticsRa
 // loc 为统计时区，窗口按 loc 对齐后转回 UTC 用于 DB 时间过滤（与 opsHourlyWindowStart 一致）。
 //
 //	1d      → 过去 24 小时，小时桶 ×24（与历史行为一致）
+//	today   → 今日 0 点起至当前小时，小时桶
 //	7d/30d/90d/ytd → 按天桶，从当天 0 点回溯 N 天（含今天）
 //	all     → 按天桶，上限 366 天（避免趋势图过大的点阵）
 func opsRangeWindow(now time.Time, loc *time.Location, r model.AnalyticsRange) (start time.Time, bucketHours int, bucketCount int) {
@@ -320,6 +321,16 @@ func opsRangeWindow(now time.Time, loc *time.Location, r model.AnalyticsRange) (
 	dayStart := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc)
 
 	switch r {
+	case model.AnalyticsRangeToday:
+		// 今日 0 点起，小时桶，桶数 = 已过小时数（含当前小时）。
+		hourCount := int(localNow.Sub(dayStart).Hours()) + 1
+		if hourCount < 1 {
+			hourCount = 1
+		}
+		if hourCount > 24 {
+			hourCount = 24
+		}
+		return dayStart.In(time.UTC), 1, hourCount
 	case model.AnalyticsRange1D:
 		hourStart := localNow.Add(-23 * time.Hour).Truncate(time.Hour)
 		return hourStart.In(time.UTC), 1, 24

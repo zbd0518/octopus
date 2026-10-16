@@ -33,6 +33,15 @@ type analyticsSummaryRow struct {
 	FallbackCount  int64   `gorm:"column:fallback_count"`
 }
 
+// analyticsMetricsRow 承载 loadAnalyticsMetricsFromRelayLogs 的 DB 聚合结果。
+type analyticsMetricsRow struct {
+	InputTokens    int64   `gorm:"column:input_tokens"`
+	OutputTokens   int64   `gorm:"column:output_tokens"`
+	InputCost      float64 `gorm:"column:input_cost"`
+	RequestSuccess int64   `gorm:"column:request_success"`
+	RequestFailed  int64   `gorm:"column:request_failed"`
+}
+
 type analyticsProviderAggregateRow struct {
 	ChannelID      int     `gorm:"column:channel_id"`
 	ChannelName    string  `gorm:"column:channel_name"`
@@ -87,7 +96,10 @@ func AnalyticsOverviewGet(ctx context.Context, r model.AnalyticsRange) (*model.A
 		return nil, err
 	}
 	mergedDaily := mergeAnalyticsDailyWithToday(daily, stats.TodayGet())
-	metrics := aggregateAnalyticsDailyMetrics(mergedDaily, r, stats.Now())
+	metrics, err := loadAnalyticsOverviewMetrics(ctx, r, mergedDaily)
+	if err != nil {
+		return nil, err
+	}
 
 	// 活跃渠道/模型/API Key 取该时间段内 relay_logs 中实际出现过请求的去重数，
 	// 而非启用渠道上配置的模型总数（后者会给出 57 渠道 / 2817 模型这类不真实数字）。
@@ -118,6 +130,76 @@ func AnalyticsOverviewGet(ctx context.Context, r model.AnalyticsRange) (*model.A
 		fallbackRate,
 	)
 	return &overview, nil
+}
+
+// loadAnalyticsOverviewMetrics 返回 Overview 指标卡用的总指标。
+// 1d 为滚动 24 小时窗口：relay_logs 保留开启时直接从日志聚合（日粒度
+// stats_daily 无法表达昨天的部分小时）；未开启时退化为今天口径。
+func loadAnalyticsOverviewMetrics(ctx context.Context, r model.AnalyticsRange, mergedDaily []model.StatsDaily) (model.StatsMetrics, error) {
+	if r != model.AnalyticsRange1D {
+		return aggregateAnalyticsDailyMetrics(mergedDaily, r, stats.Now()), nil
+	}
+	keepEnabled, err := setting.GetBool(model.SettingKeyRelayLogKeepEnabled)
+	if err != nil {
+		return model.StatsMetrics{}, err
+	}
+	if keepEnabled {
+		return loadAnalyticsMetricsFromRelayLogs(ctx, r)
+	}
+	return aggregateAnalyticsDailyMetrics(mergedDaily, r, stats.Now()), nil
+}
+
+// loadAnalyticsMetricsFromRelayLogs 从 relay_logs（LogDB 优先）+ 内存缓存尾合并
+// 聚合总指标，模式与 loadAnalyticsSummary / loadAnalytics*RowsFromRelayLogs 一致。
+// relay_logs 只有单一 cost 列，全部计入 InputCost（TotalCost=Input+Output 语义不变）。
+func loadAnalyticsMetricsFromRelayLogs(ctx context.Context, r model.AnalyticsRange) (model.StatsMetrics, error) {
+	startUnix := analyticsRangeStartUnix(r, stats.Now())
+	metrics := model.StatsMetrics{}
+
+	keepEnabled, err := setting.GetBool(model.SettingKeyRelayLogKeepEnabled)
+	if err != nil {
+		return metrics, err
+	}
+	if keepEnabled {
+		row := &analyticsMetricsRow{}
+		query := relayLogReadConn().WithContext(ctx).Model(&model.RelayLog{}).
+			Select(`
+				COALESCE(SUM(input_tokens), 0) AS input_tokens,
+				COALESCE(SUM(output_tokens), 0) AS output_tokens,
+				COALESCE(SUM(cost), 0) AS input_cost,
+				COALESCE(SUM(CASE WHEN error = '' THEN 1 ELSE 0 END), 0) AS request_success,
+				COALESCE(SUM(CASE WHEN error <> '' THEN 1 ELSE 0 END), 0) AS request_failed
+			`)
+		if startUnix != nil {
+			query = query.Where("time >= ?", *startUnix)
+		}
+		if err := query.Scan(row).Error; err != nil {
+			return metrics, err
+		}
+		metrics.InputToken = row.InputTokens
+		metrics.OutputToken = row.OutputTokens
+		metrics.InputCost = row.InputCost
+		metrics.RequestSuccess = row.RequestSuccess
+		metrics.RequestFailed = row.RequestFailed
+	}
+
+	cache, lock := relaylog.GetCacheAndLock()
+	lock.Lock()
+	defer lock.Unlock()
+	for _, logItem := range cache {
+		if startUnix != nil && logItem.Time < *startUnix {
+			continue
+		}
+		metrics.InputToken += int64(logItem.InputTokens)
+		metrics.OutputToken += int64(logItem.OutputTokens)
+		metrics.InputCost += logItem.Cost
+		if logItem.Error == "" {
+			metrics.RequestSuccess++
+		} else {
+			metrics.RequestFailed++
+		}
+	}
+	return metrics, nil
 }
 
 func AnalyticsUtilizationGet(ctx context.Context, r model.AnalyticsRange) (*model.AnalyticsUtilization, error) {
@@ -1050,15 +1132,15 @@ func loadAnalyticsChannelModelRows(ctx context.Context, r model.AnalyticsRange, 
 	var dbRows []analyticsChannelModelAggregateRow
 	query := conn.WithContext(ctx).Model(&model.StatsDailyChannelModel{}).
 		Select(`
-			channel_id,
-			MAX(channel_name) AS channel_name,
-			model_name,
-			COALESCE(SUM(input_token), 0) AS input_tokens,
-			COALESCE(SUM(output_token), 0) AS output_tokens,
-			COALESCE(SUM(input_cost + output_cost), 0) AS total_cost,
-			COALESCE(SUM(request_success), 0) AS request_success,
-			COALESCE(SUM(request_failed), 0) AS request_failed
-		`).
+                        channel_id,
+                        MAX(channel_name) AS channel_name,
+                        model_name,
+                        COALESCE(SUM(input_token), 0) AS input_tokens,
+                        COALESCE(SUM(output_token), 0) AS output_tokens,
+                        COALESCE(SUM(input_cost + output_cost), 0) AS total_cost,
+                        COALESCE(SUM(request_success), 0) AS request_success,
+                        COALESCE(SUM(request_failed), 0) AS request_failed
+                `).
 		Group("channel_id, model_name")
 	if startDate != "" {
 		query = query.Where("date >= ?", startDate)
@@ -1066,6 +1148,7 @@ func loadAnalyticsChannelModelRows(ctx context.Context, r model.AnalyticsRange, 
 	if err := query.Scan(&dbRows).Error; err != nil {
 		return loadAnalyticsChannelModelRowsFromRelayLogs(ctx, r, scope)
 	}
+	dailyRows := make(map[string]*analyticsChannelModelAggregateRow, len(dbRows))
 	for _, row := range dbRows {
 		modelName := strings.TrimSpace(row.ModelName)
 		if modelName == "" || !inScope(row.ChannelID, modelName) {
@@ -1074,11 +1157,35 @@ func loadAnalyticsChannelModelRows(ctx context.Context, r model.AnalyticsRange, 
 		rowCopy := row
 		rowCopy.ModelName = modelName
 		key := strconv.Itoa(row.ChannelID) + "\x00" + modelName
-		rows[key] = &rowCopy
+		dailyRows[key] = &rowCopy
 	}
-	// stats_daily 为主、relay_logs 补缺：stats_daily 未覆盖的 (channel, model)
+
+	// 1d/today 亚日窗口：relay_logs 为主、stats_daily 补缺（见 loadAnalyticsProviderRows）。
+	if analyticsUsesRelayLogPrimary(r) {
+		keepEnabled, err := setting.GetBool(model.SettingKeyRelayLogKeepEnabled)
+		if err != nil {
+			return nil, err
+		}
+		if keepEnabled {
+			logRows, logErr := loadAnalyticsChannelModelRowsFromRelayLogs(ctx, r, scope)
+			if logErr != nil {
+				return nil, logErr
+			}
+			for key, dailyRow := range dailyRows {
+				if _, exists := logRows[key]; !exists {
+					logRows[key] = dailyRow
+				}
+			}
+			return logRows, nil
+		}
+	}
+
+	// 其余：stats_daily 为主、relay_logs 补缺：stats_daily 未覆盖的 (channel, model)
 	// 组合从 relay_logs 补充，避免迁移后旧数据消失（issue #148）。
 	// 仅补缺不合并，避免同一请求在两个数据源中双计。
+	for key, dailyRow := range dailyRows {
+		rows[key] = dailyRow
+	}
 	logRows, logErr := loadAnalyticsChannelModelRowsFromRelayLogs(ctx, r, scope)
 	if logErr == nil {
 		for key, logRow := range logRows {
@@ -1171,14 +1278,14 @@ func loadAnalyticsProviderRows(ctx context.Context, r model.AnalyticsRange) (map
 	var dbRows []analyticsProviderAggregateRow
 	query := conn.WithContext(ctx).Model(&model.StatsDailyChannel{}).
 		Select(`
-			channel_id,
-			MAX(channel_name) AS channel_name,
-			COALESCE(SUM(input_token), 0) AS input_tokens,
-			COALESCE(SUM(output_token), 0) AS output_tokens,
-			COALESCE(SUM(input_cost + output_cost), 0) AS total_cost,
-			COALESCE(SUM(request_success), 0) AS request_success,
-			COALESCE(SUM(request_failed), 0) AS request_failed
-		`).
+                        channel_id,
+                        MAX(channel_name) AS channel_name,
+                        COALESCE(SUM(input_token), 0) AS input_tokens,
+                        COALESCE(SUM(output_token), 0) AS output_tokens,
+                        COALESCE(SUM(input_cost + output_cost), 0) AS total_cost,
+                        COALESCE(SUM(request_success), 0) AS request_success,
+                        COALESCE(SUM(request_failed), 0) AS request_failed
+                `).
 		Group("channel_id")
 	if startDate != "" {
 		query = query.Where("date >= ?", startDate)
@@ -1186,11 +1293,39 @@ func loadAnalyticsProviderRows(ctx context.Context, r model.AnalyticsRange) (map
 	if err := query.Scan(&dbRows).Error; err != nil {
 		return loadAnalyticsProviderRowsFromRelayLogs(ctx, r)
 	}
+	dailyRows := make(map[int]*analyticsProviderAggregateRow, len(dbRows))
 	for _, row := range dbRows {
 		rowCopy := row
-		rows[row.ChannelID] = &rowCopy
+		dailyRows[row.ChannelID] = &rowCopy
 	}
-	// stats_daily 为主、relay_logs 补缺（issue #148）。
+
+	// 1d/today 为亚日窗口（1d 滚动 24 小时，与缓存页 ops 窗口一致；today 今日 0 点起）：
+	// relay_logs 为主、stats_daily 补缺。日粒度统计表无法表达"昨天的部分小时"，
+	// 若以它为主会把昨天整天计入；补缺仅覆盖 relay_logs 缺失的 key，保住
+	// issue #148 的"迁移后旧渠道不消失"语义，补缺值为今天口径的近似。
+	if analyticsUsesRelayLogPrimary(r) {
+		keepEnabled, err := setting.GetBool(model.SettingKeyRelayLogKeepEnabled)
+		if err != nil {
+			return nil, err
+		}
+		if keepEnabled {
+			logRows, logErr := loadAnalyticsProviderRowsFromRelayLogs(ctx, r)
+			if logErr != nil {
+				return nil, logErr
+			}
+			for channelID, dailyRow := range dailyRows {
+				if _, exists := logRows[channelID]; !exists {
+					logRows[channelID] = dailyRow
+				}
+			}
+			return logRows, nil
+		}
+	}
+
+	// 其余：stats_daily 为主、relay_logs 补缺（issue #148）。
+	for channelID, dailyRow := range dailyRows {
+		rows[channelID] = dailyRow
+	}
 	logRows, logErr := loadAnalyticsProviderRowsFromRelayLogs(ctx, r)
 	if logErr == nil {
 		for channelID, logRow := range logRows {
@@ -1214,13 +1349,13 @@ func loadAnalyticsModelRows(ctx context.Context, r model.AnalyticsRange) (map[st
 	var dbRows []analyticsModelAggregateRow
 	query := conn.WithContext(ctx).Model(&model.StatsDailyModel{}).
 		Select(`
-			model_name,
-			COALESCE(SUM(input_token), 0) AS input_tokens,
-			COALESCE(SUM(output_token), 0) AS output_tokens,
-			COALESCE(SUM(input_cost + output_cost), 0) AS total_cost,
-			COALESCE(SUM(request_success), 0) AS request_success,
-			COALESCE(SUM(request_failed), 0) AS request_failed
-		`).
+                        model_name,
+                        COALESCE(SUM(input_token), 0) AS input_tokens,
+                        COALESCE(SUM(output_token), 0) AS output_tokens,
+                        COALESCE(SUM(input_cost + output_cost), 0) AS total_cost,
+                        COALESCE(SUM(request_success), 0) AS request_success,
+                        COALESCE(SUM(request_failed), 0) AS request_failed
+                `).
 		Group("model_name")
 	if startDate != "" {
 		query = query.Where("date >= ?", startDate)
@@ -1228,6 +1363,7 @@ func loadAnalyticsModelRows(ctx context.Context, r model.AnalyticsRange) (map[st
 	if err := query.Scan(&dbRows).Error; err != nil {
 		return loadAnalyticsModelRowsFromRelayLogs(ctx, r)
 	}
+	dailyRows := make(map[string]*analyticsModelAggregateRow, len(dbRows))
 	for _, row := range dbRows {
 		modelName := strings.TrimSpace(row.ModelName)
 		if modelName == "" {
@@ -1235,9 +1371,35 @@ func loadAnalyticsModelRows(ctx context.Context, r model.AnalyticsRange) (map[st
 		}
 		rowCopy := row
 		rowCopy.ModelName = modelName
-		rows[modelName] = &rowCopy
+		dailyRows[modelName] = &rowCopy
 	}
-	// stats_daily 为主、relay_logs 补缺（issue #148）。
+
+	// 1d/today 亚日窗口：relay_logs 为主、stats_daily 补缺（日粒度无法表达
+	// 昨天的部分小时）。补缺仅覆盖 relay_logs 缺失的 key，保住 issue #148 的
+	// “迁移后旧模型不消失”语义，补缺值为今天口径的近似。
+	if analyticsUsesRelayLogPrimary(r) {
+		keepEnabled, err := setting.GetBool(model.SettingKeyRelayLogKeepEnabled)
+		if err != nil {
+			return nil, err
+		}
+		if keepEnabled {
+			logRows, logErr := loadAnalyticsModelRowsFromRelayLogs(ctx, r)
+			if logErr != nil {
+				return nil, logErr
+			}
+			for modelName, dailyRow := range dailyRows {
+				if _, exists := logRows[modelName]; !exists {
+					logRows[modelName] = dailyRow
+				}
+			}
+			return logRows, nil
+		}
+	}
+
+	// 其余：stats_daily 为主、relay_logs 补缺（issue #148）。
+	for modelName, dailyRow := range dailyRows {
+		rows[modelName] = dailyRow
+	}
 	logRows, logErr := loadAnalyticsModelRowsFromRelayLogs(ctx, r)
 	if logErr == nil {
 		for modelName, logRow := range logRows {
@@ -1261,14 +1423,14 @@ func loadAnalyticsAPIKeyRows(ctx context.Context, r model.AnalyticsRange) (map[s
 	var dbRows []analyticsAPIKeyAggregateRow
 	query := conn.WithContext(ctx).Model(&model.StatsDailyAPIKey{}).
 		Select(`
-			api_key_id,
-			MAX(name) AS name,
-			COALESCE(SUM(input_token), 0) AS input_tokens,
-			COALESCE(SUM(output_token), 0) AS output_tokens,
-			COALESCE(SUM(input_cost + output_cost), 0) AS total_cost,
-			COALESCE(SUM(request_success), 0) AS request_success,
-			COALESCE(SUM(request_failed), 0) AS request_failed
-		`).
+                        api_key_id,
+                        MAX(name) AS name,
+                        COALESCE(SUM(input_token), 0) AS input_tokens,
+                        COALESCE(SUM(output_token), 0) AS output_tokens,
+                        COALESCE(SUM(input_cost + output_cost), 0) AS total_cost,
+                        COALESCE(SUM(request_success), 0) AS request_success,
+                        COALESCE(SUM(request_failed), 0) AS request_failed
+                `).
 		Group("api_key_id")
 	if startDate != "" {
 		query = query.Where("date >= ?", startDate)
@@ -1276,12 +1438,37 @@ func loadAnalyticsAPIKeyRows(ctx context.Context, r model.AnalyticsRange) (map[s
 	if err := query.Scan(&dbRows).Error; err != nil {
 		return loadAnalyticsAPIKeyRowsFromRelayLogs(ctx, r)
 	}
+	dailyRows := make(map[string]*analyticsAPIKeyAggregateRow, len(dbRows))
 	for _, row := range dbRows {
 		rowCopy := row
 		rowCopy.Name = strings.TrimSpace(row.Name)
-		rows[makeAnalyticsAPIKeyAggregateKey(row.APIKeyID, rowCopy.Name)] = &rowCopy
+		dailyRows[makeAnalyticsAPIKeyAggregateKey(row.APIKeyID, rowCopy.Name)] = &rowCopy
 	}
-	// stats_daily 为主、relay_logs 补缺（issue #148）。
+
+	// 1d/today 亚日窗口：relay_logs 为主、stats_daily 补缺（见 loadAnalyticsProviderRows）。
+	if analyticsUsesRelayLogPrimary(r) {
+		keepEnabled, err := setting.GetBool(model.SettingKeyRelayLogKeepEnabled)
+		if err != nil {
+			return nil, err
+		}
+		if keepEnabled {
+			logRows, logErr := loadAnalyticsAPIKeyRowsFromRelayLogs(ctx, r)
+			if logErr != nil {
+				return nil, logErr
+			}
+			for key, dailyRow := range dailyRows {
+				if _, exists := logRows[key]; !exists {
+					logRows[key] = dailyRow
+				}
+			}
+			return logRows, nil
+		}
+	}
+
+	// 其余：stats_daily 为主、relay_logs 补缺（issue #148）。
+	for key, dailyRow := range dailyRows {
+		rows[key] = dailyRow
+	}
 	logRows, logErr := loadAnalyticsAPIKeyRowsFromRelayLogs(ctx, r)
 	if logErr == nil {
 		for key, logRow := range logRows {
@@ -1859,11 +2046,25 @@ func analyticsRangeStartUnix(r model.AnalyticsRange, now time.Time) *int64 {
 }
 
 func analyticsStartDate(r model.AnalyticsRange, now time.Time) string {
+	// 1d 为滚动 24 小时窗口（analyticsStartTime），但该函数的调用方都是
+	// 日粒度统计表（stats_daily / stats_daily_channel / ...），无法表达"昨天的
+	// 部分小时"。若直接返回昨天日期会把昨天整天计入导致 over-count，因此 1d
+	// 面向日粒度数据源退化为"今天"（仅作为 relay_logs 未保留时的回退口径）。
+	if r == model.AnalyticsRange1D {
+		return now.Format("20060102")
+	}
 	start := analyticsStartTime(r, now)
 	if start == nil {
 		return ""
 	}
 	return start.Format("20060102")
+}
+
+// analyticsUsesRelayLogPrimary 报告该 range 是否以 relay_logs 为主口径。
+// 1d（滚动 24 小时）与 today（今日 0 点起）都是亚日窗口，日粒度统计表无法及时/
+// 精确表达，需要按 relay_logs 聚合；其余周期以 stats_daily 为主、relay_logs 补缺。
+func analyticsUsesRelayLogPrimary(r model.AnalyticsRange) bool {
+	return r == model.AnalyticsRange1D || r == model.AnalyticsRangeToday
 }
 
 func analyticsStartTime(r model.AnalyticsRange, now time.Time) *time.Time {
@@ -1874,8 +2075,14 @@ func analyticsStartTime(r model.AnalyticsRange, now time.Time) *time.Time {
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
 
 	switch r {
-	case model.AnalyticsRange1D:
+	case model.AnalyticsRangeToday:
+		// today 为自然日口径：今日 0 点起至当前时刻。
 		return &dayStart
+	case model.AnalyticsRange1D:
+		// 1d 与缓存页 ops 窗口（opsRangeWindow）保持一致：滚动 24 小时、按整点
+		// 对齐（当前时刻 -23h 后截断到整点），覆盖 24 个小时桶。
+		start := now.Add(-23 * time.Hour).Truncate(time.Hour)
+		return &start
 	case model.AnalyticsRange7D:
 		start := dayStart.AddDate(0, 0, -6)
 		return &start

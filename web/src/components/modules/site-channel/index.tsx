@@ -937,6 +937,7 @@ function SiteChannelMobileCard({
     model,
     isPending,
     isHighlighted,
+    pendingRouteOverrides,
     onMoveModel,
     onToggleDisabled,
     onDeleteManualModel,
@@ -946,6 +947,7 @@ function SiteChannelMobileCard({
     model: SiteModelView;
     isPending: boolean;
     isHighlighted: boolean;
+    pendingRouteOverrides?: Record<string, SiteModelRouteType>;
     onMoveModel: (model: SiteModelView, routeType: SiteModelRouteType) => void;
     onToggleDisabled: (model: SiteModelView) => void;
     onDeleteManualModel: (model: SiteModelView) => void;
@@ -957,6 +959,11 @@ function SiteChannelMobileCard({
     const { Avatar: ModelAvatar } = getModelIcon(model.model_name);
     const historyCount = getModelHistoryCount(model);
 
+    // For route changes we have an immediate optimistic update in pendingRouteOverrides.
+    // Dimming the whole card on isPending causes a visible "flash" when pendingModelKeys is cleared onSettled.
+    // We only dim for the route change case if we do *not* yet have an optimistic value.
+    const showDim = isPending && !(pendingRouteOverrides && pendingRouteOverrides[modelKey]);
+
     return (
         <article
             ref={(node) => registerModelRef(modelKey, node)}
@@ -964,7 +971,7 @@ function SiteChannelMobileCard({
                 'overflow-hidden border border-border/35 bg-card text-card-foreground',
                 'first:rounded-t-xl last:rounded-b-xl not-first:-mt-px',
                 model.disabled && 'opacity-60',
-                isPending && 'opacity-70',
+                showDim && 'opacity-70',
                 isHighlighted && 'z-10 ring-2 ring-primary/35 ring-inset',
             )}
         >
@@ -1107,6 +1114,7 @@ function SiteChannelMobileList({
     hasMore,
     onReachEnd,
     pendingModelKeys,
+    pendingRouteOverrides = {},
     highlightedModelKey,
     onMoveModel,
     onToggleDisabled,
@@ -1118,6 +1126,7 @@ function SiteChannelMobileList({
     hasMore: boolean;
     onReachEnd: () => void;
     pendingModelKeys: Set<string>;
+    pendingRouteOverrides?: Record<string, SiteModelRouteType>;
     highlightedModelKey: string | null;
     onMoveModel: (model: SiteModelView, routeType: SiteModelRouteType) => void;
     onToggleDisabled: (model: SiteModelView) => void;
@@ -1156,6 +1165,7 @@ function SiteChannelMobileList({
                             key={modelKey}
                             model={model}
                             isPending={pendingModelKeys.has(modelKey)}
+                            pendingRouteOverrides={pendingRouteOverrides}
                             isHighlighted={highlightedModelKey === modelKey}
                             onMoveModel={onMoveModel}
                             onToggleDisabled={onToggleDisabled}
@@ -1177,6 +1187,7 @@ function SiteChannelTableView({
     onReachEnd,
     allVisibleSelected,
     pendingModelKeys,
+    pendingRouteOverrides = {},
     selectedModelKeys,
     compactMode,
     tableSort,
@@ -1195,6 +1206,7 @@ function SiteChannelTableView({
     onReachEnd: () => void;
     allVisibleSelected: boolean;
     pendingModelKeys: Set<string>;
+    pendingRouteOverrides?: Record<string, SiteModelRouteType>;
     selectedModelKeys: Set<string>;
     compactMode: boolean;
     tableSort: SiteChannelTableSort;
@@ -1271,6 +1283,11 @@ function SiteChannelTableView({
                         const modelKey = makeModelKey(model.group_key, model.model_name);
                         const { Avatar: ModelAvatar } = getModelIcon(model.model_name);
                         const isPending = pendingModelKeys.has(modelKey);
+                        // For route changes we have an immediate optimistic update in pendingRouteOverrides.
+                        // Dimming the whole row on isPending causes a visible "flash" when pendingModelKeys is cleared onSettled.
+                        // We only dim for the route change case if we do *not* yet have an optimistic value (shouldn't happen for route moves).
+                        // For safety, we avoid row-level opacity change for pending route overrides.
+                        const showRowDim = isPending && !pendingRouteOverrides[modelKey];
                         const isSelected = selectedModelKeys.has(modelKey);
                         const historyCount = getModelHistoryCount(model);
 
@@ -1281,7 +1298,7 @@ function SiteChannelTableView({
                                 data-state={isSelected ? 'selected' : undefined}
                                 className={cn(
                                     model.disabled && 'opacity-60',
-                                    isPending && 'opacity-70',
+                                    showRowDim && 'opacity-70',
                                     highlightedModelKey === modelKey && 'ring-2 ring-primary/35 ring-inset',
                                 )}
                             >
@@ -1536,15 +1553,24 @@ function SiteAccountPanel({
     const scopedModels = useMemo(() => {
         return flattenAccountModels(account, activeFilter).map((model) => {
             const modelKey = makeModelKey(model.group_key, model.model_name);
-            const nextRouteType = pendingRouteOverrides[modelKey];
-            const nextDisabled = pendingDisabledOverrides[modelKey];
+            // Always prefer a recorded pending override if present.
+            // We insert into pendingRouteOverrides when the user initiates a move.
+            // We only remove the override on error (to rollback the UI to the server value).
+            // We deliberately leave the override after success.
+            //
+            // This ensures the displayed endpoint format never falls back to the (still old)
+            // value in the current `account` prop between the moment the mutation settles
+            // and the moment the parent's setQueryData + re-render propagates the new value.
+            // Once the server value matches the override, there is no visual change.
+            const nextRouteType = pendingRouteOverrides[modelKey] ?? model.route_type;
+            const nextDisabled = pendingDisabledOverrides[modelKey] ?? model.disabled;
 
             return {
                 ...model,
-                route_type: nextRouteType ?? model.route_type,
-                route_source: nextRouteType ? 'manual_override' : model.route_source,
-                manual_override: nextRouteType ? true : model.manual_override,
-                disabled: nextDisabled ?? model.disabled,
+                route_type: nextRouteType,
+                route_source: pendingRouteOverrides[modelKey] ? 'manual_override' : model.route_source,
+                manual_override: pendingRouteOverrides[modelKey] ? true : model.manual_override,
+                disabled: nextDisabled,
             };
         });
     }, [account, activeFilter, pendingRouteOverrides, pendingDisabledOverrides]);
@@ -1694,7 +1720,11 @@ function SiteAccountPanel({
 
         routeMutation.mutate(payload, {
             onSuccess: () => {
-                setPendingRouteOverrides((current) => removeKeys(current, modelKeys));
+                // Do not clear pendingRouteOverrides on success.
+                // Keep the desired value visible. We only clear overrides on error (rollback).
+                // This prevents the label from briefly reverting to the old server value
+                // in the window between onSuccess/onSettled and the parent `account` prop
+                // being updated by the mutation's setQueryData.
                 toast.success(payload.length === 1 ? '模型请求端点格式已更新' : `已更新 ${payload.length} 个模型的请求端点格式`);
             },
             onError: (error) => {
@@ -1702,6 +1732,9 @@ function SiteAccountPanel({
                 toast.error(translateSiteError(error, '更新模型请求端点格式失败'));
             },
             onSettled: () => {
+                // Only clear the "in-flight" marker. Keep the override so the UI
+                // continues to show the desired route type until the authoritative data
+                // (from setQueryData) has the same value.
                 setPendingModelKeys((current) => removePendingKeys(current, modelKeys));
             },
         });
@@ -2756,6 +2789,7 @@ function SiteAccountPanel({
                         hasMore={displayedModels.length < visibleModels.length}
                         onReachEnd={handleLoadMoreModels}
                         pendingModelKeys={pendingModelKeys}
+                        pendingRouteOverrides={pendingRouteOverrides}
                         highlightedModelKey={highlightedModelKey}
                         onMoveModel={(model, nextRouteType) => applyRouteChange([model], nextRouteType)}
                         onToggleDisabled={handleToggleDisabled}
@@ -2772,6 +2806,7 @@ function SiteAccountPanel({
                         onReachEnd={handleLoadMoreModels}
                         allVisibleSelected={allVisibleSelected}
                         pendingModelKeys={pendingModelKeys}
+                        pendingRouteOverrides={pendingRouteOverrides}
                         selectedModelKeys={selectedModelKeys}
                         compactMode={panelPreferences.compactMode}
                         tableSort={panelPreferences.tableSort}
@@ -2796,13 +2831,14 @@ function SiteAccountPanel({
     );
 }
 
-function SiteChannelDialog({
+export function SiteChannelDialog({
     card,
     jumpRequest,
     onJumpHandled,
     onNavigateToSite,
     onNavigateToSiteAccount,
     onNavigateToChannel,
+    initialAccountId,
 }: {
     card: SiteChannelCard;
     jumpRequest: SiteChannelPendingJump | null;
@@ -2810,9 +2846,13 @@ function SiteChannelDialog({
     onNavigateToSite: () => void;
     onNavigateToSiteAccount: (accountId: number) => void;
     onNavigateToChannel: (channelId: number) => void;
+    /** 直接打开（非 jump 驱动）时的初始账号页签；缺省用第一个账号 */
+    initialAccountId?: number | null;
 }) {
     const { setIsOpen } = useMorphingDialog();
-    const [activeAccountId, setActiveAccountId] = useState<number | null>(card.accounts[0]?.account_id ?? null);
+    const [activeAccountId, setActiveAccountId] = useState<number | null>(
+        initialAccountId ?? card.accounts[0]?.account_id ?? null,
+    );
     const [highlightedAccountId, setHighlightedAccountId] = useState<number | null>(null);
     const handledJumpRequestRef = useRef<number | null>(null);
     // Defer mounting the heavy SiteAccountPanel by one frame so the morph
@@ -2877,8 +2917,17 @@ function SiteChannelDialog({
             return () => window.cancelAnimationFrame(frameId);
         }
 
-        const node = accountTabRefs.current.get(target.accountId);
-        const frameId = window.requestAnimationFrame(() => {
+        // 账号页签的 ref 只在面板真正渲染后才登记（SiteAccountPanel 还要等
+        // panelReady 两帧才挂载）。原实现只等一帧：ref 尚未登记时 node 为
+        // null，却仍然把请求标记为已处理并清空 pending —— 表现为「点了没反应」，
+        // 而且页面开久后（面板首次展开较慢）几乎必现。改为限时重试。
+        const maxAttempts = 40;
+        const retryDelay = 100;
+        let attempts = 0;
+        let timer: number | null = null;
+
+        const trySelectAccount = () => {
+            const node = accountTabRefs.current.get(target.accountId);
             if (node) {
                 node.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
                 setHighlightedAccountId(target.accountId);
@@ -2893,9 +2942,20 @@ function SiteChannelDialog({
                 handledJumpRequestRef.current = jumpRequest.requestId;
                 onJumpHandled(jumpRequest.requestId);
             }
-        });
 
-        return () => window.cancelAnimationFrame(frameId);
+            if (!node) {
+                attempts += 1;
+                if (attempts < maxAttempts) {
+                    timer = window.setTimeout(trySelectAccount, retryDelay);
+                }
+            }
+        };
+
+        timer = window.setTimeout(trySelectAccount, 0);
+
+        return () => {
+            if (timer !== null) window.clearTimeout(timer);
+        };
     }, [jumpRequest, card.site_id, activeAccountId, onJumpHandled]);
 
     return (
@@ -3389,29 +3449,43 @@ export function SiteChannelSection({
     }, [data, searchTerm, sortField, sortOrder, forcedSiteId]);
     useEffect(() => {
         if (!pendingSiteChannelJump) return;
+
+        const { requestId, target } = pendingSiteChannelJump;
+
+        // 卡片网格的 ref 在渲染后才登记，且父容器（Hub 的 PageWrapper）要等
+        // 页签内容挂载完成才可滚动。原先只重试 20×150ms=3s，页面开久后
+        // 布局稳定变慢/目标卡片被重排时会错过 ref 登记，导致「跳到列表开头」。
+        // 这里延长重试窗口，并在耗尽时清理 pending（否则一次失败会永久
+        // 挡住后续跳转，因为 clearPending 只接受匹配的 requestId）。
+        const maxAttempts = 60;
+        const retryDelay = 120;
         let attempts = 0;
-        const maxAttempts = 20;
         let timer: number | null = null;
 
         const tryScroll = () => {
-            const node = siteCardRefs.current.get(pendingSiteChannelJump.target.siteId);
+            const node = siteCardRefs.current.get(target.siteId);
             if (node) {
                 node.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                setHighlightedSiteId(pendingSiteChannelJump.target.siteId);
+                setHighlightedSiteId(target.siteId);
                 window.setTimeout(() => {
                     setHighlightedSiteId((current) =>
-                        current === pendingSiteChannelJump.target.siteId ? null : current,
+                        current === target.siteId ? null : current,
                     );
                 }, 1800);
 
-                if (pendingSiteChannelJump.target.kind === 'site-channel-card') {
-                    clearPending(pendingSiteChannelJump.requestId);
+                if (target.kind === 'site-channel-card') {
+                    clearPending(requestId);
                 }
                 return;
             }
+
             attempts++;
             if (attempts < maxAttempts) {
-                timer = window.setTimeout(tryScroll, 150);
+                timer = window.setTimeout(tryScroll, retryDelay);
+            } else {
+                // 降级：站点级跳转已尽力；账号级由 SiteCardJumpWatcher 负责开弹窗，
+                // 这里只清理请求避免卡死。
+                clearPending(requestId);
             }
         };
 

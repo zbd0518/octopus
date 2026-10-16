@@ -471,7 +471,8 @@
     },
     "note": "目前階段先完成頁面殼層與導航接入，真實聚合資料會在下一步接入。",
     "range": {
-      "1d": "1天",
+      "today": "今天",
+      "1d": "24小時",
       "7d": "7天",
       "30d": "30天",
       "90d": "90天",
@@ -779,10 +780,7 @@
             "estimatedCostSaved": "預估節省"
           }
         },
-        "trend": {
-          "title": "24 小時趨勢",
-          "description": "按小時查看快取讀取量與復用變化。"
-        }
+        "trend": { "title": "24 小時趨勢", "description": "按時間桶查看快取讀取量與復用變化。" }
       }
     },
     "quota": {
@@ -1271,6 +1269,7 @@
       "customizeTitle": "指標顯示與排序",
       "customizeReset": "重設",
       "range": {
+        "today": "今天",
         "7d": "7天",
         "30d": "30天",
         "90d": "90天",
@@ -3001,7 +3000,8 @@
       "allLogs": "全部日誌",
       "testOnly": "僅測試",
       "nonTest": "僅正式",
-      "clear": "清除"
+      "clear": "清除",
+      "allGroups": "全部分組"
     },
     "viewOptions": {
       "title": "顯示欄位",

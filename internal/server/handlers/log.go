@@ -120,6 +120,9 @@ func listLog(c *gin.Context) {
 	if v := c.Query("endpoint_type"); v != "" {
 		filter.EndpointType = v
 	}
+	if v := c.Query("group"); v != "" {
+		filter.Group = v
+	}
 	if v := c.Query("status"); v != "" {
 		switch v {
 		case "success":

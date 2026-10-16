@@ -554,6 +554,7 @@ type LogFilter struct {
 	APIKeyID     *int
 	EndpointType string
 	HasError     *bool // nil=全部, false=仅成功, true=仅失败
+	Group        string // 按路由分组名称筛选（匹配 request_model_name）
 	// IncludeAttempts 控制 channel_id / HasError 过滤是否"穿透"到单次尝试维度。
 	// 为 true 时，"在渠道A 失败→重试到B 成功"的请求也会被 ChannelID=A 命中，
 	// HasError=true 也会命中整体成功但含失败尝试的请求（issue #67）。
@@ -593,6 +594,7 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 	hasFilter := filter.StartTime != nil || filter.EndTime != nil ||
 		filter.Model != "" || len(filter.Models) > 0 || filter.ChannelID != nil ||
 		filter.APIKeyID != nil || filter.EndpointType != "" || filter.HasError != nil ||
+		filter.Group != "" ||
 		filter.IsTest != nil
 	// modelsLower 预计算 Models 的 小写集合，供缓存路径与 DB 路径共用。
 	modelsLower := make(map[string]struct{}, len(filter.Models))
@@ -669,6 +671,9 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 			}
 		}
 		if filter.IsTest != nil && log.IsTest != *filter.IsTest {
+			return false
+		}
+		if filter.Group != "" && log.RequestModelName != filter.Group {
 			return false
 		}
 		return true
@@ -784,6 +789,9 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 			}
 			if filter.EndpointType != "" {
 				query = query.Where("endpoint_type = ?", filter.EndpointType)
+			}
+			if filter.Group != "" {
+				query = query.Where("request_model_name = ?", filter.Group)
 			}
 			if filter.HasError != nil {
 				if *filter.HasError {

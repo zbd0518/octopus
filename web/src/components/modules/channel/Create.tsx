@@ -132,7 +132,7 @@ export function CreateDialogContent() {
         <div className="flex h-full w-full min-h-0 flex-col overflow-hidden bg-card text-card-foreground">
             <MorphingDialogTitle>
                 <header className="relative flex items-center justify-between gap-4 px-1 pb-4 pt-1">
-                    <div className="space-y-3">
+                    <div className="min-w-0 flex-1 space-y-3">
                         <div className="flex items-center gap-2">
                             <span className="h-2.5 w-10 rounded-full bg-primary/18" />
                             <span className="h-2.5 w-24 rounded-full bg-card" />
@@ -145,37 +145,40 @@ export function CreateDialogContent() {
                             <p className="text-sm text-muted-foreground">{tForm('template.hint')}</p>
                         </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                    <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setShowPresetPicker(!showPresetPicker)}
-                        className="h-10 rounded-lg px-3 text-xs sm:text-sm"
-                    >
-                        {showPresetPicker ? <ArrowLeft className="size-4" /> : <Sparkles className="size-4" />}
-                        <span>{showPresetPicker ? tForm('template.skip') : tForm('template.open')}</span>
-                    </Button>
-                    {createChannel.isPending ? (
+
+                    <div className="flex shrink-0 items-center gap-10">
                         <Button
                             type="button"
                             variant="outline"
-                            size="icon"
-                            disabled
-                            aria-label={tForm('modelPicker.cancel')}
-                            className="h-9 w-9 rounded-md border-border bg-card opacity-80 transition-all duration-150 hover:bg-muted hover:opacity-100"
+                            size="sm"
+                            onClick={() => setShowPresetPicker(!showPresetPicker)}
+                            className="h-8 rounded-lg text-xs mr-2 transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-100 ease-out active:scale-[0.98]"
                         >
-                            <X className="size-5" />
+                            {showPresetPicker ? <ArrowLeft className="size-3.5" /> : <Sparkles className="size-3.5" />}
+                            <span className="ml-1">{showPresetPicker ? tForm('template.skip') : tForm('template.open')}</span>
                         </Button>
-                    ) : (
-                        <MorphingDialogClose
-                            className="relative right-0 top-0"
-                            variants={{
-                                initial: { opacity: 0, scale: 0.8 },
-                                animate: { opacity: 1, scale: 1 },
-                                exit: { opacity: 0, scale: 0.8 }
-                            }}
-                        />
-                    )}
+
+                        {createChannel.isPending ? (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                disabled
+                                aria-label={tForm('modelPicker.cancel')}
+                                className="h-8 w-8 rounded-md border-border bg-card opacity-80 transition-all duration-150 hover:bg-muted hover:opacity-100"
+                            >
+                                <X className="size-4" />
+                            </Button>
+                        ) : (
+                            <MorphingDialogClose
+                                className="relative top-0 right-0"
+                                variants={{
+                                    initial: { opacity: 0, scale: 0.8 },
+                                    animate: { opacity: 1, scale: 1 },
+                                    exit: { opacity: 0, scale: 0.8 }
+                                }}
+                            />
+                        )}
                     </div>
                 </header>
             </MorphingDialogTitle>

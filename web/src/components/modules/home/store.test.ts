@@ -17,6 +17,7 @@ test('normalizeOverviewRange defaults to 7d when value is invalid', () => {
 });
 
 test('normalizeOverviewRange preserves supported values', () => {
+    assert.equal(normalizeOverviewRange('today'), 'today');
     assert.equal(normalizeOverviewRange('7d'), '7d');
     assert.equal(normalizeOverviewRange('30d'), '30d');
     assert.equal(normalizeOverviewRange('90d'), '90d');

@@ -1265,59 +1265,59 @@ export function ChannelForm({
                     </div>
                 </div>
                 <div className="space-y-2">
-                    {(formData.base_urls ?? []).map((u, idx) => (
-                        <div key={`baseurl-${idx}`} className="space-y-1.5 rounded-lg border border-border/25 bg-card p-2">
-                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                                <Input
-                                    id={`${idPrefix}-base-${idx}`}
-                                    type="url"
-                                    value={u.url}
-                                    onChange={(e) => handleUpdateBaseUrl(idx, { url: e.target.value })}
-                                    placeholder={t('baseUrlUrl')}
-                                    aria-label={`${t('baseUrlUrl')} ${idx + 1}`}
-                                    required={idx === 0}
-                                    className="w-full flex-1 rounded-lg"
-                                />
-                                <div className="flex items-center gap-2 sm:shrink-0">
-                                    <Select
-                                        value={isOpenAICompatBaseUrlSuffixMode(u.suffix_mode) ? 'openai_compat' : 'custom'}
-                                        onValueChange={(value) => handleUpdateBaseUrl(idx, { suffix_mode: value as Channel['base_urls'][number]['suffix_mode'] })}
-                                    >
-                                        <SelectTrigger className="h-10 min-w-0 flex-1 rounded-lg sm:w-36 lg:w-44 sm:flex-none">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent className="rounded-lg">
-                                            <SelectItem className="rounded-xl" value="openai_compat">{t('baseUrlSuffixOpenAI')}</SelectItem>
-                                            <SelectItem className="rounded-xl" value="custom">{t('baseUrlSuffixCustom')}</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                    <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => handleRemoveBaseUrl(idx)}
-                                        disabled={(formData.base_urls ?? []).length <= 1}
-                                        className="size-11 shrink-0 rounded-lg p-0 text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-40"
-                                        title={t('remove')}
-                                    >
-                                        <X className="h-4 w-4" />
-                                    </Button>
+                    {(formData.base_urls ?? []).map((u, idx) => {
+                        const showWarning = isOpenAICompatBaseUrlSuffixMode(u.suffix_mode) && hasManualVersionSuffix(u.url);
+                        const hintText = isOpenAICompatBaseUrlSuffixMode(u.suffix_mode)
+                            ? t('baseUrlOpenAIHint')
+                            : t('baseUrlCustomHint');
+                        return (
+                            <div key={`baseurl-${idx}`} className="space-y-1.5 rounded-lg border border-border/25 bg-card p-2">
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                                    <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                                        <Input
+                                            id={`${idPrefix}-base-${idx}`}
+                                            type="url"
+                                            value={u.url}
+                                            onChange={(e) => handleUpdateBaseUrl(idx, { url: e.target.value })}
+                                            placeholder={t('baseUrlUrl')}
+                                            aria-label={`${t('baseUrlUrl')} ${idx + 1}`}
+                                            required={idx === 0}
+                                            className="min-w-0 flex-1 rounded-lg"
+                                        />
+                                        <Hint text={hintText} />
+                                    </div>
+                                    <div className="flex items-center gap-2 sm:shrink-0">
+                                        <Select
+                                            value={isOpenAICompatBaseUrlSuffixMode(u.suffix_mode) ? 'openai_compat' : 'custom'}
+                                            onValueChange={(value) => handleUpdateBaseUrl(idx, { suffix_mode: value as Channel['base_urls'][number]['suffix_mode'] })}
+                                        >
+                                            <SelectTrigger className="h-10 min-w-0 flex-1 rounded-lg sm:w-36 lg:w-44 sm:flex-none">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent className="rounded-lg">
+                                                <SelectItem className="rounded-xl" value="openai_compat">{t('baseUrlSuffixOpenAI')}</SelectItem>
+                                                <SelectItem className="rounded-xl" value="custom">{t('baseUrlSuffixCustom')}</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => handleRemoveBaseUrl(idx)}
+                                            disabled={(formData.base_urls ?? []).length <= 1}
+                                            className="size-11 shrink-0 rounded-lg p-0 text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-40"
+                                            title={t('remove')}
+                                        >
+                                            <X className="h-4 w-4" />
+                                        </Button>
+                                    </div>
                                 </div>
+                                {showWarning && (
+                                    <p className="px-1 text-xs leading-5 text-destructive">{t('baseUrlOpenAIWarning')}</p>
+                                )}
                             </div>
-                            {isOpenAICompatBaseUrlSuffixMode(u.suffix_mode) && hasManualVersionSuffix(u.url) ? (
-                                <p className="px-1 text-xs leading-5 text-destructive">{t('baseUrlOpenAIWarning')}</p>
-                            ) : (
-                                <Hint
-                                    className="sm:shrink-0"
-                                    text={
-                                        isOpenAICompatBaseUrlSuffixMode(u.suffix_mode)
-                                            ? t('baseUrlOpenAIHint')
-                                            : t('baseUrlCustomHint')
-                                    }
-                                />
-                            )}
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             </section>
 
@@ -1542,7 +1542,7 @@ export function ChannelForm({
                                 value={k.supported_models ?? ''}
                                 onChange={(e) => handleUpdateKey(idx, { supported_models: e.target.value })}
                                 placeholder={t('supportedModels')}
-                                className="rounded-lg text-xs text-muted-foreground"
+                                className="w-full rounded-lg text-xs text-muted-foreground"
                             />
                         </Hint>
                         </div>

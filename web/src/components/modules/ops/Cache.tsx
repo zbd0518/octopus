@@ -211,9 +211,13 @@ function ProviderPromptCacheView({
     t: CacheTranslations;
     range: AnalyticsRange;
 }) {
+    const analyticsT = useTranslations('analytics');
+    const rangeLabel = analyticsT(`range.${range}`);
+    // 1d 特殊显示 "24 小时趋势"，其他显示 "7天 趋势" 等，参考 new-api 风格
+    const trendTitle = range === '1d' ? '24 小时趋势' : `${rangeLabel} 趋势`;
     const trend = data.trend ?? [];
-    // 1d 为小时桶（显示 HH:mm），多日周期为天桶（只显示 月/日）
-    const isDailyBucket = range !== '1d';
+    // 1d/today 为小时桶（显示 HH:mm），多日周期为天桶（只显示 月/日）
+    const isDailyBucket = range !== '1d' && range !== 'today';
     const readTokens = formatProviderPromptCacheCount(data.cache_read_tokens);
     const writeTokens = formatProviderPromptCacheCount(data.cache_write_tokens);
     const hasTrendActivity = trend.some((item) => item.request_count > 0 || item.cache_read_tokens > 0 || item.cache_write_tokens > 0);
@@ -309,7 +313,7 @@ function ProviderPromptCacheView({
 
                     <div className="min-w-0 space-y-3">
                         <div>
-                            <h4 className="text-sm font-semibold">{t('cache.providerPrompt.trend.title')}</h4>
+                            <h4 className="text-sm font-semibold">{trendTitle}</h4>
                             <p className="mt-1 text-sm leading-6 text-muted-foreground">
                                 {t('cache.providerPrompt.trend.description')}
                             </p>

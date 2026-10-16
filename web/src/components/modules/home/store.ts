@@ -6,14 +6,14 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 export type RankSortMode = 'cost' | 'count' | 'tokens' | 'key-usage';
 export type ChartMetricType = 'cost' | 'count' | 'tokens' | 'success-rate';
 export type ChartPeriod = '1' | '7' | '30';
-export type OverviewRange = '7d' | '30d' | '90d' | 'all';
+export type OverviewRange = 'today' | '7d' | '30d' | '90d' | 'all';
 export type OverviewCountMode = 'active' | 'all';
 export type StatsRefreshInterval = '5s' | '10s' | '15s' | '30s' | '60s' | 'off';
 
  const RANK_SORT_MODES: readonly RankSortMode[] = ['cost', 'count', 'tokens', 'key-usage'];
  const CHART_METRIC_TYPES: readonly ChartMetricType[] = ['cost', 'count', 'tokens', 'success-rate'];
  const CHART_PERIODS: readonly ChartPeriod[] = ['1', '7', '30'];
- const OVERVIEW_RANGES: readonly OverviewRange[] = ['7d', '30d', '90d', 'all'];
+ const OVERVIEW_RANGES: readonly OverviewRange[] = ['today', '7d', '30d', '90d', 'all'];
 const STATS_REFRESH_INTERVALS: readonly StatsRefreshInterval[] = ['5s', '10s', '15s', '30s', '60s', 'off'];
 
 /** 首页统计自动刷新间隔可选项（用于 UI 渲染）。 */

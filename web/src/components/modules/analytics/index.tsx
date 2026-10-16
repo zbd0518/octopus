@@ -37,8 +37,8 @@ const TAB_LABEL: Record<AnalyticsTab, { ns: 'analytics' | 'ops'; key: string }> 
     latency: { ns: 'analytics', key: 'latency.title' },
 };
 
-/** 常用时间范围按钮（1d/7d/30d）。 */
-const PRIMARY_RANGES: AnalyticsRange[] = ['1d', '7d', '30d'];
+/** 常用时间范围按钮（today/1d/7d/30d）。 */
+const PRIMARY_RANGES: AnalyticsRange[] = ['today', '1d', '7d', '30d'];
 /** 折叠进"更多"下拉的时间范围。 */
 const MORE_RANGES: AnalyticsRange[] = ['90d', 'ytd', 'all'];
 /** 缓存 TTL 可选项。 */

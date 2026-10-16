@@ -79,6 +79,8 @@ import {
 import { platformLabel, siteMatchesPlatformFilters } from "./site-filters";
 import { translateSiteMessage } from "./site-message";
 import { useSiteUIStore } from "./ui-store";
+import { SiteChannelDialogHost } from "../site-channel/SiteChannelDialogHost";
+import { useSiteChannelDialogRequestStore } from "../site-channel/dialog-request-store";
 import {
   isSiteJumpTarget,
   type PendingJump,
@@ -673,7 +675,9 @@ export function Site() {
   const resetSiteHandlers = useSiteUIStore((state) => state.resetHandlers);
   const pendingJump = useJumpStore((state) => state.pending);
   const clearPendingJump = useJumpStore((state) => state.clearPending);
-  const requestJump = useJumpStore((state) => state.requestJump);
+  const requestSiteChannelDialog = useSiteChannelDialogRequestStore(
+    (state) => state.requestSiteChannelDialog,
+  );
 
   const pendingSiteJump =
     pendingJump && isSiteJumpTarget(pendingJump.target)
@@ -1192,12 +1196,15 @@ export function Site() {
     setPlatformFilters([]);
   }
 
-  function jumpToSiteChannel(siteId: number) {
-    requestJump({ kind: "site-channel-card", siteId });
+  // 「查看站点渠道」统一为在当前页签内弹出该站点的渠道面板，不再切到
+  // 站点渠道页签（避免看完还要切回站点页签重新找站点）。账号级请求会
+  // 附带 accountId，弹窗打开后直接定位到该账号页签。
+  function openSiteChannelDialog(siteId: number) {
+    requestSiteChannelDialog(siteId);
   }
 
-  function jumpToSiteChannelAccount(siteId: number, accountId: number) {
-    requestJump({ kind: "site-channel-account", siteId, accountId });
+  function openSiteChannelDialogAccount(siteId: number, accountId: number) {
+    requestSiteChannelDialog(siteId, accountId);
   }
 
   function toggleSiteExpanded(siteId: number, forceExpanded: boolean) {
@@ -1267,6 +1274,9 @@ export function Site() {
 
     const { requestId, target } = pendingSiteJump;
     const targetSiteId = target.siteId;
+
+    // 目标站点不在当前可见列表时直接放弃：forcedSiteId 已保证被搜到的站点
+    // 会被拉回可见区，因此这里只能是站点已不存在。
     const siteVisible = visibleSites.some((item) => item.site.id === targetSiteId);
     if (!siteVisible) return;
 
@@ -1279,22 +1289,45 @@ export function Site() {
       });
     }
 
-    const node =
-      target.kind === "site-account"
-        ? accountElementsRef.current.get(target.accountId)
-        : cardElementsRef.current.get(target.siteId);
-    if (!node) return;
+    // 卡片 ref 由 ResizeObserver 异步登记（setSiteCardMeasureRef），弹窗关闭后
+    // 站点页重新布局同样会让旧 ref 失效。原实现只等 80ms 一次，页面开久后
+    // node 常常尚未就绪就直接 return，定位彻底失败且 pending 永久占位，
+    // 之后所有跳转都被旧请求挡住。改为限时重试 + 耗尽后清理。
+    const maxAttempts = 40;
+    const retryDelay = 100;
+    let attempts = 0;
+    let timer: number | null = null;
 
-    const timer = window.setTimeout(() => {
-      node.scrollIntoView({ behavior: "smooth", block: "center" });
-      flashTarget("site", target.siteId);
-      if (target.kind === "site-account") {
-        flashTarget("account", target.accountId);
+    const tryLocate = () => {
+      const node =
+        target.kind === "site-account"
+          ? accountElementsRef.current.get(target.accountId)
+          : cardElementsRef.current.get(target.siteId);
+
+      if (node) {
+        node.scrollIntoView({ behavior: "smooth", block: "center" });
+        flashTarget("site", target.siteId);
+        if (target.kind === "site-account") {
+          flashTarget("account", target.accountId);
+        }
+        clearPendingJump(requestId);
+        return;
       }
-      clearPendingJump(requestId);
-    }, 80);
 
-    return () => window.clearTimeout(timer);
+      attempts += 1;
+      if (attempts < maxAttempts) {
+        timer = window.setTimeout(tryLocate, retryDelay);
+      } else {
+        // 降级：清理请求，避免 pending 卡死挡住后续跳转。
+        clearPendingJump(requestId);
+      }
+    };
+
+    timer = window.setTimeout(tryLocate, 80);
+
+    return () => {
+      if (timer !== null) window.clearTimeout(timer);
+    };
   }, [pendingSiteJump, visibleSites, clearPendingJump, flashTarget]);
 
   const masonryColumns = useMemo<[VisibleSite[], VisibleSite[]]>(() => {
@@ -1460,7 +1493,7 @@ export function Site() {
                       <button
                         type="button"
                         className={MENU_BUTTON_CLASS}
-                        onClick={() => jumpToSiteChannel(site.id)}
+                        onClick={() => openSiteChannelDialog(site.id)}
                       >
                         <Waypoints className="size-4" />
                         <span>查看站点渠道</span>
@@ -1719,7 +1752,7 @@ export function Site() {
                                             type="button"
                                             className={MENU_BUTTON_CLASS}
                                             onClick={() =>
-                                              jumpToSiteChannelAccount(site.id, account.id)
+                                              openSiteChannelDialogAccount(site.id, account.id)
                                             }
                                           >
                                             <Waypoints className="size-4" />
@@ -2045,6 +2078,10 @@ export function Site() {
           </>
         ) : null}
       </PageWrapper>
+
+      {/* 「查看站点渠道」的常驻弹窗宿主：不切页签，直接在站点页签内
+          弹出该站点的渠道面板（issue: 站点/站点渠道页签跳转定位失效）。 */}
+      <SiteChannelDialogHost />
 
       <SiteEditDialog
         key={editingSite ? `edit-site-${editingSite.id}` : "create-site"}

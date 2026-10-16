@@ -70,6 +70,12 @@ func getStatsDaily(c *gin.Context) {
 }
 
 func getStatsHourly(c *gin.Context) {
+	// window=24h：滚动 24 小时窗口（分析中心"用量明细"1d 趋势图用）；
+	// 缺省保持今日口径（首页"今日"图表用）。
+	if c.Query("window") == "24h" {
+		resp.Success(c, st.HourlyGetRolling24h())
+		return
+	}
 	resp.Success(c, st.HourlyGet())
 }
 
