@@ -587,6 +587,18 @@ func (m *Message) SetReasoningContent(s string) {
 	m.ReasoningContent = &s
 }
 
+// NormalizeReasoningAlias copies the provider-specific Reasoning alias into the
+// canonical ReasoningContent field when the latter is absent. Gateways such as
+// OpenRouter return the chain of thought as `reasoning`; without this copy,
+// client-facing adapters and DeepSeek request passback only look at
+// `reasoning_content` and silently drop the content.
+func (m *Message) NormalizeReasoningAlias() {
+	if m == nil || m.ReasoningContent != nil || m.Reasoning == nil {
+		return
+	}
+	m.ReasoningContent = m.Reasoning
+}
+
 type MessageContent struct {
 	Content         *string              `json:"content,omitempty"`
 	MultipleContent []MessageContentPart `json:"multiple_content,omitempty"`

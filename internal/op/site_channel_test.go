@@ -327,6 +327,66 @@ func TestSiteChannelAccountGetIncludesParsedRouteMetadata(t *testing.T) {
 	}
 }
 
+func TestSiteChannelAccountGetKeepsModelInItsOwnGroupWhenExplicitGroupsDiffer(t *testing.T) {
+	ctx := setupSiteOpTestDB(t)
+
+	site := &model.Site{
+		Name:     "site-channel-group-mismatch-site",
+		Platform: model.SitePlatformNewAPI,
+		BaseURL:  "https://example.com",
+		Enabled:  true,
+	}
+	if err := SiteCreate(site, ctx); err != nil {
+		t.Fatalf("SiteCreate failed: %v", err)
+	}
+
+	account := &model.SiteAccount{
+		SiteID:         site.ID,
+		Name:           "site-channel-group-mismatch-account",
+		CredentialType: model.SiteCredentialTypeAccessToken,
+		AccessToken:    "token",
+		Enabled:        true,
+	}
+	if err := SiteAccountCreate(account, ctx); err != nil {
+		t.Fatalf("SiteAccountCreate failed: %v", err)
+	}
+
+	// 上游 /api/pricing 的 enable_groups 与本地 group_key 命名不一致时，
+	// 模型仍应出现在它自己所属的分组里，而不是被元数据过滤成空列表。
+	payload := model.SiteModelRouteMetadata{
+		Source:                 "/api/pricing",
+		RouteSupported:         true,
+		RouteType:              model.SiteModelRouteTypeOpenAIChat,
+		EnableGroups:           []string{"vip"},
+		SupportedEndpointTypes: []string{"/v1/chat/completions"},
+	}.Marshal()
+	row := model.SiteModel{
+		SiteAccountID:   account.ID,
+		GroupKey:        model.SiteDefaultGroupKey,
+		ModelName:       "glm-5.2",
+		RouteType:       model.SiteModelRouteTypeOpenAIChat,
+		RouteSource:     model.SiteModelRouteSourceSyncInferred,
+		RouteRawPayload: payload,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&row).Error; err != nil {
+		t.Fatalf("create site model failed: %v", err)
+	}
+
+	view, err := SiteChannelAccountGet(site.ID, account.ID, ctx)
+	if err != nil {
+		t.Fatalf("SiteChannelAccountGet failed: %v", err)
+	}
+	if view.ModelCount != 1 {
+		t.Fatalf("expected model count 1, got %d (%+v)", view.ModelCount, view.Groups)
+	}
+	if len(view.Groups) != 1 || len(view.Groups[0].Models) != 1 {
+		t.Fatalf("expected one group with one model, got %+v", view.Groups)
+	}
+	if view.Groups[0].Models[0].ModelName != "glm-5.2" {
+		t.Fatalf("unexpected model in group: %+v", view.Groups[0].Models)
+	}
+}
+
 func TestSiteChannelAccountGetIncludesFullProjectedKeys(t *testing.T) {
 	ctx := setupSiteOpTestDB(t)
 

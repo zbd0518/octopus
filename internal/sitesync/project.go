@@ -76,9 +76,8 @@ func ProjectAccount(ctx context.Context, accountID int) ([]int, error) {
 		groupKey := model.NormalizeSiteGroupKey(item.GroupKey)
 		item.GroupKey = groupKey
 		item.ModelName = name
-		if !siteModelBelongsToProjectedGroup(item, groupKey) {
-			continue
-		}
+		// 模型行自身的分组归属是权威的；上游 enable_groups 只用于向无 key 分组扩展模型，
+		// 不能反过来否决行已归属的分组（参见 internal/op/site_channel.go 同名说明）。
 		if strings.TrimSpace(string(item.RouteType)) == "" {
 			item.RouteType = model.InferSiteModelRouteType(item.ModelName)
 		}
@@ -556,20 +555,6 @@ func extractSiteModelNames(items []model.SiteModel) []string {
 		}
 	}
 	return names
-}
-
-func siteModelBelongsToProjectedGroup(item model.SiteModel, groupKey string) bool {
-	metadata, ok := model.ParseSiteModelRouteMetadata(item.RouteRawPayload)
-	if !ok || len(metadata.EnableGroups) == 0 {
-		return true
-	}
-	targetGroupKey := model.NormalizeSiteGroupKey(groupKey)
-	for _, explicitGroupKey := range metadata.EnableGroups {
-		if model.NormalizeSiteGroupKey(explicitGroupKey) == targetGroupKey {
-			return true
-		}
-	}
-	return false
 }
 
 // compositeBindingKey 生成复合绑定 key，用于区分同一 tokenGroup 的不同端点格式 Channel

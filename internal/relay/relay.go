@@ -1604,16 +1604,22 @@ func rewriteConversationRequestByProvider(group dbmodel.Group, req *model.Intern
 		return req
 	}
 
-	// Provider rewrite config: which non-standard message fields to strip.
-	// Some providers (e.g. standard OpenAI) reject reasoning_content / reasoning_signature fields.
+	// Provider rewrite config: how to normalize provider-specific reasoning fields.
+	// DeepSeek/OpenAI do not agree on the field name:
+	//   - deepseek expects `reasoning_content` and rejects the OpenRouter-style
+	//     `reasoning` alias. Folding the alias into `reasoning_content` keeps the
+	//     chain of thought on the wire; dropping it makes DeepSeek answer 400
+	//     "reasoning_content ... must be passed back" whenever `tools` is present.
+	//   - standard OpenAI rejects both fields, so they are dropped here.
 	type providerRewrite struct {
+		foldReasoningAlias      bool
 		stripReasoning          bool
 		stripReasoningSignature bool
 	}
 	providers := map[string]providerRewrite{
 		"openai":   {stripReasoning: true, stripReasoningSignature: true},
-		"deepseek": {stripReasoning: true, stripReasoningSignature: false},
-		"mimo":     {stripReasoning: false, stripReasoningSignature: true},
+		"deepseek": {foldReasoningAlias: true, stripReasoning: true},
+		"mimo":     {stripReasoningSignature: true},
 	}
 	cfg, ok := providers[provider]
 	if !ok {
@@ -1625,6 +1631,10 @@ func rewriteConversationRequestByProvider(group dbmodel.Group, req *model.Intern
 		cloned.Messages = make([]model.Message, len(req.Messages))
 		for i, msg := range req.Messages {
 			cloned.Messages[i] = msg
+			if cfg.foldReasoningAlias && cloned.Messages[i].Reasoning != nil &&
+				(cloned.Messages[i].ReasoningContent == nil || *cloned.Messages[i].ReasoningContent == "") {
+				cloned.Messages[i].ReasoningContent = cloned.Messages[i].Reasoning
+			}
 			if cfg.stripReasoning {
 				cloned.Messages[i].Reasoning = nil
 			}

@@ -261,10 +261,11 @@ func buildSiteChannelGroups(ctx context.Context, site model.Site, account model.
 		}
 	}
 	for _, item := range account.Models {
+		// 模型行的 group_key 就是同步写入时的分组归属（该分组 token 实际拉到的模型，
+		// 或按上游 enable_groups 扩展到无 key 分组）。上游 enable_groups 只用于扩展，
+		// 不能再用来否决模型行自己的分组：一旦上游分组命名与本地 group_key 不一致，
+		// 分组就会出现“计数有模型、列表为空”的矛盾视图。
 		key := model.NormalizeSiteGroupKey(item.GroupKey)
-		if !siteModelBelongsToGroup(item, key) {
-			continue
-		}
 		group := ensureSiteChannelGroup(groups, key, key)
 		routeMetadata, _ := model.ParseSiteModelRouteMetadata(item.RouteRawPayload)
 		channelID, hasChannel := findProjectedChannelID(account.ChannelBindings, key, item.RouteType, split)
@@ -306,20 +307,6 @@ func buildSiteChannelGroups(ctx context.Context, site model.Site, account model.
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].GroupKey < result[j].GroupKey })
 	return result
-}
-
-func siteModelBelongsToGroup(item model.SiteModel, groupKey string) bool {
-	metadata, ok := model.ParseSiteModelRouteMetadata(item.RouteRawPayload)
-	if !ok || len(metadata.EnableGroups) == 0 {
-		return true
-	}
-	targetGroupKey := model.NormalizeSiteGroupKey(groupKey)
-	for _, explicitGroupKey := range metadata.EnableGroups {
-		if model.NormalizeSiteGroupKey(explicitGroupKey) == targetGroupKey {
-			return true
-		}
-	}
-	return false
 }
 
 func maskProjectedChannelKey(value string) string {

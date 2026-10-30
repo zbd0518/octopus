@@ -3,6 +3,7 @@ package sitesync
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -883,6 +884,41 @@ func createProjectionFixture(t *testing.T, ctx context.Context) (*model.Site, *m
 	}
 
 	return site, account
+}
+
+func TestProjectAccountKeepsModelInItsOwnGroupWhenExplicitGroupsDiffer(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	_, account := createProjectionFixture(t, ctx)
+
+	// 上游 enable_groups 与本地 group_key 命名不一致时，模型仍应投射到它所属分组的渠道。
+	payload := model.SiteModelRouteMetadata{
+		Source:                 "/api/pricing",
+		RouteSupported:         true,
+		RouteType:              model.SiteModelRouteTypeOpenAIChat,
+		EnableGroups:           []string{"vip"},
+		SupportedEndpointTypes: []string{"/v1/chat/completions"},
+	}.Marshal()
+	extraModel := model.SiteModel{
+		SiteAccountID:   account.ID,
+		GroupKey:        model.SiteDefaultGroupKey,
+		ModelName:       "glm-5.2",
+		Source:          "sync",
+		RouteType:       model.SiteModelRouteTypeOpenAIChat,
+		RouteSource:     model.SiteModelRouteSourceSyncInferred,
+		RouteRawPayload: payload,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&extraModel).Error; err != nil {
+		t.Fatalf("create extra site model failed: %v", err)
+	}
+
+	if _, err := ProjectAccount(ctx, account.ID); err != nil {
+		t.Fatalf("ProjectAccount returned error: %v", err)
+	}
+
+	channel := loadProjectedChannelsByGroupKey(t, ctx, account.ID)[model.SiteDefaultGroupKey]
+	if !strings.Contains(channel.Model, "glm-5.2") {
+		t.Fatalf("expected default channel to include the model owned by its group, got %q", channel.Model)
+	}
 }
 
 func TestProjectAccountNormalizesProjectedChannelKeys(t *testing.T) {

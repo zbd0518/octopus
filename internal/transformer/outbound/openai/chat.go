@@ -139,6 +139,10 @@ func SanitizeRequestForOpenAICompat(request *model.InternalLLMRequest, baseURL s
 		sanitizeMessageForOpenAICompat(&request.Messages[i], preserveDeepSeekReasoning)
 	}
 
+	// DeepSeek rejects follow-up tool calls whose history lost reasoning_content.
+	// Degrade to non-thinking instead of propagating a guaranteed 400.
+	applyDeepSeekThinkingFallback(request, baseURL, isMimoChannel)
+
 	if !isReasoningCompatRequest(baseURL, request, isMimoChannel) {
 		request.ExtraBody = nil
 	}
@@ -416,6 +420,7 @@ func (o *ChatOutbound) TransformResponse(ctx context.Context, response *http.Res
 	if err := transformer.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
+	normalizeOpenAICompatReasoningAlias(&resp)
 	normalizeOpenAICompatUsage(&resp)
 	return &resp, nil
 }
@@ -440,8 +445,25 @@ func (o *ChatOutbound) TransformStream(ctx context.Context, eventData []byte) (*
 	if err := transformer.Unmarshal(eventData, &resp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal stream chunk: %w", err)
 	}
+	normalizeOpenAICompatReasoningAlias(&resp)
 	normalizeOpenAICompatUsage(&resp)
 	return &resp, nil
+}
+
+// normalizeOpenAICompatReasoningAlias maps the OpenRouter/Ollama-style
+// `reasoning` field onto the canonical `reasoning_content`. OpenAI-compatible
+// gateways normalize DeepSeek's chain of thought to `reasoning`, while most
+// clients and DeepSeek's request passback only understand `reasoning_content`.
+// Without the copy, reasoning reaches neither the client nor the next turn, and
+// DeepSeek rejects the conversation with 400 when `tools` is present.
+func normalizeOpenAICompatReasoningAlias(resp *model.InternalLLMResponse) {
+	if resp == nil {
+		return
+	}
+	for i := range resp.Choices {
+		resp.Choices[i].Message.NormalizeReasoningAlias()
+		resp.Choices[i].Delta.NormalizeReasoningAlias()
+	}
 }
 
 func normalizeOpenAICompatUsage(resp *model.InternalLLMResponse) {

@@ -174,3 +174,100 @@ func mergeDeepSeekThinkingExtraBody(raw transformer.RawMessage, thinkingType str
 	}
 	return merged
 }
+
+// applyDeepSeekThinkingFallback downgrades DeepSeek thinking mode when the
+// replayed history cannot satisfy its passback rule. DeepSeek requires the
+// reasoning_content of every previous assistant turn when the request carries
+// `tools`; a client that stored only the final answer (or dropped reasoning)
+// would otherwise get a hard 400 on every follow-up turn. Disabling thinking
+// keeps tool calling usable at the cost of that turn's chain of thought.
+//
+// It must run after message cleanup (`attachStandaloneDeepSeekReasoningMessages`
+// / `sanitizeToolPairingForOpenAICompat`) so merged or dropped messages are not
+// counted.
+func applyDeepSeekThinkingFallback(request *model.InternalLLMRequest, baseURL string, isMimoChannel bool) {
+	if request == nil || len(request.Tools) == 0 {
+		return
+	}
+	if !isProviderReasoningCompatRequest(baseURL, request, isMimoChannel, "deepseek") {
+		return
+	}
+
+	index, missing := deepSeekMissingReasoningTurn(request.Messages)
+	if !missing || !deepSeekThinkingEnabled(request) {
+		return
+	}
+
+	request.ThinkingMode = "off"
+	request.ReasoningEffort = ""
+	request.ExtraBody = mergeDeepSeekThinkingExtraBody(request.ExtraBody, "disabled")
+	// reasoning_effort in extra_body is flattened to the top level on the wire and
+	// would contradict thinking.type=disabled.
+	request.ExtraBody = removeExtraBodyKey(request.ExtraBody, "reasoning_effort")
+	log.Warnf("deepseek thinking disabled: assistant message #%d lacks reasoning_content while tools are present (model=%s)", index, request.Model)
+}
+
+func deepSeekMissingReasoningTurn(messages []model.Message) (int, bool) {
+	for i := range messages {
+		msg := &messages[i]
+		if msg.Role != "assistant" || msg.GetReasoningContent() != "" {
+			continue
+		}
+		if !assistantTurnNeedsReasoning(*msg) {
+			continue
+		}
+		return i, true
+	}
+	return 0, false
+}
+
+// assistantTurnNeedsReasoning reports whether an assistant message represents a
+// real model turn that DeepSeek expects to carry reasoning_content. Empty
+// placeholder messages (e.g. a dropped assistant turn) are ignored.
+func assistantTurnNeedsReasoning(msg model.Message) bool {
+	if len(msg.ToolCalls) > 0 || msg.Refusal != "" {
+		return true
+	}
+	if msg.Content.Content != nil && strings.TrimSpace(*msg.Content.Content) != "" {
+		return true
+	}
+	return len(msg.Content.MultipleContent) > 0
+}
+
+func deepSeekThinkingEnabled(request *model.InternalLLMRequest) bool {
+	if request.ThinkingMode == "off" {
+		return false
+	}
+	if request.ThinkingMode == "on" {
+		return true
+	}
+	effort := strings.ToLower(strings.TrimSpace(request.ReasoningEffort))
+	if effort != "" && effort != "none" {
+		return true
+	}
+	if thinkingType, ok := extractDeepSeekThinkingType(request.ExtraBody); ok {
+		return thinkingType == "enabled"
+	}
+	// DeepSeek enables thinking by default, so an unspecified request still
+	// carries the passback requirement.
+	return true
+}
+
+func removeExtraBodyKey(raw transformer.RawMessage, key string) transformer.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	payload := map[string]any{}
+	if err := transformer.Unmarshal(raw, &payload); err != nil {
+		return raw
+	}
+	if _, ok := payload[key]; !ok {
+		return raw
+	}
+	delete(payload, key)
+	merged, err := transformer.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return merged
+}

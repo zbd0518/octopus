@@ -178,9 +178,12 @@ func (i *ResponseInbound) TransformStream(ctx context.Context, stream *model.Int
 	if len(stream.Choices) > 0 {
 		choice := stream.Choices[0]
 
-		// Handle reasoning content delta
-		if choice.Delta != nil && choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
-			events = append(events, i.handleReasoningContent(choice.Delta.ReasoningContent)...)
+		// Handle reasoning content delta (reasoning_content or the provider-specific
+		// `reasoning` alias).
+		if choice.Delta != nil {
+			if reasoning := choice.Delta.GetReasoningContent(); reasoning != "" {
+				events = append(events, i.handleReasoningContent(&reasoning)...)
+			}
 		}
 
 		if choice.Delta != nil {
@@ -956,11 +959,11 @@ func (i *ResponseInbound) foldStreamChunk(chunk *model.InternalLLMResponse) {
 				*existingChoice.Message.Content.Content += *delta.Content.Content
 			}
 
-			if delta.ReasoningContent != nil {
+			if reasoning := delta.GetReasoningContent(); reasoning != "" {
 				if existingChoice.Message.ReasoningContent == nil {
 					existingChoice.Message.ReasoningContent = new(string)
 				}
-				*existingChoice.Message.ReasoningContent += *delta.ReasoningContent
+				*existingChoice.Message.ReasoningContent += reasoning
 			}
 
 			if delta.ReasoningSignature != nil {

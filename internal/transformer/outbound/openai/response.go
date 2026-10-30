@@ -42,6 +42,11 @@ func (o *ResponseOutbound) TransformRequest(ctx context.Context, request *model.
 	}
 	ensureToolCallIDs(cloned.Messages)
 
+	// DeepSeek rejects follow-up tool calls whose history lost reasoning_content.
+	// Degrade to non-thinking instead of propagating a guaranteed 400.
+	isMimoChannel := strings.Contains(strings.ToLower(strings.TrimSpace(baseUrl)), "xiaomimimo")
+	applyDeepSeekThinkingFallback(cloned, baseUrl, isMimoChannel)
+
 	// Convert to Responses API request format
 	responsesReq := ConvertToResponsesRequest(cloned)
 	// Third-party OpenAI-compatible Responses endpoints (free relays, Grok
