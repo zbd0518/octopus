@@ -18,8 +18,9 @@ func init() {
 // （对齐 sub2api 2026-07-27 差距，见 plan pool-sub2api-gap-completion-plan）。
 // gorm AutoMigrate 也会加列，这里幂等兜底。
 //
-// 注意：upstream 原以 version 43 注册本迁移，但本仓库 version 43 已被
-// stats latency/histogram 列迁移占用（见 043.go），故重排到 45。
+// 注意：upstream 原以 version 43 注册本迁移，但本仓库 43 已被
+// stats latency/histogram 列迁移占用（见 043.go），故重排到 45
+// （44/45 为本仓库号池专用，48-62 与 upstream 保持一致）。
 func migratePoolAccountLifecycleFields(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("db is nil")

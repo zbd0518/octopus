@@ -9,7 +9,7 @@ import (
 
 func init() {
 	RegisterAfterAutoMigration(Migration{
-		Version: 65,
+		Version: 57,
 		Up:      migrateAlertRulePoolAccountScope,
 	})
 }

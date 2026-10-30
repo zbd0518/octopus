@@ -9,7 +9,7 @@ import (
 
 func init() {
 	RegisterAfterAutoMigration(Migration{
-		Version: 55,
+		Version: 51,
 		Up:      migrateAPIKeyHashColumn,
 	})
 }

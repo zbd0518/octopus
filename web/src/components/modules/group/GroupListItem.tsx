@@ -34,6 +34,16 @@ import { toast } from '@/components/common/Toast';
 import { CopyIconButton } from '@/components/common/CopyButton';
 import { Button } from '@/components/ui/button';
 import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
     Tooltip,
     TooltipContent,
     TooltipTrigger,
@@ -46,7 +56,6 @@ import {
     buildChannelNameByModelKey,
     modelChannelKey,
     MODE_LABELS,
-    endpointTypeLabelKey,
     normalizeEndpointType,
     supportsGroupTest,
     reasoningBufferPatch,
@@ -74,12 +83,12 @@ interface EditDialogContentProps {
     isSubmitting: boolean;
     onSubmit: (values: GroupEditorValues, onDone?: () => void) => void;
     onTestAvailability: () => void;
-    onRemoveFailedModels: () => void;
     isTestingAvailability: boolean;
     testProgressCompleted: number;
     testProgressTotal: number;
     testProgressValue: number;
     testResults: GroupTestResult[];
+    setShowRemoveConfirm: (open: boolean) => void;
     availabilitySummary?: {
         unavailableCount: number;
         availableCount: number;
@@ -94,16 +103,20 @@ function EditDialogContent({
     isSubmitting,
     onSubmit,
     onTestAvailability,
-    onRemoveFailedModels,
     isTestingAvailability,
     testProgressCompleted,
     testProgressTotal,
     testProgressValue,
     testResults,
+    setShowRemoveConfirm,
     availabilitySummary,
 }: EditDialogContentProps) {
     const { setIsOpen } = useMorphingDialog();
     const t = useTranslations('group');
+    const failedTestResults = useMemo(
+        () => (testResults ?? []).filter((r) => !r.passed),
+        [testResults],
+    );
     return (
         <div className="relative flex h-full min-h-0 w-full max-w-full flex-1 flex-col">
             <MorphingDialogTitle className="shrink-0">
@@ -174,15 +187,30 @@ function EditDialogContent({
                     />
                 </div>
                 {group.id && (isTestingAvailability || availabilitySummary) ? (
-                    <AvailabilityResultsPanel
-                        isTesting={isTestingAvailability}
-                        members={editMembers}
-                        completed={testProgressCompleted}
-                        total={testProgressTotal || editMembers.length}
-                        progressValue={testProgressValue}
-                        results={testResults}
-                        summary={availabilitySummary}
-                    />
+                    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+                        <AvailabilityResultsPanel
+                            isTesting={isTestingAvailability}
+                            members={editMembers}
+                            completed={testProgressCompleted}
+                            total={testProgressTotal || editMembers.length}
+                            progressValue={testProgressValue}
+                            results={testResults}
+                            summary={availabilitySummary}
+                        />
+                        {failedTestResults.length > 0 ? (
+                            <div className="flex shrink-0 justify-end pb-1">
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    onClick={() => setShowRemoveConfirm(true)}
+                                    disabled={isSubmitting}
+                                    className="rounded-lg bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-500/25 dark:text-amber-300"
+                                >
+                                    {t('detail.actions.removeFailedModels')}
+                                </Button>
+                            </div>
+                        ) : null}
+                    </div>
                 ) : null}
             </MorphingDialogDescription>
         </div>
@@ -235,6 +263,7 @@ export function GroupListItem({
     const [expanded, setExpanded] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [editorOpen, setEditorOpen] = useState(false);
+    const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
     const autoOpenHandledRef = useRef(false);
 
     useEffect(() => {
@@ -776,22 +805,6 @@ export function GroupListItem({
     ]);
 
     // ---- Test progress derived state ----
-    const failedTestResults = useMemo(
-        () =>
-            testProgress?.done
-                ? (testProgress.results ?? []).filter((r) => !r.passed)
-                : [],
-        [testProgress],
-    );
-
-    const resultByItemId = useMemo(() => {
-        const map = new Map<number, GroupTestResult>();
-        (testProgress?.results ?? []).forEach((r) =>
-            map.set(r.item_id, r),
-        );
-        return map;
-    }, [testProgress]);
-
     const isTesting =
         testDraftGroup.isPending ||
         (currentTestId !== null && testProgress !== undefined && !testProgress.done);
@@ -822,13 +835,6 @@ export function GroupListItem({
             fullyMatched,
         };
     }, [members, testProgress]);
-
-    const canRemoveFailedModels = Boolean(
-        availabilitySummary?.fullyMatched &&
-            availabilitySummary.unavailableCount > 0 &&
-            !isTesting &&
-            !updateGroup.isPending,
-    );
 
     // ---- Derived display values for collapsed state ----
     const firstModelName =
@@ -1147,9 +1153,6 @@ export function GroupListItem({
                                                 onTestAvailability={
                                                     handleTestDraftGroup
                                                 }
-                                                onRemoveFailedModels={
-                                                    handleRemoveFailedMembers
-                                                }
                                                 isTestingAvailability={
                                                     isTesting
                                                 }
@@ -1163,6 +1166,9 @@ export function GroupListItem({
                                                 testResults={
                                                     testProgress?.results ?? []
                                                 }
+                                                setShowRemoveConfirm={
+                                                    setShowRemoveConfirm
+                                                }
                                                 availabilitySummary={
                                                     availabilitySummary
                                                 }
@@ -1170,6 +1176,28 @@ export function GroupListItem({
                                         </MorphingDialogContent>
                                     </MorphingDialogContainer>
                                 </MorphingDialog>
+
+                                <AlertDialog open={showRemoveConfirm} onOpenChange={setShowRemoveConfirm}>
+                                    <AlertDialogContent className="rounded-xl">
+                                        <AlertDialogHeader>
+                                            <AlertDialogTitle>{t('detail.actions.removeFailedModels')}</AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                                {t('detail.availability.removeFailedConfirm')}
+                                            </AlertDialogDescription>
+                                        </AlertDialogHeader>
+                                        <AlertDialogFooter>
+                                            <AlertDialogCancel>{t('detail.actions.cancel')}</AlertDialogCancel>
+                                            <AlertDialogAction
+                                                onClick={() => {
+                                                    handleRemoveFailedMembers();
+                                                    setShowRemoveConfirm(false);
+                                                }}
+                                            >
+                                                {t('detail.actions.confirmRemove')}
+                                            </AlertDialogAction>
+                                        </AlertDialogFooter>
+                                    </AlertDialogContent>
+                                </AlertDialog>
 
                                 {/* Copy name */}
                                 <Tooltip

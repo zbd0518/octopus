@@ -9,7 +9,7 @@ import (
 
 func init() {
 	RegisterAfterAutoMigration(Migration{
-		Version: 54,
+		Version: 50,
 		Up:      migrateChannelKeySupportedModels,
 	})
 }
