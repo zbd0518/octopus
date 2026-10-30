@@ -134,7 +134,6 @@ type OpsSystemSummary struct {
 	ModelInfoUpdateIntervalHours int                        `json:"model_info_update_interval_hours"`
 	ImportEnabled                bool                       `json:"import_enabled"`
 	ExportEnabled                bool                       `json:"export_enabled"`
-	AIRouteGroupID               int                        `json:"ai_route_group_id"`
 	AIRouteTimeoutSeconds        int                        `json:"ai_route_timeout_seconds"`
 	AIRouteParallelism           int                        `json:"ai_route_parallelism"`
 	AIRouteLegacyMode            bool                       `json:"ai_route_legacy_mode"`

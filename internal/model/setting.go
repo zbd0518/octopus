@@ -80,7 +80,6 @@ const (
 	SettingKeyAnalyticsTabVisible                  SettingKey = "analytics_tab_visible"                    // 分析中心子标签可见性(JSON)
 	SettingKeyOpsTabOrder                          SettingKey = "ops_tab_order"                            // 运维中心子标签顺序(JSON)
 	SettingKeyOpsTabVisible                        SettingKey = "ops_tab_visible"                          // 运维中心子标签可见性(JSON)
-	SettingKeyAIRouteGroupID                       SettingKey = "ai_route_group_id"                        // AI路由目标分组 ID
 	SettingKeyAIRouteBaseURL                       SettingKey = "ai_route_base_url"                        // AI路由分析服务 Base URL
 	SettingKeyAIRouteAPIKey                        SettingKey = "ai_route_api_key"                         // AI路由分析服务 API Key
 	SettingKeyAIRouteModel                         SettingKey = "ai_route_model"                           // AI路由分析模型名称
@@ -193,7 +192,6 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyAnalyticsTabVisible, Value: `["cache","utilization","route-health","channel-model","evaluation","latency"]`},
 		{Key: SettingKeyOpsTabOrder, Value: `["telemetry","quota","health","maintenance","system","audit"]`},
 		{Key: SettingKeyOpsTabVisible, Value: `["telemetry","quota","health","maintenance","system","audit"]`},
-		{Key: SettingKeyAIRouteGroupID, Value: "0"},
 		{Key: SettingKeyAIRouteBaseURL, Value: ""},
 		{Key: SettingKeyAIRouteAPIKey, Value: ""},
 		{Key: SettingKeyAIRouteModel, Value: ""},
@@ -295,7 +293,7 @@ func (s *Setting) Validate() error {
 		SettingKeyAutoStrategyLatencyWeight,
 		SettingKeyAutoStrategyTTFTWeight, SettingKeyAutoStrategyPriceWeight,
 		SettingKeyAutoStrategyExploreRate, SettingKeyAutoStrategyBucketTolerance,
-		SettingKeyAIRouteGroupID, SettingKeyAIRouteTimeoutSeconds, SettingKeyAIRouteParallelism,
+		SettingKeyAIRouteTimeoutSeconds, SettingKeyAIRouteParallelism,
 		SettingKeyAIRouteMaxModelsPerRequest,
 		SettingKeyStatsTimezoneOffset,
 		SettingKeyJWTDefaultExpiryMinutes, SettingKeyJWTRememberMeExpiryDays,
@@ -349,9 +347,6 @@ func (s *Setting) Validate() error {
 		}
 		if s.Key == SettingKeySemanticCacheEmbeddingTimeoutSeconds && v < 1 {
 			return fmt.Errorf("semantic cache embedding timeout must be greater than 0")
-		}
-		if s.Key == SettingKeyAIRouteGroupID && v < 0 {
-			return fmt.Errorf("ai route group id must be greater than or equal to 0")
 		}
 		if s.Key == SettingKeyAIRouteTimeoutSeconds && v < 1 {
 			return fmt.Errorf("ai route timeout must be greater than 0")

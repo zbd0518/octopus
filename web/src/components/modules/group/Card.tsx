@@ -26,7 +26,7 @@ import type { SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
 import { GroupEditor, type GroupEditorValues } from './Editor';
 import { AIRouteButton } from './AIRouteButton';
-import { buildChannelNameByModelKey, modelChannelKey, MODE_LABELS, inferGroupCapabilities, CAPABILITY_LABEL_KEYS, CAPABILITY_COLORS, endpointTypeLabelKey, normalizeEndpointType, supportsGroupTest } from './utils';
+import { buildChannelNameByModelKey, modelChannelKey, MODE_LABELS, inferGroupCapabilities, CAPABILITY_LABEL_KEYS, CAPABILITY_COLORS, endpointTypeLabelKey, normalizeEndpointType, supportsGroupTest, reasoningBufferPatch } from './utils';
 import { GroupMode, type GroupUpdateRequest } from '@/api/endpoints/group';
 import { getModelIcon } from '@/lib/model-icons';
 import {
@@ -433,7 +433,6 @@ export function GroupCard({ group }: { group: Group }) {
         const nextAttemptTimeOut = values.attempt_time_out ?? 0;
         const nextSessionKeepTime = values.session_keep_time ?? 0;
         const nextThinkingMode = values.thinking_mode ?? 'auto';
-        const nextReasoningBufferStrategy = (values.reasoning_buffer_strategy ?? '').trim();
 
         if (nextName && nextName !== group.name) payload.name = nextName;
         if (nextEndpointType !== normalizeEndpointType(group.endpoint_type)) payload.endpoint_type = nextEndpointType;
@@ -446,7 +445,7 @@ export function GroupCard({ group }: { group: Group }) {
         if (nextAttemptTimeOut !== (group.attempt_time_out ?? 0)) payload.attempt_time_out = nextAttemptTimeOut;
         if (nextSessionKeepTime !== (group.session_keep_time ?? 0)) payload.session_keep_time = nextSessionKeepTime;
         if (nextThinkingMode !== (group.thinking_mode ?? 'auto')) payload.thinking_mode = nextThinkingMode;
-        if (nextReasoningBufferStrategy !== ((group.reasoning_buffer_strategy ?? '').trim())) payload.reasoning_buffer_strategy = nextReasoningBufferStrategy;
+        Object.assign(payload, reasoningBufferPatch(group.reasoning_buffer_strategy, values.reasoning_buffer_strategy));
         if (items_to_add.length) payload.items_to_add = items_to_add;
         if (items_to_update.length) payload.items_to_update = items_to_update;
         if (items_to_delete.length) payload.items_to_delete = items_to_delete;

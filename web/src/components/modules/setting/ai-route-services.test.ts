@@ -1,7 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { parseServicesJSON, serializeServicesRows } from './ai-route-services.ts';
+import { modelFetchSignature, parseServicesJSON, serializeServicesRows } from './ai-route-services.ts';
+
+test('modelFetchSignature requires both credentials and normalizes whitespace', () => {
+    assert.equal(modelFetchSignature('', 'key'), null);
+    assert.equal(modelFetchSignature('https://example.com', ' '), null);
+    assert.equal(
+        modelFetchSignature(' https://example.com/v1 ', ' key '),
+        modelFetchSignature('https://example.com/v1', 'key'),
+    );
+    assert.notEqual(
+        modelFetchSignature('https://example.com/v1', 'key'),
+        modelFetchSignature('https://example.com/v1', 'other-key'),
+    );
+});
+
 
 test('parseServicesJSON accepts empty and empty-array raw values', () => {
     assert.deepEqual(parseServicesJSON(''), { rows: [], invalid: false });

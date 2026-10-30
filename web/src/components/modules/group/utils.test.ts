@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { LLMChannel } from '../../../api/endpoints/model';
-import { filterEnabledModelChannels } from './utils.ts';
+import { filterEnabledModelChannels, reasoningBufferPatch } from './utils.ts';
+
+test('reasoning buffer changes persist and can be cleared in either editor', () => {
+    assert.deepEqual(reasoningBufferPatch('buffer', 'immediate'), { reasoning_buffer_strategy: 'immediate' });
+    assert.deepEqual(reasoningBufferPatch('buffer', ''), { reasoning_buffer_strategy: '' });
+    assert.deepEqual(reasoningBufferPatch(undefined, ''), {});
+    assert.deepEqual(reasoningBufferPatch('buffer', ' buffer '), {});
+});
 
 function channel(overrides: Partial<LLMChannel>): LLMChannel {
     return {

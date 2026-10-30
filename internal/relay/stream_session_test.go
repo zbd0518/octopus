@@ -403,8 +403,8 @@ func TestServeRelayStreamSessionDoneWithErrorAfterHeadersWritesSSEError(t *testi
 	if !strings.Contains(body, "event: error") {
 		t.Fatalf("body should contain SSE error event, got: %s", body)
 	}
-	if !strings.Contains(body, "upstream internal error") {
-		t.Fatalf("body should contain error message, got: %s", body)
+	if strings.Contains(body, "upstream internal error") || !strings.Contains(body, "all channels failed") {
+		t.Fatalf("body should contain only a safe terminal message, got: %s", body)
 	}
 }
 

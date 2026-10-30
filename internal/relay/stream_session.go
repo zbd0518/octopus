@@ -140,6 +140,7 @@ type relayStreamSession struct {
 	mu               sync.RWMutex
 	updatedAt        time.Time
 	done             bool
+	replayDisabled   bool
 	err              error
 	clientGoneAt     time.Time // 客户端断连时刻；零值表示客户端仍在
 	clientGoneActive bool      // 客户端断连后是否已开始强制结束计时（见 MarkClientGone）
@@ -170,6 +171,10 @@ func buildRelayConversationScope(conversationID string, apiKeyID int) string {
 }
 
 func acquireRelayStreamSession(conversationID string, apiKeyID int, requestHash uint64) (*relayStreamSession, bool, error) {
+	return acquireRelayStreamSessionForResume(conversationID, apiKeyID, requestHash, 0)
+}
+
+func acquireRelayStreamSessionForResume(conversationID string, apiKeyID int, requestHash uint64, resumeFrom int64) (*relayStreamSession, bool, error) {
 	conversationID = strings.TrimSpace(conversationID)
 	if conversationID == "" || requestHash == 0 {
 		return nil, false, nil
@@ -186,7 +191,16 @@ func acquireRelayStreamSession(conversationID string, apiKeyID int, requestHash 
 	store.cleanupLocked(now)
 
 	if session, ok := store.byKey[key]; ok {
-		return session, false, nil
+		session.mu.RLock()
+		failed := session.done && session.err != nil
+		session.mu.RUnlock()
+		if !failed || resumeFrom > 0 {
+			return session, false, nil
+		}
+		delete(store.byKey, key)
+	}
+	if resumeFrom > 0 {
+		return nil, false, errRelayReplayWindowExpired
 	}
 
 	if activeKey, ok := store.activeByConversation[conversationScope]; ok && activeKey != key {
@@ -348,6 +362,20 @@ func (s *relayStreamSessionStore) cleanupLocked(now time.Time) {
 	}
 }
 
+func (s *relayStreamSessionStore) removeIfExpiredInstance(expected *relayStreamSession) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.byKey[expected.key] == expected && expected.IsDone() && time.Since(expected.updatedTime()) >= doneSessionRetention() {
+		delete(s.byKey, expected.key)
+	}
+}
+
+func (s *relayStreamSession) updatedTime() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.updatedAt
+}
+
 func (s *relayStreamSessionStore) removeIfExpired(key string, conversationScope string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -501,7 +529,7 @@ func (s *relayStreamSession) Snapshot(afterSeq int64) ([]relayStreamEvent, bool,
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if afterSeq < s.droppedBeforeSeq {
+	if s.replayDisabled || afterSeq < s.droppedBeforeSeq {
 		return nil, s.done, errRelayReplayWindowExpired
 	}
 
@@ -575,7 +603,9 @@ func (s *relayStreamSession) Finish(err error) {
 	// （客户端重连后先重放已缓冲事件，再收到 terminal error）。
 	replayEnabled, err := setting.GetBool(dbmodel.SettingKeyStreamSessionReplayEnabled)
 	if err == nil && !replayEnabled {
-		s.events = nil // 立即释放缓冲区
+		s.events = nil
+		s.bufferBytes = 0
+		s.replayDisabled = true
 	}
 	// 若启用重连重放（或读取设置失败，保守保留），内存控制改由
 	// 缩短的保留窗口实现——见 relayStreamDoneRetention：done 会话最多保留 2 分钟
@@ -590,7 +620,7 @@ func (s *relayStreamSession) Finish(err error) {
 	s.mu.Unlock()
 
 	s.store.mu.Lock()
-	if activeKey, ok := s.store.activeByConversation[s.conversationScope]; ok && activeKey == s.key {
+	if activeKey, ok := s.store.activeByConversation[s.conversationScope]; ok && activeKey == s.key && s.store.byKey[s.key] == s {
 		delete(s.store.activeByConversation, s.conversationScope)
 	}
 	s.store.mu.Unlock()
@@ -603,7 +633,12 @@ func (s *relayStreamSession) Finish(err error) {
 	}
 	if retention > 0 {
 		time.AfterFunc(retention, func() {
-			s.store.removeIfExpired(s.key, s.conversationScope)
+			s.store.mu.RLock()
+			current := s.store.byKey[s.key]
+			s.store.mu.RUnlock()
+			if current == s {
+				s.store.removeIfExpiredInstance(s)
+			}
 		})
 	}
 
@@ -714,10 +749,10 @@ func serveRelayStreamSession(c *gin.Context, req *relayRequest) {
 					if errors.Is(sessionErr, context.DeadlineExceeded) {
 						statusCode = http.StatusGatewayTimeout
 					}
-					resp.Error(c, statusCode, sessionErr.Error())
+					resp.Error(c, statusCode, http.StatusText(statusCode))
 				} else {
 					writeHeaders()
-					writeSSEErrorEvent(c.Writer, sessionErr.Error())
+					writeSSEErrorEvent(c.Writer, "all channels failed")
 					c.Writer.Flush()
 				}
 			}

@@ -20,7 +20,11 @@ func Apply(req *transmodel.InternalLLMRequest, cfg *EffectiveConfig) (*transmode
 		return cloned, nil
 	}
 
-	cloned.Messages = rewriteMessages(cloned.Messages, cfg)
+	rewritten, err := rewriteMessages(cloned.Messages, cfg)
+	if err != nil {
+		return nil, err
+	}
+	cloned.Messages = rewritten
 	return cloned, nil
 }
 
@@ -55,7 +59,7 @@ func cloneMessage(msg transmodel.Message) transmodel.Message {
 	return cloned
 }
 
-func rewriteMessages(messages []transmodel.Message, cfg *EffectiveConfig) []transmodel.Message {
+func rewriteMessages(messages []transmodel.Message, cfg *EffectiveConfig) ([]transmodel.Message, error) {
 	rewritten := append([]transmodel.Message(nil), messages...)
 	if cfg.SystemMessageStrategy == "merge" {
 		rewritten = mergeSystemMessages(rewritten)
@@ -69,6 +73,14 @@ func rewriteMessages(messages []transmodel.Message, cfg *EffectiveConfig) []tran
 				msg.Content = transmodel.MessageContent{
 					Content: &text,
 				}
+			}
+		}
+
+		if len(cfg.PromptRules) > 0 && isSystemLikeRole(msg.Role) {
+			var err error
+			msg.Content, err = rewritePromptContent(msg.Content, cfg.PromptRules)
+			if err != nil {
+				return nil, err
 			}
 		}
 
@@ -87,7 +99,46 @@ func rewriteMessages(messages []transmodel.Message, cfg *EffectiveConfig) []tran
 		rewritten[i] = msg
 	}
 
-	return rewritten
+	return rewritten, nil
+}
+
+func rewritePromptContent(content transmodel.MessageContent, rules []EffectivePromptRewriteRule) (transmodel.MessageContent, error) {
+	rewritten := content
+	if content.Content != nil {
+		text, err := applyPromptRules(*content.Content, rules)
+		if err != nil {
+			return content, err
+		}
+		rewritten.Content = &text
+	}
+	if len(content.MultipleContent) == 0 {
+		return rewritten, nil
+	}
+
+	rewritten.MultipleContent = append([]transmodel.MessageContentPart(nil), content.MultipleContent...)
+	for index, part := range rewritten.MultipleContent {
+		if part.Type != "text" || part.Text == nil {
+			continue
+		}
+		text, err := applyPromptRules(*part.Text, rules)
+		if err != nil {
+			return content, err
+		}
+		rewritten.MultipleContent[index].Text = &text
+	}
+	return rewritten, nil
+}
+
+func applyPromptRules(text string, rules []EffectivePromptRewriteRule) (string, error) {
+	rewritten := text
+	for _, rule := range rules {
+		var err error
+		rewritten, err = rule.Pattern.Replace(rewritten, rule.Replacement, -1, -1)
+		if err != nil {
+			return "", fmt.Errorf("apply prompt rewrite rule: %w", err)
+		}
+	}
+	return rewritten, nil
 }
 
 func mergeSystemMessages(messages []transmodel.Message) []transmodel.Message {

@@ -239,7 +239,14 @@ func sortByPriority(items []model.GroupItem) []model.GroupItem {
 	sorted := make([]model.GroupItem, len(items))
 	copy(sorted, items)
 	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Priority < sorted[j].Priority
+		left, right := sorted[i].Priority, sorted[j].Priority
+		if left <= 0 {
+			left = int(^uint(0) >> 1)
+		}
+		if right <= 0 {
+			right = int(^uint(0) >> 1)
+		}
+		return left < right
 	})
 	return sorted
 }

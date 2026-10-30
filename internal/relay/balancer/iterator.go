@@ -50,7 +50,12 @@ func (it *Iterator) appendSkipAttempt(attempt model.ChannelAttempt) {
 // excludedChannels 为该 API Key 排除的渠道 ID 集合（issue #55），nil/空表示不排除。
 func NewIterator(group model.Group, apiKeyID int, requestModel string, excludedChannels map[int]struct{}) *Iterator {
 	b := GetBalancer(group.Mode)
-	candidates := b.Candidates(group.Items)
+	var candidates []model.GroupItem
+	if group.ID > 0 && (group.Mode == model.GroupModeRoundRobin || group.Mode == model.GroupModeWeighted) {
+		candidates = groupRotationCandidates(group)
+	} else {
+		candidates = b.Candidates(group.Items)
+	}
 
 	// 按 API Key 渠道黑名单剔除候选。在 sticky 选择之前过滤，确保被排除的渠道
 	// 既不参与负载均衡，也不会作为粘性通道命中。
@@ -120,6 +125,10 @@ func (it *Iterator) IsSticky() bool {
 // Len 返回候选列表长度
 func (it *Iterator) Len() int {
 	return len(it.candidates)
+}
+
+func (it *Iterator) DecisionCount() int {
+	return it.count
 }
 
 // Index 返回当前迭代位置（0-based）

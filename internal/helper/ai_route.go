@@ -3,11 +3,14 @@ package helper
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lingyuins/octopus/internal/apperror"
 	"github.com/lingyuins/octopus/internal/conf"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/airoute"
@@ -24,6 +27,7 @@ const (
 
 var aiRouteProgress sync.Map
 var aiRouteProgressNow = time.Now
+var aiRouteStartMu sync.Mutex
 
 type aiRouteProgressEntry struct {
 	progress  model.GenerateAIRouteProgress
@@ -37,6 +41,7 @@ func StartGenerateAIRoute(req model.GenerateAIRouteRequest) (*model.GenerateAIRo
 			ID:               uuid.NewString(),
 			Scope:            req.Scope,
 			GroupID:          req.GroupID,
+			CategoryStrategy: req.CategoryStrategy,
 			Status:           model.AIRouteTaskStatusCompleted,
 			CurrentStep:      model.AIRouteTaskStepCompleted,
 			ProgressPercent:  100,
@@ -65,11 +70,20 @@ func StartGenerateAIRoute(req model.GenerateAIRouteRequest) (*model.GenerateAIRo
 		return &cloned, nil
 	}
 
+	// Keep the active-task lookup and initial insert atomic within the single
+	// process. The task table is persisted for recovery, but it does not have a
+	// database-level unique constraint for the active scope.
+	aiRouteStartMu.Lock()
+	defer aiRouteStartMu.Unlock()
+
 	existingProgress, err := findActiveAIRouteProgress(req)
 	if err != nil {
 		return nil, err
 	}
 	if existingProgress != nil {
+		if existingProgress.CategoryStrategy != req.CategoryStrategy {
+			return nil, apperror.New("group.aiRoute.categoryStrategy.conflict", "已有使用其他分类策略的 AI 路由任务正在执行，请等待其完成").WithStatus(http.StatusConflict)
+		}
 		storeAIRouteProgress(existingProgress)
 		cloned := cloneAIRouteProgress(existingProgress)
 		return &cloned, nil
@@ -78,18 +92,19 @@ func StartGenerateAIRoute(req model.GenerateAIRouteRequest) (*model.GenerateAIRo
 	id := uuid.NewString()
 	now := aiRouteProgressNow()
 	progress := &model.GenerateAIRouteProgress{
-		ID:              id,
-		Scope:           req.Scope,
-		GroupID:         req.GroupID,
-		Status:          model.AIRouteTaskStatusQueued,
-		CurrentStep:     model.AIRouteTaskStepQueued,
-		ProgressPercent: 0,
-		Message:         "AI 路由任务已创建，等待开始",
-		MessageKey:      "group.aiRoute.progress.runtime.taskCreated",
-		StartedAt:       cloneTimePtr(&now),
-		UpdatedAt:       cloneTimePtr(&now),
-		HeartbeatAt:     cloneTimePtr(&now),
-		EventSequence:   1,
+		ID:               id,
+		Scope:            req.Scope,
+		GroupID:          req.GroupID,
+		CategoryStrategy: req.CategoryStrategy,
+		Status:           model.AIRouteTaskStatusQueued,
+		CurrentStep:      model.AIRouteTaskStepQueued,
+		ProgressPercent:  0,
+		Message:          "AI 路由任务已创建，等待开始",
+		MessageKey:       "group.aiRoute.progress.runtime.taskCreated",
+		StartedAt:        cloneTimePtr(&now),
+		UpdatedAt:        cloneTimePtr(&now),
+		HeartbeatAt:      cloneTimePtr(&now),
+		EventSequence:    1,
 	}
 	storeAIRouteProgress(progress)
 	if err := persistAIRouteProgress(progress, true); err != nil {
@@ -132,12 +147,6 @@ func StartGenerateAIRoute(req model.GenerateAIRouteRequest) (*model.GenerateAIRo
 	}()
 
 	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Errorf("ai route generation panic recovered: task_id=%s panic=%v", progress.ID, r)
-				close(stopHeartbeat)
-			}
-		}()
 		ctx, cancel := context.WithTimeout(context.Background(), aiRouteTaskTimeout)
 		defer cancel()
 
@@ -155,7 +164,7 @@ func StartGenerateAIRoute(req model.GenerateAIRouteRequest) (*model.GenerateAIRo
 			}
 		}
 
-		result, err := airoute.GenerateAIRoute(ctx, req, report)
+		result, err := runAIRouteGeneration(ctx, req, report, progress.ID)
 		close(stopHeartbeat)
 		<-heartbeatDone
 
@@ -173,6 +182,28 @@ func StartGenerateAIRoute(req model.GenerateAIRouteRequest) (*model.GenerateAIRo
 
 	cloned := cloneAIRouteProgress(progress)
 	return &cloned, nil
+}
+
+func runAIRouteGeneration(
+	ctx context.Context,
+	req model.GenerateAIRouteRequest,
+	report func(model.GenerateAIRouteProgress),
+	taskID string,
+) (result *model.GenerateAIRouteResult, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			result = nil
+			switch value := recovered.(type) {
+			case error:
+				err = fmt.Errorf("AI 路由生成发生 panic: %w", value)
+			default:
+				err = fmt.Errorf("AI 路由生成发生 panic: %v", value)
+			}
+			log.Errorf("ai route generation panic recovered: task_id=%s err=%v", taskID, err)
+		}
+	}()
+
+	return airoute.GenerateAIRoute(ctx, req, report)
 }
 
 func GetGenerateAIRouteProgress(id string) (*model.GenerateAIRouteProgress, bool) {

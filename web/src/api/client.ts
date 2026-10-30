@@ -132,9 +132,9 @@ async function request<T>(
     // 构建请求头
     const headers = new Headers();
 
-    // POST/PUT/PATCH 始终设置 Content-Type，即使无 body，
-    // 因为后端 RequireJSON() 中间件需要此头来放行非 GET/DELETE 请求
-    if (body || method === 'POST' || method === 'PUT' || method === 'PATCH') {
+    // FormData 必须由浏览器生成 multipart boundary；普通写请求即使无 body
+    // 也需要 JSON 头才能通过后端 RequireJSON()。
+    if (!(body instanceof FormData) && (body || method === 'POST' || method === 'PUT' || method === 'PATCH')) {
         headers.set('Content-Type', 'application/json');
     }
 
@@ -160,6 +160,11 @@ async function request<T>(
  * API 客户端 - 基础 HTTP 方法
  */
 export const apiClient = {
+    request: <T>(path: string, options: { method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: unknown }): Promise<T> =>
+        request<T>(options.method, path, options.body === undefined ? undefined : JSON.stringify(options.body)),
+
+    upload: <T>(path: string, form: FormData): Promise<T> => request<T>('POST', path, form),
+
     /**
      * GET 请求
      */

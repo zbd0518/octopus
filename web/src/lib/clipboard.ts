@@ -1,14 +1,23 @@
 type ClipboardLike = Pick<Clipboard, 'writeText'>;
-type DocumentLike = Pick<Document, 'createElement' | 'execCommand'> & {
-    body: Pick<HTMLElement, 'appendChild' | 'removeChild'>;
+type TextAreaLike = Pick<HTMLTextAreaElement, 'value' | 'setAttribute' | 'select'> & {
+    style: Pick<CSSStyleDeclaration, 'position' | 'top' | 'left'>;
 };
 
-type ClipboardOptions = {
+type DocumentLike<T extends TextAreaLike> = {
+    createElement: (tag: 'textarea') => T;
+    execCommand: (command: string) => boolean;
+    body: {
+        appendChild: (node: T) => void;
+        removeChild: (node: T) => void;
+    };
+};
+
+type ClipboardOptions<T extends TextAreaLike> = {
     clipboard?: ClipboardLike;
-    document?: DocumentLike;
+    document?: DocumentLike<T>;
 };
 
-function fallbackCopyText(text: string, documentLike?: DocumentLike) {
+function fallbackCopyText<T extends TextAreaLike>(text: string, documentLike?: DocumentLike<T>) {
     if (!documentLike) {
         throw new Error('Clipboard unavailable');
     }
@@ -32,15 +41,18 @@ function fallbackCopyText(text: string, documentLike?: DocumentLike) {
     }
 }
 
-export async function writeClipboardText(text: string, options: ClipboardOptions = {}) {
+export async function writeClipboardText<T extends TextAreaLike = HTMLTextAreaElement>(text: string, options: ClipboardOptions<T> = {}) {
     const clipboardLike = options.clipboard ?? navigator.clipboard;
-    const documentLike = options.document ?? (typeof document !== 'undefined' ? document : undefined);
 
     try {
         await clipboardLike.writeText(text);
     } catch (error) {
-        if (documentLike) {
-            fallbackCopyText(text, documentLike);
+        if (options.document) {
+            fallbackCopyText(text, options.document);
+            return;
+        }
+        if (typeof document !== 'undefined') {
+            fallbackCopyText<HTMLTextAreaElement>(text, document);
             return;
         }
         throw error;

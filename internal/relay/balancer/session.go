@@ -8,9 +8,10 @@ import (
 
 // SessionEntry 会话保持条目
 type SessionEntry struct {
-	ChannelID    int
-	ChannelKeyID int
-	Timestamp    time.Time
+	ChannelID     int
+	ChannelKeyID  int
+	Timestamp     time.Time
+	UpstreamModel string
 }
 
 // 全局会话存储
@@ -75,7 +76,11 @@ func GetSticky(apiKeyID int, requestModel string, ttl time.Duration) *SessionEnt
 	}
 
 	// 评分逃生：粘性渠道近窗成功率崩塌时放弃粘性（见 ShouldEvictSticky）。
-	if ShouldEvictSticky(apiKeyID, requestModel, entry.ChannelID) {
+	statsModel := entry.UpstreamModel
+	if statsModel == "" {
+		statsModel = requestModel
+	}
+	if ShouldEvictSticky(apiKeyID, statsModel, entry.ChannelID) {
 		globalSession.Delete(key)
 		return nil
 	}
@@ -85,11 +90,16 @@ func GetSticky(apiKeyID int, requestModel string, ttl time.Duration) *SessionEnt
 
 // SetSticky 写入/更新粘性记录
 func SetSticky(apiKeyID int, requestModel string, channelID, keyID int) {
+	SetStickyModel(apiKeyID, requestModel, requestModel, channelID, keyID)
+}
+
+func SetStickyModel(apiKeyID int, requestModel, upstreamModel string, channelID, keyID int) {
 	key := sessionKey(apiKeyID, requestModel)
 	globalSession.Store(key, &SessionEntry{
-		ChannelID:    channelID,
-		ChannelKeyID: keyID,
-		Timestamp:    time.Now(),
+		ChannelID:     channelID,
+		ChannelKeyID:  keyID,
+		Timestamp:     time.Now(),
+		UpstreamModel: upstreamModel,
 	})
 }
 

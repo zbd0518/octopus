@@ -42,10 +42,11 @@ const BUILTIN_ROUTER_PREFIXES = [
 // 内置的默认功能性后缀（与模型本体无关，常见于渠道商二次命名）。
 const BUILTIN_FUNCTIONAL_SUFFIXES = [
     '-cc',
-    '-fast',
-    '-thinking',
-    '-preview',
-    '-beta',
+    '-free',
+    '-:free',
+    '-(free)',
+    '-vip',
+    '-ssvip',
     '-latest',
 ];
 
@@ -55,14 +56,40 @@ export interface ExplicitMapping {
     canonical: string;
 }
 
+export interface NormalizeRulesInput {
+    routerPrefixes?: string[] | null;
+    functionalSuffixes?: string[] | null;
+    explicitMappings?: ExplicitMapping[] | null;
+}
+
+// These tokens identify model families, capabilities, or execution modes.
+// They must not be suggested as generic cleanup suffixes.
+export const PROTECTED_MODEL_TOKENS = [
+    'air', 'audio', 'base', 'chat', 'coder',
+    'embed', 'embedding', 'fast', 'flash', 'image',
+    'instruct', 'large', 'lite', 'max', 'medium',
+    'mini', 'nano', 'non-reasoning', 'omni', 'plus',
+    'pro', 'reasoning', 'rerank', 'reranker', 'search',
+    'searching', 'small', 'think', 'thinking', 'tiny',
+    'turbo', 'tts', 'video', 'vision', 'vl',
+    'preview', 'beta', '8k', '16k', '32k', '64k',
+    '128k', '192k', '256k', '512k',
+] as const;
+
+interface CompiledNormalizeRules {
+    routerPrefixes: string[];
+    functionalSuffixes: string[];
+    explicitMappings: ExplicitMapping[];
+    explicitFullByKey: Map<string, string>;
+    explicitBaseByKey: Map<string, string>;
+}
+
 // 运行时覆盖规则。null 表示未配置，使用内置默认（显式映射无内置默认）。
 let runtimeRouterPrefixes: string[] | null = null;
 let runtimeFunctionalSuffixes: string[] | null = null;
 // variant(小写) → canonical。空表示未配置显式映射。
 let runtimeExplicitMappings: Map<string, string> | null = null;
-// 显式映射预处理：dotDashKey(normalizeToBase(variant)) → canonical（同 key 取第一条）。
-// setNormalizeRules 时构建一次，避免每个模型名重建（自动消解双向/冲突映射）。
-let runtimeExplicitByKey: Map<string, string> | null = null;
+let runtimeCompiledRules: CompiledNormalizeRules;
 // 正则后缀编译缓存（pattern → RegExp）。
 const suffixRegexCache = new Map<string, RegExp>();
 
@@ -70,6 +97,43 @@ const suffixRegexCache = new Map<string, RegExp>();
 let rulesVersion = 0;
 // 订阅者集合，规则变化时逐个通知。
 const subscribers = new Set<() => void>();
+
+function activeRouterPrefixesFor(values: string[] | null | undefined): string[] {
+    return values && values.length > 0 ? values : BUILTIN_ROUTER_PREFIXES;
+}
+
+function activeFunctionalSuffixesFor(values: string[] | null | undefined): string[] {
+    return values && values.length > 0 ? values : BUILTIN_FUNCTIONAL_SUFFIXES;
+}
+
+function compileNormalizeRules(rules: NormalizeRulesInput = {}): CompiledNormalizeRules {
+    const explicitMappings = (rules.explicitMappings ?? [])
+        .map((mapping) => ({
+            variant: mapping.variant.trim(),
+            canonical: mapping.canonical.trim().toLowerCase(),
+        }))
+        .filter((mapping) => mapping.variant !== '' && mapping.canonical !== '');
+    const compiled: CompiledNormalizeRules = {
+        routerPrefixes: activeRouterPrefixesFor(rules.routerPrefixes),
+        functionalSuffixes: activeFunctionalSuffixesFor(rules.functionalSuffixes),
+        explicitMappings,
+        explicitFullByKey: new Map(),
+        explicitBaseByKey: new Map(),
+    };
+    for (const mapping of explicitMappings) {
+        const fullKey = dotDashKey(normalizeToRouterBaseWithRules(mapping.variant, compiled));
+        if (fullKey && !compiled.explicitFullByKey.has(fullKey)) {
+            compiled.explicitFullByKey.set(fullKey, mapping.canonical);
+        }
+        const baseKey = dotDashKey(normalizeToBaseWithRules(mapping.variant, compiled));
+        if (baseKey && !compiled.explicitBaseByKey.has(baseKey)) {
+            compiled.explicitBaseByKey.set(baseKey, mapping.canonical);
+        }
+    }
+    return compiled;
+}
+
+runtimeCompiledRules = compileNormalizeRules();
 
 function notifyRulesChange() {
     rulesVersion += 1;
@@ -90,51 +154,43 @@ function notifyRulesChange() {
  * 规则发生实质变化时会自增版本号并通知订阅者，使依赖该规则的 React memo
  * 失效重算（避免规则已更新但视图仍按旧规则去重的 bug）。
  */
-export function setNormalizeRules(rules?: {
-    routerPrefixes?: string[] | null;
-    functionalSuffixes?: string[] | null;
-    explicitMappings?: ExplicitMapping[] | null;
-}) {
+export function setNormalizeRules(rules?: NormalizeRulesInput) {
     const nextRouterPrefixes = rules?.routerPrefixes && rules.routerPrefixes.length > 0
-        ? rules.routerPrefixes
+        ? [...rules.routerPrefixes]
         : null;
     const nextFunctionalSuffixes = rules?.functionalSuffixes && rules.functionalSuffixes.length > 0
-        ? rules.functionalSuffixes
+        ? [...rules.functionalSuffixes]
         : null;
     const mappings = rules?.explicitMappings && rules.explicitMappings.length > 0
-        ? rules.explicitMappings
+        ? rules.explicitMappings.map((mapping) => ({ ...mapping }))
         : null;
     const nextExplicitMappings = mappings
         ? new Map(mappings.map((m) => [m.variant.toLowerCase(), m.canonical]))
         : null;
 
-    // 只有规则实质变化时才广播，避免设置列表 refetch 触发的无效重算。
-    if (runtimeRouterPrefixes === nextRouterPrefixes
-        && runtimeFunctionalSuffixes === nextFunctionalSuffixes
-        && runtimeExplicitMappings === nextExplicitMappings) {
+    const nextCompiledRules = compileNormalizeRules({
+        routerPrefixes: nextRouterPrefixes,
+        functionalSuffixes: nextFunctionalSuffixes,
+        explicitMappings: mappings,
+    });
+    const previousSignature = JSON.stringify({
+        routerPrefixes: runtimeRouterPrefixes,
+        functionalSuffixes: runtimeFunctionalSuffixes,
+        explicitMappings: runtimeExplicitMappings ? [...runtimeExplicitMappings.entries()] : null,
+    });
+    const nextSignature = JSON.stringify({
+        routerPrefixes: nextRouterPrefixes,
+        functionalSuffixes: nextFunctionalSuffixes,
+        explicitMappings: nextExplicitMappings ? [...nextExplicitMappings.entries()] : null,
+    });
+    if (previousSignature === nextSignature) {
         return;
     }
     runtimeRouterPrefixes = nextRouterPrefixes;
     runtimeFunctionalSuffixes = nextFunctionalSuffixes;
     runtimeExplicitMappings = nextExplicitMappings;
-    // 预处理显式映射：dotDashKey(normalizeToBase(variant)) → canonical，同 key 取第一条。
-    runtimeExplicitByKey = nextExplicitMappings
-        ? buildExplicitByKey([...nextExplicitMappings.entries()].map(([variant, canonical]) => ({ variant, canonical })))
-        : null;
+    runtimeCompiledRules = nextCompiledRules;
     notifyRulesChange();
-}
-
-// buildExplicitByKey 预处理显式映射：key = dotDashKey(normalizeToBase(variant))，
-// value = canonical（小写）。同一 key 只保留第一条，自动消解双向/冲突映射。
-function buildExplicitByKey(mappings: ExplicitMapping[]): Map<string, string> {
-    const m = new Map<string, string>();
-    for (const mapping of mappings) {
-        const key = dotDashKey(normalizeToBase(mapping.variant));
-        const canonical = mapping.canonical.toLowerCase().trim();
-        if (!key || !canonical) continue;
-        if (!m.has(key)) m.set(key, canonical);
-    }
-    return m;
 }
 
 // dotDashKey 把 - 和 . 统一为 . 并小写，用于显式映射的等价匹配与冲突检测。
@@ -205,38 +261,57 @@ export function getActiveExplicitMappings(): ExplicitMapping[] {
  * normalizeModelName('Kimi-K2.5-CC')                    // 'kimi-k2.5'
  */
 export function normalizeModelName(name: string): string {
+    return normalizeModelNameWithCompiled(name, runtimeCompiledRules);
+}
+
+export function normalizeModelNameWithRules(name: string, rules: NormalizeRulesInput = {}): string {
+    return normalizeModelNameWithCompiled(name, compileNormalizeRules(rules));
+}
+
+function normalizeModelNameWithCompiled(name: string, rules: CompiledNormalizeRules): string {
     if (!name) return '';
     const trimmed = name.trim();
 
-    // 0. 显式映射：输入先完整规范化（剥路径+前缀+后缀）为基础名，再按
-    //    dotDashKey（-/. 统一、小写）查映射。同一 key 多条映射只取第一条，
-    //    自动消解用户的双向/冲突映射（如 claude-opus-4-6 ↔ claude-opus-4.6），
-    //    使同一模型不同命名归一到同一个 canonical。映射带任意渠道前缀/路径
-    //    均与裸名变体互相命中。
-    if (runtimeExplicitByKey && runtimeExplicitByKey.size > 0) {
-        const base = normalizeToBase(trimmed);
-        const canonical = runtimeExplicitByKey.get(dotDashKey(base));
-        if (canonical) return canonical;
+    if (rules.explicitFullByKey.size > 0 || rules.explicitBaseByKey.size > 0) {
+        const full = normalizeToRouterBaseWithRules(trimmed, rules);
+        const fullCanonical = rules.explicitFullByKey.get(dotDashKey(full));
+        if (fullCanonical) return fullCanonical;
+        const base = normalizeToBaseWithRules(trimmed, rules);
+        const baseCanonical = rules.explicitBaseByKey.get(dotDashKey(base));
+        if (baseCanonical) return baseCanonical;
     }
 
-    let result = stripPathAndRouterPrefix(trimmed);
-    result = stripFunctionalSuffixes(result);
+    let result = stripPathAndRouterPrefixWithRules(trimmed, rules.routerPrefixes);
+    result = stripFunctionalSuffixesWithRules(result, rules.functionalSuffixes);
 
-    // 4. 规范化为小写，便于聚合。
-    return result.toLowerCase();
+    // 4. 规范化为小写，便于聚合。不要让 malformed path-like inputs
+    // disappear from a coverage report or the model market.
+    const normalized = result.trim().toLowerCase();
+    return normalized || trimmed.toLowerCase();
+}
+
+// normalizeToRouterBase 剥路径和路由前缀，但保留功能性后缀。
+export function normalizeToRouterBase(name: string): string {
+    return normalizeToRouterBaseWithRules(name, runtimeCompiledRules);
 }
 
 // normalizeToBase 完整规范化：剥路径 + 路由前缀 + 功能性后缀，返回小写基础名。
 export function normalizeToBase(name: string): string {
-    let result = stripPathAndRouterPrefix(name);
-    result = stripFunctionalSuffixes(result);
-    return result.toLowerCase();
+    return normalizeToBaseWithRules(name, runtimeCompiledRules);
+}
+
+function normalizeToRouterBaseWithRules(name: string, rules: CompiledNormalizeRules): string {
+    return stripPathAndRouterPrefixWithRules(name, rules.routerPrefixes).toLowerCase();
+}
+
+function normalizeToBaseWithRules(name: string, rules: CompiledNormalizeRules): string {
+    return stripFunctionalSuffixesWithRules(normalizeToRouterBaseWithRules(name, rules), rules.functionalSuffixes).toLowerCase();
 }
 
 // stripPathAndRouterPrefix 剥离路径前缀（最后一个 / 之后）与路由前缀，返回中间名。
 // 前缀匹配支持「去尾 - 变体」：用户常把 [官B]- 写成带连字符，但渠道模型名是
 // [官B]claude-opus-4-6（[官B] 后无连字符），原样匹配不上；去尾 - 变体覆盖该写法差异。
-function stripPathAndRouterPrefix(name: string): string {
+function stripPathAndRouterPrefixWithRules(name: string, prefixes: string[]): string {
     let result = name;
 
     // 1. 剥离路径前缀：取最后一个 `/` 之后的部分。
@@ -247,7 +322,7 @@ function stripPathAndRouterPrefix(name: string): string {
 
     // 2. 剥离已知的路由商前缀（大小写不敏感）。
     const lower = result.toLowerCase();
-    for (const prefix of getActiveRouterPrefixes()) {
+    for (const prefix of prefixes) {
         const p = prefix.trim();
         if (!p) continue;
         // 原样匹配（dmxapi-kimi-k2.5 → dmxapi-）。
@@ -258,7 +333,7 @@ function stripPathAndRouterPrefix(name: string): string {
         // 去尾 - 变体（[官B]- → [官B] 匹配 [官B]claude-opus-4-6）。
         if (p.endsWith('-')) {
             const base = p.slice(0, -1);
-            if (base && lower.startsWith(base.toLowerCase())) {
+            if (base && !endsWithAlphanumeric(base) && lower.startsWith(base.toLowerCase())) {
                 result = result.slice(base.length);
                 // 若原名字带 -（dmxapi-kimi → 剥 dmxapi 剩 -kimi），去掉。
                 result = result.replace(/^-+/, '');
@@ -269,6 +344,12 @@ function stripPathAndRouterPrefix(name: string): string {
     return result;
 }
 
+function endsWithAlphanumeric(value: string): boolean {
+    const characters = Array.from(value);
+    if (characters.length === 0) return false;
+    return /^[\p{L}\p{N}]$/u.test(characters[characters.length - 1]);
+}
+
 // stripFunctionalSuffixes 循环剥离功能性后缀。
 // 每个后缀的匹配候选：
 //  1. 字面原样（如 -cc 匹配结尾 -cc）；
@@ -276,13 +357,13 @@ function stripPathAndRouterPrefix(name: string): string {
 //  3. -( 开头 → ( 形式（-(free) 匹配结尾 (free)）；
 //  4. 含正则元字符（\d \w { } * + ? |）→ 编译为正则并锚定结尾
 //     （-\d{8} 匹配 -20250514 这类日期后缀）。
-function stripFunctionalSuffixes(name: string): string {
+function stripFunctionalSuffixesWithRules(name: string, suffixes: string[]): string {
     let result = name;
     let changed = true;
     while (changed) {
         changed = false;
         const lower = result.toLowerCase();
-        for (const suffix of getActiveFunctionalSuffixes()) {
+        for (const suffix of suffixes) {
             const s = suffix.trim();
             if (!s) continue;
             const n = matchSuffixCandidate(lower, s);

@@ -4,14 +4,17 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"sync/atomic"
 
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/utils/cache"
+	"gorm.io/gorm"
 )
 
 var settingCache = cache.New[model.SettingKey, string](16)
+var settingWriteMu sync.Mutex
 
 // generation 在每次设置发生变更时自增。调用方可以缓存基于设置派生的
 // 配置（如语义缓存运行时配置），只在代际变化时重新读取，避免在请求热
@@ -45,21 +48,47 @@ func GetString(key model.SettingKey) (string, error) {
 }
 
 func SetString(key model.SettingKey, value string) error {
-	valueCache, ok := settingCache.Get(key)
-	if !ok {
-		return fmt.Errorf("setting not found")
-	}
-	if valueCache == value {
+	return SetStringBatch(context.Background(), map[model.SettingKey]string{key: value})
+}
+
+// SetStringBatch persists a group of settings in one transaction and publishes
+// the new cache values only after the transaction commits.
+func SetStringBatch(ctx context.Context, values map[model.SettingKey]string) error {
+	if len(values) == 0 {
 		return nil
 	}
-	result := db.GetDB().Model(&model.Setting{Key: key}).Update("Value", value)
-	if result.Error != nil {
-		return fmt.Errorf("failed to set setting: %w", result.Error)
+	settingWriteMu.Lock()
+	defer settingWriteMu.Unlock()
+
+	if err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for key, value := range values {
+			if _, ok := settingCache.Get(key); !ok {
+				return fmt.Errorf("setting not found")
+			}
+			result := tx.Model(&model.Setting{Key: key}).Update("Value", value)
+			if result.Error != nil {
+				return fmt.Errorf("failed to set setting: %w", result.Error)
+			}
+			if result.RowsAffected == 0 {
+				// MySQL may report zero affected rows when the value is unchanged.
+				// Confirm existence before treating the update as a missing key.
+				var count int64
+				if err := tx.Model(&model.Setting{}).Where("key = ?", key).Count(&count).Error; err != nil {
+					return fmt.Errorf("failed to verify setting: %w", err)
+				}
+				if count == 0 {
+					return fmt.Errorf("failed to set setting, key not found")
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("failed to set setting, key not found")
+
+	for key, value := range values {
+		settingCache.Set(key, value)
 	}
-	settingCache.Set(key, value)
 	generation.Add(1)
 	return nil
 }
@@ -92,19 +121,16 @@ func SetInt(key model.SettingKey, value int) error {
 	if valueCacheNum == value {
 		return nil
 	}
-	result := db.GetDB().Model(&model.Setting{Key: key}).Update("Value", value)
-	if result.Error != nil {
-		return fmt.Errorf("failed to set setting: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("failed to set setting, key not found")
-	}
-	settingCache.Set(key, strconv.Itoa(value))
-	generation.Add(1)
-	return nil
+	return SetStringBatch(context.Background(), map[model.SettingKey]string{key: strconv.Itoa(value)})
 }
 
 func RefreshCache(ctx context.Context) error {
+	settingWriteMu.Lock()
+	defer settingWriteMu.Unlock()
+	return refreshCache(ctx)
+}
+
+func refreshCache(ctx context.Context) error {
 	conn := db.GetDB().WithContext(ctx)
 
 	var settings []model.Setting

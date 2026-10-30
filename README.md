@@ -399,7 +399,7 @@ The embedded management UI currently ships with these top-level modules:
 |--------|----------------|
 | Home | Version, runtime status, high-level summaries, trend chart, activity heatmap, and ranking panel |
 | Hub | Upstream relay platform management with tabs for Sites (multi-account cards with inline balance / sync / check-in status, archive/restore, batch edit, and bulk import from AllAPIHub / MetAPI), Site Channels (projected channel bindings), Automation (auto-sync and auto-checkin intervals), Balance (plan balance charts), and TokenPlan (token plan monitoring) |
-| Channel | Upstream provider configuration, keys, headers, sync, latency probing, proxy mode, and request rewrite profiles |
+| Channel | Upstream provider configuration, keys, headers, sync, latency probing, proxy mode, local-node binding (admin only), and request rewrite profiles |
 | Account Pool | Account pools for relay scheduling: searchable pool list with create/edit (name, description, strategy, default concurrency, cooldown, enabled) and delete confirmation; detail view with account keyword / platform / status filters, OAuth account authorization, batch operations, and credential import/export |
 | Group | Model routing, load-balancing strategies, sticky sessions, group test, AI route generation, group thinking mode (auto / off / on), endpoint provider, zashboard-style collapsible group list, and CC Switch deep link |
 | Model Market | Model catalog with market / available endpoints / price categories views, custom pricing, channel coverage, enabled key counts, latency, success metrics, multi-dimension filters with normalized dedupe, and fallback pricing plus peak/off-peak billing rules |
@@ -408,7 +408,7 @@ The embedded management UI currently ships with these top-level modules:
 | Notification | Unified notification center with groups for Messages (inbox / archived), Alerts (rules / history), Delivery (channels / policies / preferences), and Reports (schedules / history). Alert rules, notification channels (webhook, Gotify, email, Telegram, Feishu, DingTalk, WeCom, ntfy), and usage report scheduling all live here |
 | Ops | Telemetry (hero metrics, P95 latency, provider health, prompt-cache analytics), Quota, Health, Maintenance (retry / circuit breaker / response filter), System, and Audit trail |
 | APIKey | API key create, edit, delete, supported-model allowlists, expiry, max-cost caps, RPM / TPM quotas, IP allowlists, and per-model quotas |
-| Setting | Version/update info, appearance and nav preferences (order + visibility), AI route services, semantic cache, log retention, system options (public API base URL, proxy, CORS), LLM/price sync cadence, database backup + live migration, Redis cache backend, WebDAV backup, WebAuthn/Passkey, model-name normalization, account pool scheduling, a proxy pool entry, and dangerous operations |
+| Setting | Version/update info, appearance and nav preferences (order + visibility), AI route services, semantic cache, log retention, system options (public API base URL, proxy, CORS), LLM/price sync cadence, database backup + live migration, Redis cache backend, WebDAV backup, WebAuthn/Passkey, model-name normalization, account pool scheduling, a proxy pool entry, local-node management, and dangerous operations |
 | User | Admin user management and roles |
 
 Additionally, the following features are accessible from the app shell toolbar or within other modules:
@@ -520,11 +520,11 @@ Requests with model name prefixed `zen/<model>` bypass group model mapping and r
 
 **Response ID Affinity:**
 
-For the OpenAI Responses API, follow-up requests referencing the same response ID are automatically routed to the same upstream channel to maintain conversation continuity.
+Gateway affinity for `previous_response_id` is not implemented. Passthrough preserves legitimate upstream fields, but does not guarantee the same upstream account on follow-up requests. Stateful continuation requires a route pinned to a compatible upstream.
 
 **Model Mapping:**
 
-Global model name rewriting rules are applied in the relay pipeline before group resolution. Rules support exact, wildcard (glob), and regex matching with priority ordering and optional group scope.
+Unscoped rules match once before group resolution and prefer a group named by the target. If absent, the original group may be used with an upstream-model override. Group-scoped rules match the original client model after group selection and override upstream models without selecting another group. The first matching rule wins; mappings are not recursive. Allowlists and model subquotas use the client model, while cooldown and health use the upstream model.
 
 ---
 
@@ -639,9 +639,10 @@ Groups aggregate multiple channels into a unified external model name.
 **AI Routing Behavior:**
 
 - Clicking **AI Route** on the route page sends all models to AI and generates the full routing table in batch
-- Existing groups with the same name only receive missing route items; existing groups are not cleared or replaced
-- Clicking **AI Fill Current Group** in the edit dialog sends all models to AI and appends only the matched route items to that group
-- The setting previously named AI route target group now acts as the default target group for the single-group compatibility flow only
+- Same-name groups synchronize their route items to the generated result; category conflicts or unreliable tier detection are reported without changing the original group or its items
+- Clicking **AI Fill Current Group** in the edit dialog sends all models to AI and synchronizes the current group's items to the matched route
+- Category strategies can preserve existing categories, classify by model vendor, or split free/paid routes by channel tier. Manual categories are preserved, and conflicting routes cannot write channels across tiers
+- Single-group AI routing starts from the target group and requires its explicit group ID; there is no default target group setting
 - AI route tasks are persistent with heartbeat, progress tracking, batch management, and interruption recovery
 
 **CC Switch Integration:**
@@ -670,6 +671,7 @@ The `Model` route (Model Market) provides switchable toolbar views: **Market** (
 - Vendor chips inferred from the model name
 - Pricing filter: all / priced / free
 - Normalized-name dedupe: merges naming variants of the same base model (e.g. `kimi-k2.5`, `moonshotai/kimi-k2.5`, `dmxapi-kimi-k2.5-cc`). Rules come from the Settings `Normalize` card (router prefixes, functional suffixes, explicit variant→canonical mappings), and dedupe can be turned on by default via a dedicated setting
+- The market catalog is the union of the local price catalog and channel-declared model names, so channel-only models remain visible with zero local price until a price is added. The backend `dedupe=true|false` query controls canonical aggregation versus exact raw-name cards; canonical cards keep `primary_name` and `variant_names` so copy, price editing, and deletion continue to target a real model name.
 - The collapsible filter bar shows the live result count (visible / total), the number of active filters, and a one-click reset that clears search, capability, provider, pricing, and dedupe
 
 **Summary metrics:**
@@ -700,6 +702,8 @@ Aggregated from valid route groups and inverted into endpoint → model groups. 
 - Create / edit dialog with validation: name and rule value required, prices must be finite non-negative numbers, sort order must be an integer. Errors appear after the first submit attempt and clear as the input is fixed
 - Peak/Off-peak Billing section (currently for DeepSeek): off-peak multiplier, weekend off-peak switch, and two Beijing-time windows (an empty window is closed; both windows closed means all-day off-peak; overlapping windows are allowed with a hint)
 - Rule changes invalidate the market price cache; this view has no search box
+
+The Normalize settings card also exposes coverage analysis and an AI generation workflow. Offline imports and in-app AI generation load a complete replacement candidate into the editor; conflicts and high-risk merges are shown before the existing Save action writes the rules. The management endpoints are `POST /api/v1/model/normalize/rules`, `POST /api/v1/model/normalize/generate`, `GET /api/v1/model/normalize/progress/:id`, `GET /api/v1/model/normalize/stream/:id`, and `GET /api/v1/model/normalize/coverage`.
 
 **Query gating:**
 
@@ -818,6 +822,9 @@ Since the program handles numerous statistics, writing to the database on every 
 | Normalize | Model-name normalization rules: router prefixes, functional suffixes, and explicit variant→canonical mappings (runtime-configurable, with an offline AI-assisted normalization workflow) |
 | Pool | Account-pool scheduling tuning: health patrol, layered scheduling, sticky-session escape, weight reset, and related keys |
 | Proxy Pool | Opens the shared proxy-pool management dialog (no inline panel) |
+| Local Nodes | Node status, connector version, concurrency and last seen; admin-only create/enable/disable/token rotation/delete with one-time token and local configuration template |
+
+The standalone `octopus-to-magpie-connect` Magpie community plugin provides the local reverse client and configuration page, without rebuilding Magpie or running a separate Connector. Install that independent project into Magpie; this repository contains only the cloud node service. The Bun host is lazy: the plugin connects only after it loads, and host reloads can interrupt in-flight requests without replay.
 
 > **Note:** The following settings have been relocated to more relevant modules (issue #87):
 > - **Retry / Circuit Breaker / Response Filter** → `Ops → Maintenance` tab
@@ -847,7 +854,7 @@ The Backup settings card includes a live database migration feature beyond simpl
 
 - The Settings page provides **Delete All Route Groups**
 - The action requires a second confirmation before execution
-- It deletes all groups and group items, then resets the default target group for single-group AI routing to `0` to avoid dangling references
+- It deletes all groups and group items without changing other settings
 
 **Settings Card Order:**
 
@@ -1063,7 +1070,9 @@ internal/
 │   ├── llm/            # LLM price catalog operations
 │   ├── modelmapping/   # Model mapping rule management
 │   ├── modelnormalize/ # Model-name normalization rules
+│   ├── modelnormalizeai/ # AI normalization candidates, coverage, and task progress
 │   ├── navorder/       # Navigation order and visibility persistence
+│   ├── node/           # Local node lifecycle, token rotation, and channel binding validation
 │   ├── notification/   # Notification center (messages, SSE stream, preferences)
 │   ├── ops/            # Ops dashboard data aggregation (telemetry, quota, health)
 │   ├── pool/           # Account pool management for relay scheduling
@@ -1075,6 +1084,7 @@ internal/
 │   ├── stats/          # Request statistics aggregation, cache, and site-model backfill
 │   ├── user/           # User management and authentication
 │   └── webauthn/       # WebAuthn / Passkey registration and authentication
+├── nodetransport/      # Cloud-side reverse node sessions, multiplexing and runtime snapshots
 ├── relay/              # Core relay pipeline
 │   ├── balancer/       # Load balancing strategies (RoundRobin, Random, Failover, Weighted, Auto)
 │   ├── condition/      # Request condition evaluation

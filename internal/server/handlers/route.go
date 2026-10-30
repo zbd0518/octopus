@@ -61,6 +61,7 @@ func generateAIRoute(c *gin.Context) {
 		// errAIRoute* 系列），ErrorWithAppError 会透传 Code 作为 message_key、
 		// Params 作为 message_args，前端按 locale 渲染（A3 同步路径补全）。
 		resp.ErrorWithAppError(c, http.StatusBadRequest, err)
+		return
 	}
 
 	resp.Success(c, progress)

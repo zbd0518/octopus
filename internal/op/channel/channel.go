@@ -8,11 +8,13 @@ import (
 
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
+	nodeop "github.com/lingyuins/octopus/internal/op/node"
+	pluginevent "github.com/lingyuins/octopus/internal/plugin/event"
 	"github.com/lingyuins/octopus/internal/store"
 	"github.com/lingyuins/octopus/internal/utils/cache"
 	"github.com/lingyuins/octopus/internal/utils/crypto"
 	"github.com/lingyuins/octopus/internal/utils/xstrings"
-	"gorm.io/gorm/clause"
+	"gorm.io/gorm"
 )
 
 var chCache = cache.New[int, model.Channel](16)
@@ -76,7 +78,17 @@ func decryptChannelKeysInPlace(keys []model.ChannelKey) {
 }
 
 func Create(ch *model.Channel, ctx context.Context) error {
+	if ch != nil && ch.NodeID != 0 {
+		return nodeop.WithBindingLock(func() error { return create(ch, ctx) })
+	}
+	return create(ch, ctx)
+}
+
+func create(ch *model.Channel, ctx context.Context) error {
 	if ch != nil {
+		if err := normalizeNodeChannel(ch, ctx); err != nil {
+			return err
+		}
 		if err := ch.RequestRewrite.Validate(ch.Type); err != nil {
 			return err
 		}
@@ -102,6 +114,7 @@ func Create(ch *model.Channel, ctx context.Context) error {
 	if err := db.GetDB().WithContext(ctx).Create(ch).Error; err != nil {
 		return err
 	}
+	decryptChannelKeysInPlace(ch.Keys)
 	runtimeUpdateLock.Lock()
 	defer runtimeUpdateLock.Unlock()
 	chCache.Set(ch.ID, *ch)
@@ -180,33 +193,13 @@ func deriveProxyModeFromLegacy(proxy bool, channelProxy *string) (model.ProxyUsa
 }
 
 func KeyUpdate(key model.ChannelKey) error {
-	if key.ID == 0 || key.ChannelID == 0 {
-		return fmt.Errorf("invalid channel key")
-	}
 	runtimeUpdateLock.Lock()
 	defer runtimeUpdateLock.Unlock()
-
-	ch, ok := chCache.Get(key.ChannelID)
-	if !ok {
-		return fmt.Errorf("channel not found")
+	current, ok := keyCache.Get(key.ID)
+	if !ok || current.ChannelID != key.ChannelID {
+		return fmt.Errorf("channel key not found")
 	}
-	if len(ch.Keys) > 0 {
-		keys := make([]model.ChannelKey, len(ch.Keys))
-		copy(keys, ch.Keys)
-		for i := range keys {
-			if keys[i].ID == key.ID {
-				keys[i] = key
-				break
-			}
-		}
-		ch.Keys = keys
-	}
-	chCache.Set(key.ChannelID, ch)
-	keyCache.Set(key.ID, key)
-	keyCacheNeedUpdateLock.Lock()
-	keyCacheNeedUpdate[key.ID] = struct{}{}
-	keyCacheNeedUpdateLock.Unlock()
-	return nil
+	return recordKeyUsageLocked(key.ChannelID, key.ID, max(0, key.TotalCost-current.TotalCost), key.StatusCode, key.LastUseTimeStamp)
 }
 
 func BaseUrlUpdate(channelID int, baseUrl []model.BaseUrl) error {
@@ -238,71 +231,63 @@ func BaseUrlUpdate(channelID int, baseUrl []model.BaseUrl) error {
 }
 
 func KeySaveDB(ctx context.Context) error {
+	runtimeUpdateLock.Lock()
+	defer runtimeUpdateLock.Unlock()
+	return saveKeyUsageLocked(ctx)
+}
+
+func saveKeyUsageLocked(ctx context.Context) error {
 	keyCacheNeedUpdateLock.Lock()
-	keyIDs := make([]int, 0, len(keyCacheNeedUpdate))
-	for id := range keyCacheNeedUpdate {
-		keyIDs = append(keyIDs, id)
-	}
-	for id := range keyCacheNeedUpdate {
-		delete(keyCacheNeedUpdate, id)
-	}
-	keyCacheNeedUpdateLock.Unlock()
-
-	if len(keyIDs) == 0 {
+	defer keyCacheNeedUpdateLock.Unlock()
+	if len(keyCacheNeedUpdate) == 0 {
 		return nil
 	}
-
-	keys := make([]model.ChannelKey, 0, len(keyIDs))
-	for _, id := range keyIDs {
-		k, ok := keyCache.Get(id)
-		if !ok {
-			continue
+	err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for id := range keyCacheNeedUpdate {
+			key, exists := keyCache.Get(id)
+			if !exists {
+				continue
+			}
+			delta := pendingKeyUsage[id]
+			updates := map[string]any{
+				"total_cost":          gorm.Expr("total_cost + ?", delta.cost),
+				"last_use_time_stamp": gorm.Expr("CASE WHEN last_use_time_stamp < ? THEN ? ELSE last_use_time_stamp END", key.LastUseTimeStamp, key.LastUseTimeStamp),
+			}
+			if delta.statusCode > 0 {
+				updates["status_code"] = delta.statusCode
+			}
+			if err := tx.Model(&model.ChannelKey{}).Where("id = ? AND channel_id = ?", id, key.ChannelID).Updates(updates).Error; err != nil {
+				return err
+			}
 		}
-		keys = append(keys, k)
-	}
-	if len(keys) == 0 {
 		return nil
-	}
-
-	// 渠道 Key 加密落库（缓存中保持明文，仅加密本地的副本）。
-	if err := encryptChannelKeysForDB(keys); err != nil {
-		// 与写库失败一致：把脏 ID 重新入队，等待下次重试。
-		keyCacheNeedUpdateLock.Lock()
-		for _, id := range keyIDs {
-			keyCacheNeedUpdate[id] = struct{}{}
-		}
-		keyCacheNeedUpdateLock.Unlock()
+	})
+	if err != nil {
 		return err
 	}
-
-	if err := db.GetDB().WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{
-			"channel_id",
-			"enabled",
-			"channel_key",
-			"status_code",
-			"last_use_time_stamp",
-			"total_cost",
-			"priority",
-			"remark",
-			"managed",
-		}),
-	}).Create(&keys).Error; err != nil {
-		keyCacheNeedUpdateLock.Lock()
-		for _, id := range keyIDs {
-			keyCacheNeedUpdate[id] = struct{}{}
-		}
-		keyCacheNeedUpdateLock.Unlock()
-		return err
-	}
+	clear(pendingKeyUsage)
+	clear(keyCacheNeedUpdate)
 	return nil
 }
 
 func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channel, error) {
+	var result *model.Channel
+	err := nodeop.WithBindingLock(func() error {
+		var err error
+		result, err = update(req, ctx)
+		return err
+	})
+	return result, err
+}
+
+func update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channel, error) {
 	current, ok := chCache.Get(req.ID)
 	if !ok {
 		return nil, fmt.Errorf("channel not found")
+	}
+
+	if err := prepareNodeUpdate(req, current, ctx); err != nil {
+		return nil, err
 	}
 
 	effectiveType := current.Type
@@ -458,6 +443,10 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 		selectFields = append(selectFields, "pool_id")
 		updates.PoolID = *req.PoolID
 	}
+	if req.NodeID != nil {
+		selectFields = append(selectFields, "node_id")
+		updates.NodeID = *req.NodeID
+	}
 	if req.ParamOverride != nil {
 		selectFields = append(selectFields, "param_override")
 		updates.ParamOverride = req.ParamOverride
@@ -592,6 +581,7 @@ func Enabled(id int, enabled bool, ctx context.Context) error {
 	}
 	oldCh.Enabled = enabled
 	chCache.Set(id, oldCh)
+	pluginevent.Publish("channel.health.changed", map[string]any{"channel_id": id, "channel_name": oldCh.Name, "enabled": enabled, "passed": enabled})
 	return nil
 }
 
@@ -793,6 +783,11 @@ func Get(id int, ctx context.Context) (*model.Channel, error) {
 }
 
 func RefreshCache(ctx context.Context) error {
+	runtimeUpdateLock.Lock()
+	defer runtimeUpdateLock.Unlock()
+	if err := saveKeyUsageLocked(ctx); err != nil {
+		return err
+	}
 	channels := []model.Channel{}
 	if err := db.GetDB().WithContext(ctx).
 		Preload("Keys").
@@ -800,9 +795,6 @@ func RefreshCache(ctx context.Context) error {
 		Find(&channels).Error; err != nil {
 		return err
 	}
-	runtimeUpdateLock.Lock()
-	defer runtimeUpdateLock.Unlock()
-
 	chCache.Clear()
 	keyCache.Clear()
 	keyCacheNeedUpdateLock.Lock()
@@ -840,6 +832,9 @@ func RefreshCache(ctx context.Context) error {
 func RefreshCacheByID(id int, ctx context.Context) error {
 	runtimeUpdateLock.Lock()
 	defer runtimeUpdateLock.Unlock()
+	if err := saveKeyUsageLocked(ctx); err != nil {
+		return err
+	}
 
 	if old, ok := chCache.Get(id); ok {
 		for _, k := range old.Keys {

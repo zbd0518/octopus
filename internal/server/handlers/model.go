@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lingyuins/octopus/internal/helper"
@@ -12,6 +14,8 @@ import (
 	"github.com/lingyuins/octopus/internal/op/channel"
 	"github.com/lingyuins/octopus/internal/op/group"
 	"github.com/lingyuins/octopus/internal/op/llm"
+	"github.com/lingyuins/octopus/internal/op/modelnormalize"
+	"github.com/lingyuins/octopus/internal/op/modelnormalizeai"
 	"github.com/lingyuins/octopus/internal/price"
 	"github.com/lingyuins/octopus/internal/server/auth"
 	"github.com/lingyuins/octopus/internal/server/middleware"
@@ -41,6 +45,28 @@ func init() {
 		AddRoute(
 			router.NewRoute("/market", http.MethodGet).
 				Handle(getModelMarket),
+		).
+		AddRoute(
+			router.NewRoute("/normalize/rules", http.MethodPost).
+				Use(middleware.RequirePermission(auth.PermSettingsWrite)).
+				Handle(saveModelNormalizeRules),
+		).
+		AddRoute(
+			router.NewRoute("/normalize/generate", http.MethodPost).
+				Use(middleware.RequirePermission(auth.PermSettingsWrite)).
+				Handle(startModelNormalize),
+		).
+		AddRoute(
+			router.NewRoute("/normalize/progress/:id", http.MethodGet).
+				Handle(getModelNormalizeProgress),
+		).
+		AddRoute(
+			router.NewRoute("/normalize/stream/:id", http.MethodGet).
+				Handle(streamModelNormalizeProgress),
+		).
+		AddRoute(
+			router.NewRoute("/normalize/coverage", http.MethodGet).
+				Handle(getModelNormalizeCoverage),
 		).
 		AddRoute(
 			router.NewRoute("/update", http.MethodPost).
@@ -133,6 +159,22 @@ func getModelList(c *gin.Context) {
 		resp.InternalError(c)
 		return
 	}
+	if strings.TrimSpace(apiKey.AllowedGroupCategories) != "" {
+		visible := make(map[string]bool)
+		groups, listErr := group.GroupList(c.Request.Context())
+		if listErr != nil {
+			resp.InternalError(c)
+			return
+		}
+		for _, candidate := range groups {
+			for _, allowed := range strings.Split(apiKey.AllowedGroupCategories, ",") {
+				if strings.EqualFold(strings.TrimSpace(allowed), strings.TrimSpace(candidate.Category)) && strings.TrimSpace(candidate.Category) != "" {
+					visible[candidate.Name] = true
+				}
+			}
+		}
+		models = lo.Filter(models, func(name string, _ int) bool { return visible[name] })
+	}
 	if apiKey.SupportedModels != "" {
 		supportedModels := lo.Map(strings.Split(apiKey.SupportedModels, ","), func(s string, _ int) string {
 			return strings.TrimSpace(s)
@@ -204,12 +246,124 @@ func listLLMByChannel(c *gin.Context) {
 }
 
 func getModelMarket(c *gin.Context) {
-	market, err := op.ModelMarketGet(c.Request.Context(), price.GetLastUpdateTime())
+	var (
+		market model.ModelMarketResponse
+		err    error
+	)
+	if raw := strings.TrimSpace(c.Query("dedupe")); raw != "" {
+		dedupe, parseErr := strconv.ParseBool(raw)
+		if parseErr != nil {
+			resp.ErrorWithKey(c, http.StatusBadRequest, "invalid dedupe", "errors.invalidParameter", nil)
+			return
+		}
+		market, err = op.ModelMarketGetWithDedupe(c.Request.Context(), price.GetLastUpdateTime(), dedupe)
+	} else {
+		market, err = op.ModelMarketGet(c.Request.Context(), price.GetLastUpdateTime())
+	}
 	if err != nil {
 		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, market)
+}
+
+func saveModelNormalizeRules(c *gin.Context) {
+	var req struct {
+		RouterPrefixes      []string                         `json:"router_prefixes"`
+		FunctionalSuffixes  []string                         `json:"functional_suffixes"`
+		ExplicitMappings    []modelnormalize.ExplicitMapping `json:"explicit_mappings"`
+		MarketDedupeDefault bool                             `json:"market_dedupe_default"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
+		return
+	}
+	if err := modelnormalize.SaveRuleSet(c.Request.Context(), modelnormalize.RuleSet{
+		RouterPrefixes:      req.RouterPrefixes,
+		FunctionalSuffixes:  req.FunctionalSuffixes,
+		ExplicitMappings:    req.ExplicitMappings,
+		MarketDedupeDefault: req.MarketDedupeDefault,
+	}); err != nil {
+		resp.ErrorWithKey(c, http.StatusBadRequest, err.Error(), "errors.inputValidationFailed", nil)
+		return
+	}
+	op.ModelMarketInvalidateCache()
+	resp.Success(c, nil)
+}
+
+func getModelNormalizeCoverage(c *gin.Context) {
+	channels, err := channel.LLMList(c.Request.Context())
+	if err != nil {
+		resp.InternalError(c)
+		return
+	}
+	names := make([]string, 0, len(channels))
+	for _, item := range channels {
+		names = append(names, item.Name)
+	}
+	report := modelnormalize.AnalyzeNames(names, modelnormalize.CurrentRules())
+	resp.Success(c, report)
+}
+
+func startModelNormalize(c *gin.Context) {
+	task, err := modelnormalizeai.Start(c.Request.Context())
+	if err != nil {
+		resp.ErrorWithKey(c, http.StatusBadGateway, err.Error(), "errors.upstreamServiceUnavailable", nil)
+		return
+	}
+	resp.Success(c, task)
+}
+
+func getModelNormalizeProgress(c *gin.Context) {
+	task, err := modelnormalizeai.Get(c.Request.Context(), strings.TrimSpace(c.Param("id")))
+	if err != nil {
+		resp.ErrorWithKey(c, http.StatusNotFound, "model normalization task not found", "errors.resourceNotFound", nil)
+		return
+	}
+	resp.Success(c, task)
+}
+
+func streamModelNormalizeProgress(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	updates, unsubscribe := modelnormalizeai.Subscribe(id)
+	defer unsubscribe()
+	task, err := modelnormalizeai.Get(c.Request.Context(), id)
+	if err != nil {
+		resp.ErrorWithKey(c, http.StatusNotFound, "model normalization task not found", "errors.resourceNotFound", nil)
+		return
+	}
+
+	// This endpoint intentionally uses SSE rather than the management envelope:
+	// it is a streaming transport for progress events.
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.SSEvent("progress", task)
+	c.Writer.Flush()
+	if task.Done {
+		return
+	}
+
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case update, ok := <-updates:
+			if !ok {
+				return
+			}
+			c.SSEvent("progress", update)
+			if update.Done {
+				return
+			}
+		case <-heartbeat.C:
+			c.SSEvent("heartbeat", gin.H{"id": id})
+		}
+		c.Writer.Flush()
+	}
 }
 
 func createLLM(c *gin.Context) {
@@ -222,6 +376,7 @@ func createLLM(c *gin.Context) {
 		resp.InternalError(c)
 		return
 	}
+	op.ModelMarketInvalidateCache()
 	resp.Success(c, model)
 }
 
@@ -235,6 +390,7 @@ func updateLLM(c *gin.Context) {
 		resp.InternalError(c)
 		return
 	}
+	op.ModelMarketInvalidateCache()
 	resp.Success(c, model)
 }
 
@@ -250,6 +406,7 @@ func deleteLLM(c *gin.Context) {
 		resp.InternalError(c)
 		return
 	}
+	op.ModelMarketInvalidateCache()
 	resp.Success(c, nil)
 }
 
@@ -263,6 +420,7 @@ func updateLLMPrice(c *gin.Context) {
 		resp.InternalError(c)
 		return
 	}
+	op.ModelMarketInvalidateCache()
 	resp.Success(c, nil)
 }
 

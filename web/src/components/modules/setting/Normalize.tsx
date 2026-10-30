@@ -8,19 +8,27 @@ import { Hint } from '@/components/ui/hint';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { SettingKey, useSetSetting, useSettingList } from '@/api/endpoints/setting';
-import { useModelChannelList, type LLMChannel } from '@/api/endpoints/model';
+import { SettingKey, useSettingList } from '@/api/endpoints/setting';
+import {
+    useModelChannelList,
+    useModelNormalizeProgress,
+    useSaveModelNormalizeRules,
+    useStartModelNormalize,
+    type LLMChannel,
+} from '@/api/endpoints/model';
 import { toast } from '@/components/common/Toast';
-import { setNormalizeRules, normalizeToBase, dotDashKey, type ExplicitMapping } from '@/components/modules/model/normalize';
+import {
+    normalizeModelNameWithRules,
+    normalizeToBase,
+    dotDashKey,
+    PROTECTED_MODEL_TOKENS,
+    setNormalizeRules,
+    type ExplicitMapping,
+    type NormalizeRulesInput,
+} from '@/components/modules/model/normalize';
 import { writeClipboardText } from '@/lib/clipboard';
 import { cn } from '@/lib/utils';
-
-// AI 离线分析后导入的规则文件结构。
-interface NormalizeRulesFile {
-    router_prefixes?: string[];
-    functional_suffixes?: string[];
-    explicit_mappings?: ExplicitMapping[];
-}
+import { useNavStore } from '@/components/modules/navbar';
 
 /**
  * 归一化规则配置卡片。
@@ -35,7 +43,7 @@ interface NormalizeRulesFile {
  */
 
 // 不可归并的模型族标记——出现在待剥离片段中时拒绝归并，避免 gpt-4o-mini 被吃进 gpt-4o。
-const MODEL_FAMILY_TOKENS = ['mini', 'nano', 'small', 'tiny', 'micro', 'large', 'medium', 'big'];
+const MODEL_FAMILY_TOKENS = [...PROTECTED_MODEL_TOKENS, 'micro', 'big'];
 
 function parseStringArray(raw: string | undefined): string[] {
     if (!raw) return [];
@@ -77,13 +85,6 @@ function downloadBlob(blob: Blob, filename: string) {
     }
 }
 
-// AI 离线分析后回传的规则文件结构。三类规则均可选。
-interface NormalizeRulesFile {
-    router_prefixes?: string[];
-    functional_suffixes?: string[];
-    explicit_mappings?: ExplicitMapping[];
-}
-
 // 导入规则文件的解析结果：分类计数 + 原始规则数据，供预览后合并。
 interface ImportPreview {
     routerPrefixes: string[];
@@ -92,11 +93,28 @@ interface ImportPreview {
     prefixCount: number;
     suffixCount: number;
     mappingCount: number;
+    coverage: CoverageSummary;
 }
 
-/** 解析 AI 回传的规则文件，容错：缺失字段按空处理，字段类型不符跳过。 */
+interface CoverageSummary {
+    inputCount: number;
+    canonicalCount: number;
+    mergedVariantCount: number;
+    highRiskCount: number;
+    validationIssueCount: number;
+    unresolvedCount: number;
+}
+
+/** 解析 AI 回传的完整规则替换候选，字段必须与三字段协议完全一致。 */
 function parseRulesFile(text: string): ImportPreview {
-    const data = JSON.parse(text) as NormalizeRulesFile;
+    const data = JSON.parse(text) as unknown;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        throw new Error('rules file must be a JSON object');
+    }
+    const keys = Object.keys(data).sort();
+    if (keys.join('|') !== 'explicit_mappings|functional_suffixes|router_prefixes') {
+        throw new Error('rules file must contain exactly router_prefixes, functional_suffixes, and explicit_mappings');
+    }
     const asStrings = (v: unknown): string[] =>
         Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
     const asMappings = (v: unknown): ExplicitMapping[] =>
@@ -107,9 +125,20 @@ function parseRulesFile(text: string): ImportPreview {
                 && typeof x.canonical === 'string' && x.canonical.trim() !== '')
                 .map((x) => ({ variant: x.variant, canonical: x.canonical }))
             : [];
-    const routerPrefixes = asStrings(data.router_prefixes);
-    const functionalSuffixes = asStrings(data.functional_suffixes);
-    const explicitMappings = asMappings(data.explicit_mappings);
+    const source = data as Record<string, unknown>;
+    if (!Array.isArray(source.router_prefixes)
+        || !Array.isArray(source.functional_suffixes)
+        || !Array.isArray(source.explicit_mappings)) {
+        throw new Error('rules file fields must be arrays');
+    }
+    const routerPrefixes = asStrings(source.router_prefixes);
+    const functionalSuffixes = asStrings(source.functional_suffixes);
+    const explicitMappings = asMappings(source.explicit_mappings);
+    if (routerPrefixes.length !== source.router_prefixes.length
+        || functionalSuffixes.length !== source.functional_suffixes.length
+        || explicitMappings.length !== source.explicit_mappings.length) {
+        throw new Error('rules file contains invalid rule entries');
+    }
     return {
         routerPrefixes,
         functionalSuffixes,
@@ -117,6 +146,18 @@ function parseRulesFile(text: string): ImportPreview {
         prefixCount: routerPrefixes.length,
         suffixCount: functionalSuffixes.length,
         mappingCount: explicitMappings.length,
+        coverage: emptyCoverageSummary(),
+    };
+}
+
+function emptyCoverageSummary(): CoverageSummary {
+    return {
+        inputCount: 0,
+        canonicalCount: 0,
+        mergedVariantCount: 0,
+        highRiskCount: 0,
+        validationIssueCount: 0,
+        unresolvedCount: 0,
     };
 }
 
@@ -154,6 +195,66 @@ interface SuspectedCluster {
     variants: { original: string; diff: string }[];
 }
 
+function semanticTokenSignature(name: string): string {
+    let normalized = name.toLowerCase().replace(/[._:@/()[\]]/g, '-');
+    while (normalized.includes('--')) normalized = normalized.replaceAll('--', '-');
+    const padded = `-${normalized.replace(/^-+|-+$/g, '')}-`;
+    const tokens = PROTECTED_MODEL_TOKENS.filter((token) => (
+        padded.includes(`-${token}-`)
+        && !(token === 'reasoning' && padded.includes('-non-reasoning-'))
+    ));
+    return tokens.sort().join('|');
+}
+
+function hasSemanticDifference(names: string[]): boolean {
+    if (names.length < 2) return false;
+    const first = semanticTokenSignature(names[0]);
+    return names.slice(1).some((name) => semanticTokenSignature(name) !== first);
+}
+
+function hasPrefixBoundary(value: string): boolean {
+    return /[-/.:_()[\]]$/.test(value);
+}
+
+function hasProtectedSuffixToken(value: string): boolean {
+    let normalized = value.toLowerCase().replace(/^[-]+/, '').replace(/[._:@/()[\]]/g, '-');
+    while (normalized.includes('--')) normalized = normalized.replaceAll('--', '-');
+    const padded = `-${normalized.replace(/^-+|-+$/g, '')}-`;
+    return PROTECTED_MODEL_TOKENS.some((token) => padded.includes(`-${token}-`));
+}
+
+function countRuleValidationIssues(rules: NormalizeRulesInput): number {
+    let count = 0;
+    const rulesWithoutExplicit = { ...rules, explicitMappings: [] };
+    for (const prefix of rules.routerPrefixes ?? []) {
+        const value = prefix.trim();
+        if (!value || value.includes('/') || !hasPrefixBoundary(value)) count += 1;
+    }
+    for (const suffix of rules.functionalSuffixes ?? []) {
+        const value = suffix.trim();
+        if (!value || value.includes('/') || /[\r\n\t]/.test(value) || hasProtectedSuffixToken(value)) count += 1;
+    }
+
+    const mappingsByKey = new Map<string, string>();
+    for (const mapping of rules.explicitMappings ?? []) {
+        const variant = mapping.variant.trim();
+        const canonical = mapping.canonical.trim().toLowerCase();
+        if (!variant || !canonical) {
+            count += 1;
+            continue;
+        }
+        if (/[\/\[\]\s]/.test(canonical)
+            || normalizeModelNameWithRules(canonical, rulesWithoutExplicit) !== canonical) {
+            count += 1;
+        }
+        const key = dotDashKey(normalizeModelNameWithRules(variant, rulesWithoutExplicit));
+        const previous = mappingsByKey.get(key);
+        if (previous !== undefined && previous !== canonical) count += 1;
+        else mappingsByKey.set(key, canonical);
+    }
+    return count;
+}
+
 // 在剥离掉共同基础名后，剩余的「变体片段」是否由分隔符切出的完整 token 组成。
 // 拒绝字母粘连（如 gpt-4o vs gpt-4ox）以及含模型族标记（如 mini）的疑似归并。
 function isCleanVariantFragment(fragment: string): boolean {
@@ -172,57 +273,89 @@ function isCleanVariantFragment(fragment: string): boolean {
  *  - suspected：原名互为前缀/后缀关系、归一后却不同（疑似漏归并，补规则线索）。
  *    用 isCleanVariantFragment 过滤掉 mini/nano 等模型族误报。
  */
-function analyzeCoverage(channels: LLMChannel[]): { merged: MergedCluster[]; suspected: SuspectedCluster[] } {
+function analyzeCoverage(channels: LLMChannel[], rules: NormalizeRulesInput): {
+    merged: MergedCluster[];
+    suspected: SuspectedCluster[];
+    coverage: CoverageSummary;
+} {
     const seen = new Map<string, Set<string>>();
     const originals: string[] = [];
+    const originalSet = new Set<string>();
+    let unresolvedCount = 0;
     for (const ch of channels) {
         const name = ch.name?.trim();
         if (!name) continue;
-        const canonical = normalizeForAnalysis(name);
+        const canonical = normalizeForAnalysis(name, rules);
+        if (!canonical) unresolvedCount += 1;
         if (!seen.has(canonical)) seen.set(canonical, new Set());
         seen.get(canonical)!.add(name);
-        if (!originals.includes(name)) originals.push(name);
+        if (!originalSet.has(name)) {
+            originalSet.add(name);
+            originals.push(name);
+        }
     }
 
     const merged: MergedCluster[] = [];
+    let mergedVariantCount = 0;
+    let highRiskCount = 0;
     for (const [canonical, set] of seen) {
         if (set.size > 1) {
-            merged.push({ canonical, originals: Array.from(set).sort() });
+            const variants = Array.from(set).sort();
+            merged.push({ canonical, originals: variants });
+            mergedVariantCount += variants.length - 1;
+            if (hasSemanticDifference(variants)) highRiskCount += 1;
         }
     }
     merged.sort((a, b) => b.originals.length - a.originals.length || a.canonical.localeCompare(b.canonical));
 
     // 疑似漏归并：归一后不同的名之间，存在 A 是 B 的前缀（按分隔符边界）且剥离片段干净。
     const lowerOriginals = originals.map((o) => o.toLowerCase());
+    const prefixIndex = new Map<string, string[]>();
+    for (const original of originals) {
+        const lower = original.toLowerCase();
+        for (let i = 0; i < lower.length; i += 1) {
+            if (!/[.\-/]/.test(lower[i])) continue;
+            const prefix = lower.slice(0, i);
+            if (!prefix) continue;
+            const values = prefixIndex.get(prefix);
+            if (values) values.push(original);
+            else prefixIndex.set(prefix, [original]);
+        }
+    }
     const suspectedMap = new Map<string, SuspectedCluster>();
-    for (let i = 0; i < lowerOriginals.length; i++) {
-        for (let j = 0; j < lowerOriginals.length; j++) {
-            if (i === j) continue;
-            const a = lowerOriginals[i];
-            const b = lowerOriginals[j];
-            // a 是 b 的前缀，且边界是分隔符（避免 gpt-4o 匹配 gpt-4ox）。
-            if (a.length < b.length && b.startsWith(a) && /[.\-/]/.test(b[a.length])) {
-                const fragment = b.slice(a.length);
-                if (!isCleanVariantFragment(fragment)) continue;
-                const base = originals[i];
-                const variant = originals[j];
-                if (!suspectedMap.has(base)) suspectedMap.set(base, { base, variants: [] });
-                const arr = suspectedMap.get(base)!.variants;
-                if (!arr.some((v) => v.original === variant)) {
-                    arr.push({ original: variant, diff: fragment });
-                }
+    for (let i = 0; i < lowerOriginals.length; i += 1) {
+        const a = lowerOriginals[i];
+        const candidates = prefixIndex.get(a) ?? [];
+        for (const variant of candidates) {
+            if (variant.toLowerCase() === a) continue;
+            const fragment = variant.slice(a.length);
+            if (!isCleanVariantFragment(fragment)) continue;
+            const base = originals[i];
+            if (!suspectedMap.has(base)) suspectedMap.set(base, { base, variants: [] });
+            const arr = suspectedMap.get(base)!.variants;
+            if (!arr.some((v) => v.original === variant)) {
+                arr.push({ original: variant, diff: fragment });
             }
         }
     }
     const suspected = Array.from(suspectedMap.values()).sort((a, b) => b.variants.length - a.variants.length || a.base.localeCompare(b.base));
-    return { merged, suspected };
+    return {
+        merged,
+        suspected,
+        coverage: {
+            inputCount: originals.length,
+            canonicalCount: seen.size - (seen.has('') ? 1 : 0),
+            mergedVariantCount,
+            highRiskCount,
+            validationIssueCount: countRuleValidationIssues(rules),
+            unresolvedCount,
+        },
+    };
 }
 
 // 分析用的归一化：复用运行时规则，但保留原始大小写做簇内展示（归一仅用于分簇键）。
-function normalizeForAnalysis(name: string): string {
-    // 直接复用 normalize 模块的运行时规则；这里用小写键聚合即可。
-    // 为避免循环依赖，简单内联等价逻辑：取末段、剥前缀、剥后缀、小写。
-    return name.toLowerCase().trim();
+function normalizeForAnalysis(name: string, rules: NormalizeRulesInput): string {
+    return normalizeModelNameWithRules(name, rules);
 }
 
 function RuleList({
@@ -321,15 +454,16 @@ function RuleList({
 
 export function SettingNormalize() {
     const t = useTranslations('setting');
+    const isSettingActive = useNavStore((state) => state.activeItem === 'setting');
     const { data: settings } = useSettingList();
-    const setSetting = useSetSetting();
+    const saveRules = useSaveModelNormalizeRules();
     const { data: channelModels, isLoading: channelsLoading, refetch: refetchChannels } = useModelChannelList();
 
     const [routerPrefixes, setRouterPrefixes] = useState<string[]>([]);
     const [functionalSuffixes, setFunctionalSuffixes] = useState<string[]>([]);
     const [explicitMappings, setExplicitMappings] = useState<ExplicitMapping[]>([]);
     // 模型广场是否默认开启归一化去重。独立于上述规则，单独持久化与保存。
-    const [marketDedupeDefault, setMarketDedupeDefault] = useState(false);
+    const [marketDedupeDefault, setMarketDedupeDefault] = useState(true);
     const [loaded, setLoaded] = useState(false);
     const [saving, setSaving] = useState(false);
     const [analyzing, setAnalyzing] = useState(false);
@@ -338,6 +472,9 @@ export function SettingNormalize() {
     const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
     const importFileRef = useRef<HTMLInputElement | null>(null);
     const [analysis, setAnalysis] = useState<{ merged: MergedCluster[]; suspected: SuspectedCluster[] } | null>(null);
+    const [aiTaskId, setAiTaskId] = useState<string | null>(null);
+    const startAITask = useStartModelNormalize();
+    const { data: aiTask } = useModelNormalizeProgress(aiTaskId, isSettingActive);
 
     // 从 DB Setting 加载规则到本地编辑态（仅首次加载）。
     useEffect(() => {
@@ -370,9 +507,6 @@ export function SettingNormalize() {
     const handleRemoveSuffix = (index: number) => setFunctionalSuffixes((prev) => prev.filter((_, i) => i !== index));
 
     const handleSave = async () => {
-        // 先注入编辑态规则（含显式映射），用于下方冲突检测与分析。
-        setNormalizeRules({ routerPrefixes, functionalSuffixes, explicitMappings });
-
         // 冲突检测：dotDashKey（-/. 统一）后相同的变体不得映射到不同基准名
         // （如 claude-opus-4-6→claude-opus-4.6 与 claude-opus-4.6→claude-opus-4-6
         // 是同一模型两种命名，但映射到相反方向，去重失效）。
@@ -397,10 +531,12 @@ export function SettingNormalize() {
 
         setSaving(true);
         try {
-            await setSetting.mutateAsync({ key: SettingKey.ModelNormalizeRouterPrefixes, value: JSON.stringify(routerPrefixes) });
-            await setSetting.mutateAsync({ key: SettingKey.ModelNormalizeFunctionalSuffixes, value: JSON.stringify(functionalSuffixes) });
-            await setSetting.mutateAsync({ key: SettingKey.ModelNormalizeExplicitMappings, value: JSON.stringify(explicitMappings) });
-            await setSetting.mutateAsync({ key: SettingKey.ModelNormalizeMarketDedupeDefault, value: marketDedupeDefault ? 'true' : 'false' });
+            await saveRules.mutateAsync({
+                router_prefixes: routerPrefixes,
+                functional_suffixes: functionalSuffixes,
+                explicit_mappings: explicitMappings,
+                market_dedupe_default: marketDedupeDefault,
+            });
             // 立即注入运行时，无需等设置列表刷新。
             setNormalizeRules({ routerPrefixes, functionalSuffixes, explicitMappings });
             toast.success(t('normalize.saved'));
@@ -417,19 +553,18 @@ export function SettingNormalize() {
             return;
         }
         setAnalyzing(true);
-        // 同步注入当前编辑态规则，保证分析基于最新规则（而非上次保存的）。
-        setNormalizeRules({ routerPrefixes, functionalSuffixes, explicitMappings });
-        // 让注入生效后再分析。
-        queueMicrotask(() => {
-            try {
-                const result = analyzeCoverage(channelModels);
-                setAnalysis(result);
-            } catch (e) {
-                toast.error(e instanceof Error ? e.message : t('normalize.analysis.failed'));
-            } finally {
-                setAnalyzing(false);
-            }
-        });
+        try {
+            const result = analyzeCoverage(channelModels, {
+                routerPrefixes,
+                functionalSuffixes,
+                explicitMappings,
+            });
+            setAnalysis(result);
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : t('normalize.analysis.failed'));
+        } finally {
+            setAnalyzing(false);
+        }
     };
 
     const addPrefixFromAnalysis = (prefix: string) => {
@@ -460,7 +595,30 @@ export function SettingNormalize() {
         }
     };
 
-    // 导出含变体的渠道模型名，供离线 AI/agent 分析变体关系。
+    const handleStartAI = async () => {
+        if (!channelModels || channelModels.length === 0) {
+            toast.error(t('normalize.analysis.empty'));
+            return;
+        }
+        try {
+            const task = await startAITask.mutateAsync();
+            setAiTaskId(task.id);
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : t('normalize.workflow.aiFailed'));
+        }
+    };
+
+    const applyAITask = () => {
+        const rules = aiTask?.result?.rules;
+        if (!rules) return;
+        setRouterPrefixes(dedupe(rules.router_prefixes.map(normalizeRouterPrefix).filter(Boolean)));
+        setFunctionalSuffixes(dedupe(rules.functional_suffixes.map(normalizeFunctionalSuffix).filter(Boolean)));
+        setExplicitMappings(rules.explicit_mappings);
+        setImportPreview(null);
+        toast.success(t('normalize.workflow.aiApplied'));
+    };
+
+    // 导出脱敏的去重模型名语料，供离线 AI/agent 分析变体关系。
     const handleExportChannels = async () => {
         let channels = channelModels;
         if (!channels || channels.length === 0) {
@@ -471,7 +629,8 @@ export function SettingNormalize() {
             }
         }
         const list = channels ?? [];
-        if (list.length === 0) {
+        const modelNames = Array.from(new Set(list.map((channel) => channel.name?.trim()).filter(Boolean))).sort();
+        if (modelNames.length === 0) {
             toast.error(t('normalize.export.empty'));
             return;
         }
@@ -479,7 +638,7 @@ export function SettingNormalize() {
         try {
             const payload = {
                 exported_at: new Date().toISOString(),
-                channels: list.map((c) => ({ name: c.name, channel_id: c.channel_id, channel_name: c.channel_name, enabled: c.enabled })),
+                model_names: modelNames,
             };
             const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
             const d = new Date();
@@ -502,11 +661,20 @@ export function SettingNormalize() {
         reader.onload = () => {
             try {
                 const parsed = parseRulesFile(String(reader.result ?? ''));
-                if (parsed.prefixCount === 0 && parsed.suffixCount === 0 && parsed.mappingCount === 0) {
-                    toast.error(t('normalize.import.noRules'));
-                    return;
-                }
-                setImportPreview(parsed);
+                const candidate = {
+                    routerPrefixes: dedupe(parsed.routerPrefixes.map(normalizeRouterPrefix).filter(Boolean)),
+                    functionalSuffixes: dedupe(parsed.functionalSuffixes.map(normalizeFunctionalSuffix).filter(Boolean)),
+                    explicitMappings: parsed.explicitMappings,
+                };
+                const coverage = analyzeCoverage(channelModels ?? [], candidate).coverage;
+                setImportPreview({
+                    ...parsed,
+                    ...candidate,
+                    prefixCount: candidate.routerPrefixes.length,
+                    suffixCount: candidate.functionalSuffixes.length,
+                    mappingCount: candidate.explicitMappings.length,
+                    coverage,
+                });
             } catch (e) {
                 toast.error(e instanceof Error ? e.message : t('normalize.import.parseFailed'));
             }
@@ -515,19 +683,13 @@ export function SettingNormalize() {
         reader.readAsText(file);
     };
 
-    // 确认应用导入预览：合并到本地编辑态（去重），不立即保存，由用户点保存落库。
+    // 确认应用导入预览：将 AI 输出作为完整规则集候选载入本地编辑态，
+    // 不立即保存，由用户检查后点击保存落库。
     const applyImport = () => {
         if (!importPreview) return;
-        const mergedPrefixes = dedupe([...routerPrefixes, ...importPreview.routerPrefixes.map(normalizeRouterPrefix).filter(Boolean)]);
-        const mergedSuffixes = dedupe([...functionalSuffixes, ...importPreview.functionalSuffixes.map(normalizeFunctionalSuffix).filter(Boolean)]);
-        const existingVariantKeys = new Set(explicitMappings.map((m) => m.variant.toLowerCase()));
-        const mergedMappings = [
-            ...explicitMappings,
-            ...importPreview.explicitMappings.filter((m) => !existingVariantKeys.has(m.variant.toLowerCase())),
-        ];
-        setRouterPrefixes(mergedPrefixes);
-        setFunctionalSuffixes(mergedSuffixes);
-        setExplicitMappings(mergedMappings);
+        setRouterPrefixes(dedupe(importPreview.routerPrefixes.map(normalizeRouterPrefix).filter(Boolean)));
+        setFunctionalSuffixes(dedupe(importPreview.functionalSuffixes.map(normalizeFunctionalSuffix).filter(Boolean)));
+        setExplicitMappings(importPreview.explicitMappings);
         setImportPreview(null);
         if (importFileRef.current) importFileRef.current.value = '';
         toast.success(t('normalize.import.applied'));
@@ -696,6 +858,86 @@ export function SettingNormalize() {
                     </Button>
                 </div>
 
+                <div className="space-y-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+                    <div className="text-xs font-medium text-foreground">{t('normalize.workflow.aiTitle')}</div>
+                    <p className="text-xs leading-5 text-muted-foreground">{t('normalize.workflow.aiHint')}</p>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="w-full rounded-xl"
+                        onClick={handleStartAI}
+                        disabled={startAITask.isPending || Boolean(aiTaskId && aiTask && !aiTask.done)}
+                    >
+                        {startAITask.isPending || (aiTaskId && aiTask && !aiTask.done)
+                            ? <Loader2 className="size-3.5 animate-spin" />
+                            : <Wand2 className="size-3.5" />}
+                        {startAITask.isPending || (aiTaskId && aiTask && !aiTask.done)
+                            ? t('normalize.workflow.aiGenerating')
+                            : t('normalize.workflow.aiGenerate')}
+                    </Button>
+                    {aiTask && (
+                        <div className="space-y-2 rounded-md border border-border/30 bg-card p-2.5 text-xs">
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="text-muted-foreground">{aiTask.message || aiTask.status}</span>
+                                <span className="font-mono tabular-nums">{aiTask.progress_percent}%</span>
+                            </div>
+                            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                                <div
+                                    className="h-full rounded-full bg-emerald-500 transition-[width]"
+                                    style={{ width: `${Math.max(0, Math.min(100, aiTask.progress_percent))}%` }}
+                                />
+                            </div>
+                            {aiTask.result?.coverage && (
+                                <div className="grid grid-cols-3 gap-1.5 text-center">
+                                    <div className="rounded bg-muted/40 p-1.5">
+                                        <div className="font-mono font-semibold">{aiTask.result.coverage.input_count}</div>
+                                        <div className="text-[10px] text-muted-foreground">{t('normalize.workflow.aiInput')}</div>
+                                    </div>
+                                    <div className="rounded bg-muted/40 p-1.5">
+                                        <div className="font-mono font-semibold">{aiTask.result.coverage.canonical_count}</div>
+                                        <div className="text-[10px] text-muted-foreground">{t('normalize.workflow.aiCanonical')}</div>
+                                    </div>
+                                    <div className="rounded bg-muted/40 p-1.5">
+                                        <div className="font-mono font-semibold">{aiTask.result.coverage.merged_variant_count}</div>
+                                        <div className="text-[10px] text-muted-foreground">{t('normalize.workflow.aiMerged')}</div>
+                                    </div>
+                                </div>
+                            )}
+                            {aiTask.result?.coverage && (
+                                <div className="flex flex-wrap gap-1.5 text-[10px]">
+                                    <span className="rounded bg-amber-500/10 px-1.5 py-1 text-amber-700 dark:text-amber-300">
+                                        {t('normalize.workflow.aiRisk', {
+                                            count: aiTask.result.coverage.high_risk_merges?.length ?? 0,
+                                        })}
+                                    </span>
+                                    <span className="rounded bg-red-500/10 px-1.5 py-1 text-red-700 dark:text-red-300">
+                                        {t('normalize.workflow.aiInvalid', {
+                                            count: aiTask.result.validation_errors?.length
+                                                ?? aiTask.result.coverage.diagnostics?.filter((item) => item.severity === 'error').length
+                                                ?? 0,
+                                        })}
+                                    </span>
+                                </div>
+                            )}
+                            {aiTask.error_reason && (
+                                <p className="text-destructive">{aiTask.error_reason}</p>
+                            )}
+                            {aiTask.result?.validation_errors?.length ? (
+                                <p className="text-[10px] text-amber-700 dark:text-amber-300">
+                                    {t('normalize.workflow.aiConflict')}
+                                </p>
+                            ) : null}
+                            {aiTask.result_ready && (
+                                <Button type="button" size="sm" className="w-full rounded-xl" onClick={applyAITask}>
+                                    <Check className="size-3.5" />
+                                    {t('normalize.workflow.aiApply')}
+                                </Button>
+                            )}
+                        </div>
+                    )}
+                </div>
+
                 <div className="h-px bg-border/30" />
 
                 {/* 导出：含变体的渠道模型名，供离线 AI 分析 */}
@@ -752,6 +994,33 @@ export function SettingNormalize() {
                             <div className="rounded-md bg-card p-2">
                                 <div className="font-mono font-semibold text-foreground">{importPreview.mappingCount}</div>
                                 <div className="text-muted-foreground">{t('normalize.explicitMappings.title')}</div>
+                            </div>
+                        </div>
+                        <div className="text-xs font-semibold text-foreground">{t('normalize.import.coverage')}</div>
+                        <div className="grid grid-cols-2 gap-2 text-center text-xs sm:grid-cols-3">
+                            <div className="rounded-md bg-card p-2">
+                                <div className="font-mono font-semibold text-foreground">{importPreview.coverage.inputCount}</div>
+                                <div className="text-muted-foreground">{t('normalize.import.input')}</div>
+                            </div>
+                            <div className="rounded-md bg-card p-2">
+                                <div className="font-mono font-semibold text-foreground">{importPreview.coverage.canonicalCount}</div>
+                                <div className="text-muted-foreground">{t('normalize.import.canonical')}</div>
+                            </div>
+                            <div className="rounded-md bg-card p-2">
+                                <div className="font-mono font-semibold text-foreground">{importPreview.coverage.mergedVariantCount}</div>
+                                <div className="text-muted-foreground">{t('normalize.import.merged')}</div>
+                            </div>
+                            <div className="rounded-md bg-card p-2">
+                                <div className="font-mono font-semibold text-foreground">{importPreview.coverage.highRiskCount}</div>
+                                <div className="text-muted-foreground">{t('normalize.import.risk')}</div>
+                            </div>
+                            <div className="rounded-md bg-card p-2">
+                                <div className="font-mono font-semibold text-foreground">{importPreview.coverage.validationIssueCount}</div>
+                                <div className="text-muted-foreground">{t('normalize.import.invalid')}</div>
+                            </div>
+                            <div className="rounded-md bg-card p-2">
+                                <div className="font-mono font-semibold text-foreground">{importPreview.coverage.unresolvedCount}</div>
+                                <div className="text-muted-foreground">{t('normalize.import.unresolved')}</div>
                             </div>
                         </div>
                         <div className="flex gap-2">

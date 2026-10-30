@@ -45,6 +45,13 @@ export interface PlanProvider {
     five_hour_total: number;
     five_hour_used: number;
     five_hour_reset_at: string | null;
+    dedicated_pool_name: string;
+    dedicated_weekly_total: number;
+    dedicated_weekly_used: number;
+    dedicated_weekly_reset_at: string | null;
+    dedicated_five_hour_total: number;
+    dedicated_five_hour_used: number;
+    dedicated_five_hour_reset_at: string | null;
     refresh_interval_min: number;
     balance_delta: number;
     quota_used_delta: number;

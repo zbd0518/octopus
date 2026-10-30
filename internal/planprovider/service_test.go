@@ -396,6 +396,17 @@ func TestListProvidersDeltas(t *testing.T) {
 		QuotaUsed:     50,
 		LastQuotaUsed: 1000,
 	})
+	// SenseNova 的主窗口是两个积分池的 7 天窗口之和，不能使用 QuotaUsed（旧的月度字段）计算增量。
+	createProviderRow(t, &model.PlanProvider{
+		Name:                "SenseNova used",
+		Category:            model.PlanProviderSenseNovaPlan,
+		ProviderType:        model.PlanProviderTypeTokenPlan,
+		APIKey:              "sense-token",
+		BaseURL:             "https://platform.sensenova.cn",
+		WeeklyUsed:          900,
+		DedicatedWeeklyUsed: 100,
+		LastQuotaUsed:       400,
+	})
 
 	items, err := ListProviders(context.Background(), model.PlanProviderTypeBalance)
 	if err != nil {
@@ -421,8 +432,8 @@ func TestListProvidersDeltas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListProviders(tokenplan) error = %v", err)
 	}
-	if len(tokenItems) != 2 {
-		t.Fatalf("tokenplan providers = %d, want 2", len(tokenItems))
+	if len(tokenItems) != 3 {
+		t.Fatalf("tokenplan providers = %d, want 3", len(tokenItems))
 	}
 	for _, item := range tokenItems {
 		switch item.Name {
@@ -433,6 +444,10 @@ func TestListProvidersDeltas(t *testing.T) {
 		case "Volcengine reset":
 			if item.QuotaUsedDelta != 0 {
 				t.Errorf("reset QuotaUsedDelta = %v, want 0 (周期重置负值按 0)", item.QuotaUsedDelta)
+			}
+		case "SenseNova used":
+			if item.QuotaUsedDelta != 600 {
+				t.Errorf("SenseNova QuotaUsedDelta = %v, want 600 from both pools", item.QuotaUsedDelta)
 			}
 		}
 	}

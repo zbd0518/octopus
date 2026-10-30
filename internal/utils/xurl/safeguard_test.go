@@ -2,8 +2,11 @@ package xurl
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -175,11 +178,127 @@ func TestSafeDialContext_UsesPinnedIP(t *testing.T) {
 	}
 	conn.Close()
 }
+func TestCheckRedirectSafeWithPinDialsCurrentHop(t *testing.T) {
+	SetSSRFAllowPrivateForTest(true)
+	t.Cleanup(func() { SetSSRFAllowPrivateForTest(false) })
+
+	var destinationHits int
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		destinationHits++
+		_, _ = io.WriteString(w, r.URL.Path)
+	}))
+	defer destination.Close()
+	var destinationURL string
+	hops := 0
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hops++
+		switch r.URL.Path {
+		case "/start":
+			http.Redirect(w, r, destinationURL+"/next", http.StatusFound)
+		case "/multi":
+			http.Redirect(w, r, "/middle", http.StatusFound)
+		case "/middle":
+			http.Redirect(w, r, destinationURL+"/final", http.StatusFound)
+		default:
+			_, _ = io.WriteString(w, r.URL.Path)
+		}
+	}))
+	defer origin.Close()
+	destinationURL = destination.URL
+
+	client := &http.Client{
+		Transport:     &http.Transport{DialContext: SafeDialContext},
+		CheckRedirect: CheckRedirectSafeWithPin(5),
+	}
+	for _, tc := range []struct{ path, want string }{{"/start", "/next"}, {"/multi", "/final"}} {
+		req, err := http.NewRequest(http.MethodGet, origin.URL+tc.path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requestCtx, err := AssertSafeRequestWithPin(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := client.Do(req.WithContext(requestCtx))
+		if err != nil {
+			t.Fatalf("%s redirect: %v", tc.path, err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil || string(body) != tc.want {
+			t.Fatalf("%s body = %q, err = %v, want %q", tc.path, body, readErr, tc.want)
+		}
+	}
+	if destinationHits != 2 || hops != 3 {
+		t.Fatalf("destination hits = %d, origin hits = %d, want requests to reach each current hop", destinationHits, hops)
+	}
+}
+
+func TestCheckRedirectSafeWithPinRejectsUnsafeAndExcessHops(t *testing.T) {
+	SetSSRFAllowPrivateForTest(true)
+	t.Cleanup(func() { SetSSRFAllowPrivateForTest(false) })
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/private" {
+			http.Redirect(w, r, "http://unsafe.local/private", http.StatusFound)
+			return
+		}
+		http.Redirect(w, r, "/redirect", http.StatusFound)
+	}))
+	defer origin.Close()
+	client := &http.Client{
+		Transport:     &http.Transport{DialContext: SafeDialContext},
+		CheckRedirect: CheckRedirectSafeWithPin(1),
+	}
+	for _, tc := range []struct {
+		path         string
+		maxRedirects int
+		contains     string
+	}{{"/private", 5, "not allowed"}, {"/redirect", 1, "stopped after 1 redirects"}} {
+		client.CheckRedirect = CheckRedirectSafeWithPin(tc.maxRedirects)
+		req, err := http.NewRequest(http.MethodGet, origin.URL+tc.path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requestCtx, err := AssertSafeRequestWithPin(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := client.Do(req.WithContext(requestCtx))
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		if err == nil || !strings.Contains(err.Error(), tc.contains) {
+			t.Fatalf("%s error = %v, want %q", tc.path, err, tc.contains)
+		}
+	}
+
+	req, err := http.NewRequest(http.MethodGet, origin.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.URL.Scheme = "file"
+	if err := CheckRedirectSafeWithPin(5)(req, nil); err == nil {
+		t.Fatal("non-HTTP redirect should be rejected")
+	}
+}
+
 func TestSafeDialContext_FallbackNoPin(t *testing.T) {
-	// 未携带钉入 IP 时回退默认拨号；用不存在的 host 应 DNS 失败（非 panic）。
+	// 未携带钉入 IP 时按原 addr 默认拨号；已关闭的本地端口提供确定的失败结果。
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
-	_, err := SafeDialContext(ctx, "tcp", "nonexistent-host-xyz.invalid:80")
+	conn, err := SafeDialContext(ctx, "tcp", addr)
+	if conn != nil {
+		_ = conn.Close()
+	}
 	if err == nil {
-		t.Fatal("expected DNS failure for unpinned nonexistent host")
+		t.Fatal("expected unpinned dial to the closed original address to fail")
 	}
 }

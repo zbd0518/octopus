@@ -9,17 +9,34 @@ func TestGenerateAIRouteRequestValidate(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "group scope is valid",
+			name: "group scope requires an explicit target",
 			req: GenerateAIRouteRequest{
 				Scope:   AIRouteScopeGroup,
 				GroupID: 0,
 			},
+			wantErr: true,
 		},
 		{
-			name: "table scope is valid",
+			name: "group scope is valid",
 			req: GenerateAIRouteRequest{
-				Scope: AIRouteScopeTable,
+				Scope:   AIRouteScopeGroup,
+				GroupID: 1,
 			},
+		},
+		{
+			name: "table scope accepts category strategies",
+			req: GenerateAIRouteRequest{
+				Scope:            AIRouteScopeTable,
+				CategoryStrategy: AIRouteCategoryChannelTier,
+			},
+		},
+		{
+			name: "unknown category strategy is invalid",
+			req: GenerateAIRouteRequest{
+				Scope:            AIRouteScopeTable,
+				CategoryStrategy: AIRouteCategoryStrategy("typo"),
+			},
+			wantErr: true,
 		},
 		{
 			name:    "empty scope is invalid",

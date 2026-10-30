@@ -122,6 +122,27 @@ type failureHintEntry struct {
 	statusCode int
 }
 
+func (entry failureHintEntry) MarshalJSON() ([]byte, error) {
+	return jsonAPI.Marshal(struct {
+		Reason     string    `json:"reason"`
+		ExpiresAt  time.Time `json:"expires_at"`
+		StatusCode int       `json:"status_code"`
+	}{entry.reason, entry.expiresAt, entry.statusCode})
+}
+
+func (entry *failureHintEntry) UnmarshalJSON(data []byte) error {
+	var value struct {
+		Reason     string    `json:"reason"`
+		ExpiresAt  time.Time `json:"expires_at"`
+		StatusCode int       `json:"status_code"`
+	}
+	if err := jsonAPI.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	entry.reason, entry.expiresAt, entry.statusCode = value.Reason, value.ExpiresAt, value.StatusCode
+	return nil
+}
+
 type failureHintCache struct {
 	mu      sync.Mutex
 	entries map[string]failureHintEntry
@@ -310,6 +331,14 @@ func cloneSemanticEmbedding(src []float64) []float64 {
 }
 
 func requestSingleflightKey(apiKeyID int, endpointFamily, requestModel, text string, req *transmodel.InternalLLMRequest) (string, bool) {
+	return requestSingleflightKeyWithHeadersAndNamespace(apiKeyID, endpointFamily, requestModel, text, req, nil, "")
+}
+
+func requestSingleflightKeyWithHeaders(apiKeyID int, endpointFamily, requestModel, text string, req *transmodel.InternalLLMRequest, headers http.Header) (string, bool) {
+	return requestSingleflightKeyWithHeadersAndNamespace(apiKeyID, endpointFamily, requestModel, text, req, headers, "")
+}
+
+func requestSingleflightKeyWithHeadersAndNamespace(apiKeyID int, endpointFamily, requestModel, text string, req *transmodel.InternalLLMRequest, headers http.Header, namespace string) (string, bool) {
 	if req == nil || apiKeyID <= 0 {
 		return "", false
 	}
@@ -322,7 +351,18 @@ func requestSingleflightKey(apiKeyID int, endpointFamily, requestModel, text str
 	if len(req.Tools) > 0 {
 		return "", false
 	}
-	return buildSemanticCacheKey(apiKeyID, endpointFamily, requestModel, text), true
+	fingerprint, safe := cacheRequestFingerprint(req, true)
+	if !safe {
+		return "", false
+	}
+	key := buildSemanticCacheKey(apiKeyID, endpointFamily, requestModel, text) + ":" + fingerprint
+	if len(headers) > 0 {
+		key += ":h" + cacheHeaderFingerprint(headers)
+	}
+	if strings.TrimSpace(namespace) != "" {
+		key += ":n" + namespace
+	}
+	return key, true
 }
 
 func lookupSemanticEmbeddingWithCache(ctx context.Context, req *relayRequest, cfg semantic_cache.RuntimeConfig, cacheKey string, text string) ([]float64, bool, error) {

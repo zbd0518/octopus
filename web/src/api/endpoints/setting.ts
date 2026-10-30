@@ -85,7 +85,6 @@ export const SettingKey = {
     AnalyticsTabVisible: 'analytics_tab_visible',
     OpsTabOrder: 'ops_tab_order',
     OpsTabVisible: 'ops_tab_visible',
-    AIRouteGroupID: 'ai_route_group_id',
     AIRouteBaseURL: 'ai_route_base_url',
     AIRouteAPIKey: 'ai_route_api_key',
     AIRouteModel: 'ai_route_model',
@@ -152,12 +151,21 @@ export function useSettingList() {
     });
 }
 
+export function useFetchAIRouteModels() {
+    return useMutation({
+        mutationFn: async (data: { base_url: string; api_key: string }) => {
+            return apiClient.post<string[]>('/api/v1/setting/ai-route/models', data);
+        },
+        meta: { skipGlobalErrorHandler: true },
+    });
+}
+
 /**
  * 设置 Setting Hook
- * 
+ *
  * @example
  * const setSetting = useSetSetting();
- * 
+ *
  * setSetting.mutate({
  *   key: 'theme',
  *   value: 'dark',

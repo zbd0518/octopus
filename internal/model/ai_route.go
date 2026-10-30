@@ -12,9 +12,27 @@ const (
 	AIRouteScopeTable AIRouteScope = "table"
 )
 
+type AIRouteCategoryStrategy string
+
+const (
+	AIRouteCategoryNone        AIRouteCategoryStrategy = ""
+	AIRouteCategoryVendor      AIRouteCategoryStrategy = "vendor"
+	AIRouteCategoryChannelTier AIRouteCategoryStrategy = "channel_tier"
+)
+
+func (s AIRouteCategoryStrategy) Valid() bool {
+	switch s {
+	case AIRouteCategoryNone, AIRouteCategoryVendor, AIRouteCategoryChannelTier:
+		return true
+	default:
+		return false
+	}
+}
+
 type GenerateAIRouteRequest struct {
-	Scope   AIRouteScope `json:"scope,omitempty"`
-	GroupID int          `json:"group_id,omitempty"`
+	Scope            AIRouteScope            `json:"scope,omitempty"`
+	GroupID          int                     `json:"group_id,omitempty"`
+	CategoryStrategy AIRouteCategoryStrategy `json:"category_strategy,omitempty"`
 }
 
 type GenerateAIRouteResult struct {
@@ -83,7 +101,7 @@ type GenerateAIRouteCurrentBatch struct {
 	Index        int            `json:"index"`
 	Total        int            `json:"total"`
 	EndpointType string         `json:"endpoint_type,omitempty"`
-	ModelCount   int            `json:"model_count"`
+	ModelCount   int            `json:"model_count,omitempty"`
 	ChannelIDs   []int          `json:"channel_ids,omitempty"`
 	ChannelNames []string       `json:"channel_names,omitempty"`
 	ServiceName  string         `json:"service_name,omitempty"`
@@ -98,7 +116,7 @@ type GenerateAIRouteRunningBatch struct {
 	Index        int                `json:"index"`
 	Total        int                `json:"total"`
 	EndpointType string             `json:"endpoint_type,omitempty"`
-	ModelCount   int                `json:"model_count"`
+	ModelCount   int                `json:"model_count,omitempty"`
 	ChannelIDs   []int              `json:"channel_ids,omitempty"`
 	ChannelNames []string           `json:"channel_names,omitempty"`
 	ServiceName  string             `json:"service_name,omitempty"`
@@ -125,6 +143,7 @@ type GenerateAIRouteProgress struct {
 	ID               string                           `json:"id"`
 	Scope            AIRouteScope                     `json:"scope,omitempty"`
 	GroupID          int                              `json:"group_id,omitempty"`
+	CategoryStrategy AIRouteCategoryStrategy          `json:"category_strategy,omitempty"`
 	Status           AIRouteTaskStatus                `json:"status,omitempty"`
 	CurrentStep      AIRouteTaskStep                  `json:"current_step,omitempty"`
 	ProgressPercent  int                              `json:"progress_percent"`
@@ -166,6 +185,7 @@ type AIRouteEntry struct {
 	RequestedModel string            `json:"requested_model"`
 	MatchRegex     string            `json:"match_regex,omitempty"`
 	Items          []AIRouteItemSpec `json:"items"`
+	Category       string            `json:"category,omitempty"`
 }
 
 type AIRouteItemSpec struct {
@@ -188,8 +208,14 @@ func (req GenerateAIRouteRequest) Validate() error {
 	if !req.Scope.Valid() {
 		return fmt.Errorf("invalid scope")
 	}
+	if req.Scope == AIRouteScopeGroup && req.GroupID <= 0 {
+		return fmt.Errorf("group_id is required for group scope")
+	}
 	if req.GroupID < 0 {
 		return fmt.Errorf("invalid group_id")
+	}
+	if !req.CategoryStrategy.Valid() {
+		return fmt.Errorf("invalid category_strategy")
 	}
 	return nil
 }

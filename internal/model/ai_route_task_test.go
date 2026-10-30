@@ -15,6 +15,7 @@ func TestAIRouteTaskRoundTripPreservesProgressSnapshot(t *testing.T) {
 		ID:               "task-1",
 		Scope:            AIRouteScopeTable,
 		GroupID:          42,
+		CategoryStrategy: AIRouteCategoryVendor,
 		Status:           AIRouteTaskStatusCompleted,
 		CurrentStep:      AIRouteTaskStepCompleted,
 		ProgressPercent:  100,
@@ -27,16 +28,16 @@ func TestAIRouteTaskRoundTripPreservesProgressSnapshot(t *testing.T) {
 		MessageArgs: map[string]any{
 			"routes": 3,
 		},
-		ErrorReason:      "",
-		ErrorReasonKey:   "group.aiRoute.progress.runtime.batchFailed",
+		ErrorReason:    "",
+		ErrorReasonKey: "group.aiRoute.progress.runtime.batchFailed",
 		ErrorReasonArgs: map[string]any{
 			"reason": "timeout",
 		},
-		StartedAt:        &startedAt,
-		UpdatedAt:        &updatedAt,
-		HeartbeatAt:      &heartbeatAt,
-		FinishedAt:       &finishedAt,
-		EventSequence:    9,
+		StartedAt:     &startedAt,
+		UpdatedAt:     &updatedAt,
+		HeartbeatAt:   &heartbeatAt,
+		FinishedAt:    &finishedAt,
+		EventSequence: 9,
 		Summary: &GenerateAIRouteProgressSummary{
 			TotalChannels:     2,
 			CompletedChannels: 2,
@@ -107,7 +108,7 @@ func TestAIRouteTaskRoundTripPreservesProgressSnapshot(t *testing.T) {
 	task := NewAIRouteTask(original)
 	got := task.ToProgress()
 
-	if got.ID != original.ID || got.Scope != original.Scope || got.GroupID != original.GroupID {
+	if got.ID != original.ID || got.Scope != original.Scope || got.GroupID != original.GroupID || got.CategoryStrategy != original.CategoryStrategy {
 		t.Fatalf("task progress basic fields changed: got %+v want %+v", got, original)
 	}
 	if !got.Done || !got.ResultReady || got.EventSequence != original.EventSequence {

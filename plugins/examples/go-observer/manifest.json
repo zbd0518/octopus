@@ -1,0 +1,12 @@
+{
+  "host_api": 1,
+  "id": "go-observer",
+  "name": "Go Observer",
+  "version": "1.0.0",
+  "description": "Request passthrough, completion observation and RPC example.",
+  "events": ["relay.request.before_route", "relay.completed", "http.rpc"],
+  "permissions": ["relay:write", "relay:read", "kv", "rpc:read"],
+  "timeout_ms": 200,
+  "memory_mib": 16,
+  "instances": 2
+}

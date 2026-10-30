@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -143,7 +144,15 @@ func createChannel(c *gin.Context) {
 		return
 	}
 	channel := req.toChannel()
+	if channel.NodeID != 0 && c.GetString("user_role") != model.UserRoleAdmin {
+		resp.Error(c, http.StatusForbidden, "permission denied")
+		return
+	}
 	if err := ch.Create(&channel, c.Request.Context()); err != nil {
+		if errors.Is(err, ch.ErrInvalidNodeChannel) {
+			resp.ErrorWithKey(c, http.StatusBadRequest, err.Error(), "node.errors.operationFailed", nil)
+			return
+		}
 		if status, msg, ok := classifyChannelMutationError(err); ok {
 			resp.Error(c, status, msg)
 			return
@@ -176,8 +185,22 @@ func updateChannel(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
 		return
 	}
+	if req.NodeID != nil && c.GetString("user_role") != model.UserRoleAdmin {
+		current, err := ch.Get(req.ID, c.Request.Context())
+		if err != nil || current.NodeID != *req.NodeID {
+			resp.Error(c, http.StatusForbidden, "permission denied")
+			return
+		}
+		// An editor may echo the current binding, but must never write it back:
+		// an admin can change it between this read and the locked update.
+		req.NodeID = nil
+	}
 	channel, err := ch.Update(&req, c.Request.Context())
 	if err != nil {
+		if errors.Is(err, ch.ErrInvalidNodeChannel) {
+			resp.ErrorWithKey(c, http.StatusBadRequest, err.Error(), "node.errors.operationFailed", nil)
+			return
+		}
 		if status, msg, ok := classifyChannelMutationError(err); ok {
 			resp.Error(c, status, msg)
 			return
@@ -234,6 +257,10 @@ func batchGroupChannel(c *gin.Context) {
 	}
 	result, err := ch.BatchUpdateGroup(req.IDs, req.GroupID, c.Request.Context())
 	if err != nil {
+		if errors.Is(err, ch.ErrInvalidNodeChannel) {
+			resp.ErrorWithKey(c, http.StatusBadRequest, err.Error(), "node.errors.operationFailed", nil)
+			return
+		}
 		if status, msg, ok := classifyChannelMutationError(err); ok {
 			resp.Error(c, status, msg)
 			return
@@ -264,6 +291,9 @@ func fetchModel(c *gin.Context) {
 		return
 	}
 	request := payload.toChannel()
+	if !prepareNodeChannelDiagnostic(c, &request) {
+		return
+	}
 	models, err := helper.FetchModels(c.Request.Context(), request)
 	if err != nil {
 		resp.InternalError(c)
@@ -284,6 +314,9 @@ func fetchModelsPerKey(c *gin.Context) {
 	// （见 helper.KeyModelResult.KeyID）。本端点只读、不落库，所以透传客户端
 	// 提供的 key.ID 不会像创建/更新路径那样有“拿主键影响落库”的风险。
 	request := payload.toChannelWithKeyIDs()
+	if !prepareNodeChannelDiagnostic(c, &request) {
+		return
+	}
 	result, err := helper.FetchModelsPerKey(c.Request.Context(), request)
 	if err != nil {
 		resp.InternalError(c)
@@ -299,6 +332,9 @@ func testChannel(c *gin.Context) {
 		return
 	}
 	request := payload.toChannel()
+	if !prepareNodeChannelDiagnostic(c, &request) {
+		return
+	}
 	summary, err := helper.TestChannel(c.Request.Context(), request)
 	if err != nil {
 		resp.Error(c, http.StatusBadRequest, err.Error())
@@ -365,11 +401,25 @@ func testChannelModel(c *gin.Context) {
 	resp.Success(c, progress)
 }
 
+func prepareNodeChannelDiagnostic(c *gin.Context, channel *model.Channel) bool {
+	if channel.NodeID != 0 && c.GetString("user_role") != model.UserRoleAdmin {
+		resp.Error(c, http.StatusForbidden, "permission denied")
+		return false
+	}
+	if err := helper.PrepareNodeChannelProbe(channel); err != nil {
+		resp.ErrorWithKey(c, http.StatusBadRequest, err.Error(), "node.errors.operationFailed", nil)
+		return false
+	}
+	return true
+}
+
 type channelRequestPayload struct {
 	ID                   int                         `json:"id"`
 	Name                 string                      `json:"name"`
 	GroupID              int                         `json:"group_id"`
 	Type                 outbound.OutboundType       `json:"type"`
+	NodeID               int                         `json:"node_id"`
+	PoolID               int                         `json:"pool_id"`
 	Enabled              bool                        `json:"enabled"`
 	BaseUrls             []model.BaseUrl             `json:"base_urls"`
 	Keys                 []channelKeyRequestPayload  `json:"keys"`
@@ -435,10 +485,19 @@ func (p channelRequestPayload) toChannel() model.Channel {
 		}
 	}
 
+	// PoolID remains read-only for ordinary channel creation, but node requests
+	// must retain it so create and every diagnostic reject node+pool conflicts.
+	poolID := 0
+	if p.NodeID != 0 {
+		poolID = p.PoolID
+	}
+
 	return model.Channel{
+		PoolID:               poolID,
 		Name:                 p.Name,
 		GroupID:              p.GroupID,
 		Type:                 p.Type,
+		NodeID:               p.NodeID,
 		Enabled:              p.Enabled,
 		BaseUrls:             p.BaseUrls,
 		Keys:                 keys,
@@ -503,6 +562,10 @@ func createChannelGroup(c *gin.Context) {
 
 	group, err := op.ChannelGroupCreate(req.Name, c.Request.Context())
 	if err != nil {
+		if errors.Is(err, ch.ErrInvalidNodeChannel) {
+			resp.ErrorWithKey(c, http.StatusBadRequest, err.Error(), "node.errors.operationFailed", nil)
+			return
+		}
 		if status, msg, ok := classifyChannelMutationError(err); ok {
 			resp.Error(c, status, msg)
 			return
@@ -525,6 +588,10 @@ func updateChannelGroup(c *gin.Context) {
 
 	group, err := op.ChannelGroupUpdate(req.ID, req.Name, c.Request.Context())
 	if err != nil {
+		if errors.Is(err, ch.ErrInvalidNodeChannel) {
+			resp.ErrorWithKey(c, http.StatusBadRequest, err.Error(), "node.errors.operationFailed", nil)
+			return
+		}
 		if status, msg, ok := classifyChannelMutationError(err); ok {
 			resp.Error(c, status, msg)
 			return
@@ -543,6 +610,10 @@ func deleteChannelGroup(c *gin.Context) {
 	}
 
 	if err := op.ChannelGroupDelete(id, c.Request.Context()); err != nil {
+		if errors.Is(err, ch.ErrInvalidNodeChannel) {
+			resp.ErrorWithKey(c, http.StatusBadRequest, err.Error(), "node.errors.operationFailed", nil)
+			return
+		}
 		if status, msg, ok := classifyChannelMutationError(err); ok {
 			resp.Error(c, status, msg)
 			return
@@ -580,6 +651,7 @@ func classifyChannelMutationError(err error) (int, string, bool) {
 		strings.Contains(msg, "unsupported request rewrite profile"),
 		strings.Contains(msg, "unsupported tool role strategy"),
 		strings.Contains(msg, "unsupported system message strategy"),
+		strings.Contains(msg, "prompt rewrite pattern"),
 		strings.Contains(msg, "request rewrite profile") && strings.Contains(msg, "is not supported for channel type"):
 		return http.StatusBadRequest, err.Error(), true
 	case strings.Contains(msg, "request_rewrite") &&

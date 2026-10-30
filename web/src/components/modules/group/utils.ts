@@ -13,6 +13,11 @@ export {
     type GroupEndpointFilter,
 } from './capabilities.ts';
 
+export function reasoningBufferPatch(previous?: string, next?: string): { reasoning_buffer_strategy?: string } {
+    const value = (next ?? '').trim();
+    return value === (previous ?? '').trim() ? {} : { reasoning_buffer_strategy: value };
+}
+
 export const MODE_LABELS: Record<number, string> = {
     1: 'roundRobin',
     2: 'random',

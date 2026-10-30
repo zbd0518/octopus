@@ -78,19 +78,19 @@ test('isGenerateAIRouteTerminal: undefined returns false', () => {
 });
 
 test('isGenerateAIRouteTerminal: completed returns true', () => {
-    assert.equal(isGenerateAIRouteTerminal({ status: 'completed', channels: [] }), true);
+    assert.equal(isGenerateAIRouteTerminal({ id: 'task-completed', status: 'completed', channels: [] }), true);
 });
 
 test('isGenerateAIRouteTerminal: failed returns true', () => {
-    assert.equal(isGenerateAIRouteTerminal({ status: 'failed', channels: [] }), true);
+    assert.equal(isGenerateAIRouteTerminal({ id: 'task-failed', status: 'failed', channels: [] }), true);
 });
 
 test('isGenerateAIRouteTerminal: timeout returns true', () => {
-    assert.equal(isGenerateAIRouteTerminal({ status: 'timeout', channels: [] }), true);
+    assert.equal(isGenerateAIRouteTerminal({ id: 'task-timeout', status: 'timeout', channels: [] }), true);
 });
 
 test('isGenerateAIRouteTerminal: running returns false', () => {
-    assert.equal(isGenerateAIRouteTerminal({ status: 'running', channels: [] }), false);
+    assert.equal(isGenerateAIRouteTerminal({ id: 'task-running', status: 'running', channels: [] }), false);
 });
 
 test('normalizeGenerateAIRouteProgress: fills default channel status', () => {
@@ -392,7 +392,7 @@ test('progress stream: error surfaced on non-404 failure', async () => {
     const timers = installFakeTimers();
     const fetchMock = installFetchMock();
 
-    let receivedError: Error | null = null;
+    let receivedError: Error | undefined;
     fetchMock.setDefaultHandler((call) => {
         if (call.url.includes('/stream/')) {
             return new Response('{"code":500,"message":"internal"}', { status: 500 });
@@ -414,7 +414,8 @@ test('progress stream: error surfaced on non-404 failure', async () => {
 
     await timers.advanceTimersByTime(100);
     assert.ok(receivedError, 'expected error callback');
-    assert.ok(receivedError!.message.includes('500'), `expected 500 code, got '${receivedError!.message}'`);
+    assert.ok(receivedError instanceof Error);
+    assert.ok(receivedError.message.includes('500'), `expected 500 code, got '${receivedError.message}'`);
 
     abort();
     timers.uninstall();

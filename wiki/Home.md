@@ -60,7 +60,7 @@
 | 07 | [Relay Endpoints](en/07-Relay-Endpoints.md) | Public relay API, Zen routing, model mapping, proxy pool, account pools |
 | 08 | [Analytics](en/08-Analytics.md) | Channel×Model, usage breakdown, route health, latency, evaluation, cache |
 | 09 | [Ops](en/09-Ops.md) | Telemetry, quota, health, maintenance, system, audit |
-| 10 | [Settings](en/10-Settings.md) | Settings cards, semantic cache, DB migration, dangerous ops |
+| 10 | [Settings](en/10-Settings.md) | Settings cards, local nodes, semantic cache, DB migration, dangerous ops |
 | 11 | [Hub & Sites](en/11-Hub-Sites.md) | Site management, WebDAV backup, API credentials, CLI export, notifications |
 | 12 | [Client Integration](en/12-Client-Integration.md) | OpenAI SDK, Claude Code, Codex, CLI export |
 | 13 | [Architecture](en/13-Architecture.md) | Layered architecture, relay data flow, hub adapters, timezone, security |

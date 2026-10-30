@@ -11,6 +11,8 @@ import { parsePriceDraft, priceDraftFromModel, type PriceDraft, type PriceField 
 
 export function useModelActions(model: ModelMarketItem) {
     const t = useTranslations('model');
+    const sourceName = model.primary_name || model.name;
+    const canMutate = (model.variant_count ?? model.variant_names?.length ?? 0) <= 1;
     const [isEditOpen, setIsEditOpen] = useState(false);
     const [isDeleteOpen, setIsDeleteOpen] = useState(false);
     const [editValues, setEditValuesRaw] = useState<PriceDraft>(() => priceDraftFromModel(model));
@@ -26,22 +28,25 @@ export function useModelActions(model: ModelMarketItem) {
     }, []);
 
     const openEdit = useCallback(() => {
+        if (!canMutate) return;
         setEditValuesRaw(priceDraftFromModel(model));
         setInvalidPriceFields([]);
         setIsDeleteOpen(false);
         setIsEditOpen(true);
-    }, [model]);
+    }, [canMutate, model]);
 
     const closeEdit = useCallback(() => setIsEditOpen(false), []);
 
     const openDelete = useCallback(() => {
+        if (!canMutate) return;
         setIsEditOpen(false);
         setIsDeleteOpen(true);
-    }, []);
+    }, [canMutate]);
 
     const closeDelete = useCallback(() => setIsDeleteOpen(false), []);
 
     const saveEdit = useCallback(() => {
+        if (!canMutate) return;
         const { prices, invalidFields } = parsePriceDraft(editValues);
         if (invalidFields.length > 0) {
             // 不静默清零：标出非法字段，由编辑弹窗内联提示。
@@ -49,7 +54,7 @@ export function useModelActions(model: ModelMarketItem) {
             return;
         }
         updateModel.mutate(
-            { name: model.name, ...prices },
+            { name: sourceName, ...prices },
             {
                 onSuccess: () => {
                     setIsEditOpen(false);
@@ -58,16 +63,17 @@ export function useModelActions(model: ModelMarketItem) {
                 // 失败提示统一由全局 MutationCache onError 兜底，避免重复弹 toast。
             },
         );
-    }, [editValues, model.name, t, updateModel]);
+    }, [canMutate, editValues, sourceName, t, updateModel]);
 
     const confirmDelete = useCallback(() => {
-        deleteModel.mutate(model.name, {
+        if (!canMutate) return;
+        deleteModel.mutate(sourceName, {
             onSuccess: () => {
                 setIsDeleteOpen(false);
                 toast.success(t('toast.deleted'));
             },
         });
-    }, [model.name, t, deleteModel]);
+    }, [canMutate, sourceName, t, deleteModel]);
 
     return {
         isEditOpen,
@@ -83,5 +89,6 @@ export function useModelActions(model: ModelMarketItem) {
         confirmDelete,
         isUpdatePending: updateModel.isPending,
         isDeletePending: deleteModel.isPending,
+        canMutate,
     };
 }

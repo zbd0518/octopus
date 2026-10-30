@@ -11,6 +11,7 @@ import (
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/channel"
+	"github.com/lingyuins/octopus/internal/op/modelnormalize"
 	"github.com/lingyuins/octopus/internal/utils/log"
 	"github.com/lingyuins/octopus/internal/utils/xstrings"
 )
@@ -244,6 +245,9 @@ func collectChannelModelRefs(ctx context.Context) ([]model.ChannelModelRef, int,
 }
 
 func CleanModelName(raw string) string {
+	if normalized := modelnormalize.Normalize(raw); normalized != "" {
+		raw = normalized
+	}
 	s := strings.ToLower(strings.TrimSpace(raw))
 	s = strings.ReplaceAll(s, "_", "-")
 	s = autoGroupNoiseCharRe.ReplaceAllString(s, "")
@@ -306,6 +310,17 @@ func InferEndpointTypeFromModelName(raw string, cleaned string) string {
 func NormalizeModelIdentity(raw string) model.ModelIdentity {
 	cleaned := CleanModelName(raw)
 	endpointType := InferEndpointTypeFromModelName(raw, cleaned)
+	normalized := modelnormalize.NormalizeDetailed(raw)
+	if normalized.ExplicitMapping {
+		return model.ModelIdentity{
+			Raw:          raw,
+			Cleaned:      normalized.Canonical,
+			Canonical:    normalized.Canonical,
+			EndpointType: endpointType,
+			Confidence:   "normalization",
+			MatchedRule:  "explicit-mapping",
+		}
+	}
 	for _, key := range identityAliasKeys(raw, cleaned) {
 		if canonical, ok := autoGroupExplicitAliases[key]; ok {
 			return model.ModelIdentity{

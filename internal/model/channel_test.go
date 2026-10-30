@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
@@ -109,6 +110,42 @@ func TestRequestRewriteConfigValidate(t *testing.T) {
 			},
 			channelType: outbound.OutboundTypeMimo,
 		},
+		{
+			name: "valid prompt rewrite rules",
+			cfg: &RequestRewriteConfig{
+				Enabled: true,
+				Profile: RequestRewriteProfilePreserve,
+				PromptRules: []PromptRewriteRule{
+					{Pattern: `(?i)secret`, Replacement: ""},
+					{Pattern: `old-(\w+)`, Replacement: `new-$1`},
+				},
+			},
+			channelType: outbound.OutboundTypeAnthropic,
+		},
+		{
+			name: "empty prompt rewrite pattern",
+			cfg: &RequestRewriteConfig{
+				Enabled: true,
+				Profile: RequestRewriteProfilePreserve,
+				PromptRules: []PromptRewriteRule{
+					{Replacement: "replacement"},
+				},
+			},
+			channelType: outbound.OutboundTypeOpenAIChat,
+			wantErr:     "prompt rewrite pattern 1 is empty",
+		},
+		{
+			name: "invalid prompt rewrite pattern",
+			cfg: &RequestRewriteConfig{
+				Enabled: true,
+				Profile: RequestRewriteProfilePreserve,
+				PromptRules: []PromptRewriteRule{
+					{Pattern: "["},
+				},
+			},
+			channelType: outbound.OutboundTypeOpenAIChat,
+			wantErr:     "invalid prompt rewrite pattern 1:",
+		},
 	}
 
 	for _, tt := range tests {
@@ -123,7 +160,11 @@ func TestRequestRewriteConfigValidate(t *testing.T) {
 			if err == nil {
 				t.Fatalf("Validate() error = nil, want %q", tt.wantErr)
 			}
-			if err.Error() != tt.wantErr {
+			if strings.HasSuffix(tt.wantErr, ":") {
+				if !strings.HasPrefix(err.Error(), tt.wantErr) {
+					t.Fatalf("Validate() error = %q, want prefix %q", err.Error(), tt.wantErr)
+				}
+			} else if err.Error() != tt.wantErr {
 				t.Fatalf("Validate() error = %q, want %q", err.Error(), tt.wantErr)
 			}
 		})

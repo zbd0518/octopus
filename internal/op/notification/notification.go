@@ -12,6 +12,7 @@ import (
 	"github.com/lingyuins/octopus/internal/helper"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/alert"
+	pluginevent "github.com/lingyuins/octopus/internal/plugin/event"
 	"gorm.io/gorm"
 )
 
@@ -50,6 +51,7 @@ func CreateWithOptions(ctx context.Context, n *model.Notification, opts CreateOp
 		return err
 	}
 	Publish(*n)
+	pluginevent.Publish("notification.created", map[string]any{"id": n.ID, "source": n.Source, "severity": n.Severity, "title": n.Title, "content": n.Content, "created_at": n.CreatedAt})
 	if opts.DeliverExternal {
 		_ = DispatchExternal(ctx, n, opts.ChannelIDs)
 	}

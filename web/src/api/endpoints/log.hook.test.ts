@@ -175,7 +175,7 @@ test('useLogs stream: connects and receives SSE log', async () => {
     const timers = installFakeTimers();
     const fetchMock = installFetchMock();
 
-    const receivedLogs: unknown[] = [];
+    const receivedLogs: import('./log.ts').RelayLog[] = [];
     let connected = false;
 
     // 构造一个 ReadableStream，推送一条 SSE 事件后挂起
@@ -210,7 +210,7 @@ test('useLogs stream: connects and receives SSE log', async () => {
     await timers.advanceTimersByTime(100);
 
     assert.equal(connected, true);
-    const ids = receivedLogs.map((l: { id: number }) => l.id);
+    const ids = receivedLogs.map((log) => log.id);
     assert.ok(ids.includes(42), `expected log id 42, got ${JSON.stringify(ids)}`);
 
     abort();

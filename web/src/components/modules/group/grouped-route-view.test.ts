@@ -6,6 +6,7 @@ import {
     UNCATEGORIZED_CATEGORY_ID,
     type GroupedRouteModelRow,
 } from './grouped-view.ts';
+import type { Group } from '../../../api/endpoints/group.ts';
 
 interface GroupItemSeed {
     group_id: number;
@@ -20,8 +21,22 @@ function group_(
     name: string,
     items: GroupItemSeed[],
     category?: string,
-): { id: number; name: string; endpoint_type: string; mode: number; match_regex: string; category?: string; items: GroupItemSeed[] } {
-    return { id, name, endpoint_type: 'chat', mode: 1, match_regex: '', category, items };
+): Group {
+    return {
+        id,
+        name,
+        endpoint_type: 'chat',
+        endpoint_provider: '',
+        outbound_format: '',
+        mode: 1,
+        match_regex: '',
+        first_token_time_out: 0,
+        attempt_time_out: 0,
+        session_keep_time: 0,
+        condition: '',
+        category: category ?? '',
+        items,
+    };
 }
 
 function channel(channelId: number, modelName: string, channelName = `#${channelId}`, enabled = true): GroupedRouteModelRow {

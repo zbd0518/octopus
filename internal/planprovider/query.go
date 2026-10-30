@@ -89,6 +89,14 @@ type TokenPlanResult struct {
 	FiveHourTotal   float64    `json:"five_hour_total"`
 	FiveHourUsed    float64    `json:"five_hour_used"`
 	FiveHourResetAt *time.Time `json:"five_hour_reset_at"`
+	// DedicatedPool 档：商汤日日新的专用积分池（例如 Flash-Lite 积分池）
+	DedicatedPoolName        string     `json:"dedicated_pool_name,omitempty"`
+	DedicatedWeeklyTotal     float64    `json:"dedicated_weekly_total,omitempty"`
+	DedicatedWeeklyUsed      float64    `json:"dedicated_weekly_used,omitempty"`
+	DedicatedWeeklyResetAt   *time.Time `json:"dedicated_weekly_reset_at,omitempty"`
+	DedicatedFiveHourTotal   float64    `json:"dedicated_five_hour_total,omitempty"`
+	DedicatedFiveHourUsed    float64    `json:"dedicated_five_hour_used,omitempty"`
+	DedicatedFiveHourResetAt *time.Time `json:"dedicated_five_hour_reset_at,omitempty"`
 	// 各模型明细
 	Models []TokenPlanModelUsage `json:"models,omitempty"`
 }
@@ -680,33 +688,35 @@ func decodeStepFunWebID(oasisToken string) string {
 
 // --- SenseNova 套餐用量（商汤日日新 Coding Plan）---
 //
-// 与 StepFun Plan 类似，使用控制台 token 鉴权查询套餐用量，但更简单：
-//   - 标准 Bearer JWT 鉴权（非 Cookie + 自定义头）
-//   - Token 有效期约 3 小时（比 StepFun 的 30 分钟长）
-//   - GET 请求，URL 参数带 account_id 和 model_ids
-//   - 响应是每模型剩余百分比（非绝对值）
+// 控制台使用 pool-usage 接口返回按积分池划分的滚动窗口：
+//   - window_5h：5 小时窗口
+//   - window_7d：7 天窗口
+//   - limit / used / remaining / reset_at 均可能以数字字符串返回
 //
-// account_id 从 JWT payload 的 ext.tenant_id 字段自动解码。
-var senseNovaPlanURL = "https://platform.sensenova.cn/lite/console/v1/user/coding-plan/usages"
+// PlanProvider 当前只有一组窗口字段，因此优先使用 pool_type=default 的通用
+// 积分池。dedicated 池只适用于特定模型，不能与通用池简单相加。
+var senseNovaPlanURL = "https://platform.sensenova.cn/lite/console/v1/tokenplan/pool-usage"
+
+type senseNovaPoolWindow struct {
+	Limit     json.RawMessage `json:"limit"`
+	Used      json.RawMessage `json:"used"`
+	Remaining json.RawMessage `json:"remaining"`
+	ResetAt   json.RawMessage `json:"reset_at"`
+}
+
+type senseNovaPoolUsage struct {
+	PoolType string              `json:"pool_type"`
+	Name     string              `json:"name"`
+	Window5h senseNovaPoolWindow `json:"window_5h"`
+	Window7d senseNovaPoolWindow `json:"window_7d"`
+}
 
 func querySenseNovaPlanTokenPlan(ctx context.Context, token string) (*TokenPlanResult, error) {
 	if token == "" {
 		return nil, fmt.Errorf("sensenova_plan: token is required")
 	}
 
-	// 从 JWT 解码 tenant_id 作为 account_id
-	accountID := decodeSenseNovaAccountID(token)
-	if accountID == "" {
-		return nil, fmt.Errorf("sensenova_plan: 无法从 Token 解码 account_id，请检查 Token 是否完整")
-	}
-
-	// 构造 URL：account_id + 固定模型列表
-	u := senseNovaPlanURL + "?account_id=" + accountID
-	for _, m := range senseNovaPlanModels {
-		u += "&model_ids=" + m
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, senseNovaPlanURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("sensenova_plan: create request: %w", err)
 	}
@@ -732,45 +742,101 @@ func querySenseNovaPlanTokenPlan(ctx context.Context, token string) (*TokenPlanR
 	}
 
 	var data struct {
-		ModelRemainingPercent map[string]float64 `json:"model_remaining_percent"`
+		Pools []senseNovaPoolUsage `json:"pools"`
 	}
 	if err := json.Unmarshal(body, &data); err != nil {
 		return nil, fmt.Errorf("sensenova_plan: parse response: %w", err)
 	}
-
-	// 响应是每模型剩余百分比，汇总为总量/已用
-	// 百分比无法直接换算成绝对额度，用百分比作为 total=100, used=100-pct
-	result := &TokenPlanResult{
-		QuotaTotal: 100,
-	}
-	var models []TokenPlanModelUsage
-	for _, modelName := range senseNovaPlanModels {
-		remaining := data.ModelRemainingPercent[modelName]
-		models = append(models, TokenPlanModelUsage{
-			ModelName:  modelName,
-			QuotaTotal: 100,
-			QuotaUsed:  max(0, 100-remaining),
-		})
+	if len(data.Pools) == 0 {
+		return nil, fmt.Errorf("sensenova_plan: response contains no quota pools")
 	}
 
-	// 汇总：取所有模型中已用比例最高的作为总体已用
-	maxUsed := 0.0
-	for _, m := range models {
-		if m.QuotaUsed > maxUsed {
-			maxUsed = m.QuotaUsed
+	pool := data.Pools[0]
+	for _, candidate := range data.Pools {
+		if candidate.PoolType == "default" {
+			pool = candidate
+			break
 		}
 	}
-	result.QuotaUsed = maxUsed
-	result.Models = models
+
+	fiveHourTotal, fiveHourUsed := senseNovaWindowValues(pool.Window5h)
+	weeklyTotal, weeklyUsed := senseNovaWindowValues(pool.Window7d)
+	result := &TokenPlanResult{
+		FiveHourTotal:   fiveHourTotal,
+		FiveHourUsed:    fiveHourUsed,
+		FiveHourResetAt: senseNovaResetTime(pool.Window5h.ResetAt),
+		WeeklyTotal:     weeklyTotal,
+		WeeklyUsed:      weeklyUsed,
+		WeeklyResetAt:   senseNovaResetTime(pool.Window7d.ResetAt),
+	}
+
+	for _, candidate := range data.Pools {
+		if candidate.PoolType != "dedicated" {
+			continue
+		}
+		dedicatedFiveHourTotal, dedicatedFiveHourUsed := senseNovaWindowValues(candidate.Window5h)
+		dedicatedWeeklyTotal, dedicatedWeeklyUsed := senseNovaWindowValues(candidate.Window7d)
+		result.DedicatedPoolName = candidate.Name
+		result.DedicatedFiveHourTotal = dedicatedFiveHourTotal
+		result.DedicatedFiveHourUsed = dedicatedFiveHourUsed
+		result.DedicatedFiveHourResetAt = senseNovaResetTime(candidate.Window5h.ResetAt)
+		result.DedicatedWeeklyTotal = dedicatedWeeklyTotal
+		result.DedicatedWeeklyUsed = dedicatedWeeklyUsed
+		result.DedicatedWeeklyResetAt = senseNovaResetTime(candidate.Window7d.ResetAt)
+		break
+	}
 	return result, nil
 }
 
-// senseNovaPlanModels 是 SenseNova Coding Plan 支持的模型列表。
-// 查询时需要传入 model_ids 参数，服务端返回每模型的剩余百分比。
-var senseNovaPlanModels = []string{
-	"sensenova-6.7-flash-lite",
-	"sensenova-u1-fast",
-	"deepseek-v4-flash",
+// senseNovaWindowValues 读取商汤窗口的总量和已用量。
+// used 是首选字段；部分旧响应只有 remaining，此时用 limit - remaining。
+func senseNovaWindowValues(window senseNovaPoolWindow) (total, used float64) {
+	total, _ = senseNovaNumber(window.Limit)
+	if value, ok := senseNovaNumber(window.Used); ok {
+		used = value
+	} else if remaining, ok := senseNovaNumber(window.Remaining); ok {
+		used = total - remaining
+	}
+	if used < 0 {
+		used = 0
+	}
+	return total, used
+}
+
+// senseNovaNumber 兼容数字和数字字符串两种 JSON 表示。
+func senseNovaNumber(raw json.RawMessage) (float64, bool) {
+	s := strings.TrimSpace(string(raw))
+	if s == "" || s == "null" {
+		return 0, false
+	}
+	if strings.HasPrefix(s, `"`) {
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return 0, false
+		}
+		s = strings.TrimSpace(value)
+		if s == "" {
+			return 0, false
+		}
+	}
+	value, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, false
+	}
+	return value, true
+}
+
+// senseNovaResetTime 将 reset_at 的 Unix 秒/毫秒值转为 time.Time。
+func senseNovaResetTime(raw json.RawMessage) *time.Time {
+	value, ok := senseNovaNumber(raw)
+	if !ok || value <= 0 {
+		return nil
+	}
+	if value > 1e12 {
+		value /= 1000
+	}
+	resetAt := time.Unix(int64(value), 0)
+	return &resetAt
 }
 
 // decodeSenseNovaAccountID 从 SenseNova JWT 的 payload 中解码 ext.tenant_id。

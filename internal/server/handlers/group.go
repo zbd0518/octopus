@@ -11,6 +11,7 @@ import (
 	"github.com/lingyuins/octopus/internal/model"
 	ch "github.com/lingyuins/octopus/internal/op/channel"
 	grp "github.com/lingyuins/octopus/internal/op/group"
+	"github.com/lingyuins/octopus/internal/relay/condition"
 	"github.com/lingyuins/octopus/internal/server/auth"
 	"github.com/lingyuins/octopus/internal/server/middleware"
 	"github.com/lingyuins/octopus/internal/server/resp"
@@ -110,6 +111,10 @@ func createGroup(c *gin.Context) {
 			return
 		}
 	}
+	if err := condition.Validate(group.Condition); err != nil {
+		resp.ErrorWithKey(c, http.StatusBadRequest, err.Error(), "errors.invalidParameter", nil)
+		return
+	}
 	if err := grp.GroupCreate(&group, c.Request.Context()); err != nil {
 		if status, message, ok := classifyGroupMutationError(err); ok {
 			resp.Error(c, status, message)
@@ -152,6 +157,12 @@ func updateGroup(c *gin.Context) {
 		_, err := regexp2.Compile(*req.MatchRegex, regexp2.ECMAScript)
 		if err != nil {
 			resp.Error(c, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if req.Condition != nil {
+		if err := condition.Validate(*req.Condition); err != nil {
+			resp.ErrorWithKey(c, http.StatusBadRequest, err.Error(), "errors.invalidParameter", nil)
 			return
 		}
 	}
@@ -354,21 +365,24 @@ func purgeUnavailableGroupItems(c *gin.Context) {
 // }
 
 type groupListResponseItem struct {
-	ID                int               `json:"id"`
-	Name              string            `json:"name"`
-	EndpointType      string            `json:"endpoint_type"`
-	EndpointProvider  string            `json:"endpoint_provider,omitempty"`
-	OutboundFormat    string            `json:"outbound_format,omitempty"`
-	Mode              model.GroupMode   `json:"mode"`
-	MatchRegex        string            `json:"match_regex"`
-	FirstTokenTimeOut int               `json:"first_token_time_out"`
-	AttemptTimeOut    int               `json:"attempt_time_out"`
-	SessionKeepTime   int               `json:"session_keep_time"`
-	Condition         string            `json:"condition,omitempty"`
-	Items             []model.GroupItem `json:"items"`
-	LastTestPassed    *bool             `json:"last_test_passed,omitempty"`
-	LastTestAt        int64             `json:"last_test_at,omitempty"`
-	ThinkingMode      string            `json:"thinking_mode"`
+	ID                      int               `json:"id"`
+	Name                    string            `json:"name"`
+	Category                string            `json:"category"`
+	ReasoningBufferStrategy string            `json:"reasoning_buffer_strategy"`
+	LastTestAllFailed       *bool             `json:"last_test_all_failed,omitempty"`
+	EndpointType            string            `json:"endpoint_type"`
+	EndpointProvider        string            `json:"endpoint_provider,omitempty"`
+	OutboundFormat          string            `json:"outbound_format,omitempty"`
+	Mode                    model.GroupMode   `json:"mode"`
+	MatchRegex              string            `json:"match_regex"`
+	FirstTokenTimeOut       int               `json:"first_token_time_out"`
+	AttemptTimeOut          int               `json:"attempt_time_out"`
+	SessionKeepTime         int               `json:"session_keep_time"`
+	Condition               string            `json:"condition,omitempty"`
+	Items                   []model.GroupItem `json:"items"`
+	LastTestPassed          *bool             `json:"last_test_passed,omitempty"`
+	LastTestAt              int64             `json:"last_test_at,omitempty"`
+	ThinkingMode            string            `json:"thinking_mode"`
 }
 
 func normalizeGroupListResponse(groups []model.Group) []groupListResponseItem {
@@ -383,20 +397,24 @@ func normalizeGroupListResponse(groups []model.Group) []groupListResponseItem {
 			groupItems = make([]model.GroupItem, 0)
 		}
 		items[i] = groupListResponseItem{
-			ID:                group.ID,
-			Name:              group.Name,
-			EndpointType:      group.EndpointType,
-			EndpointProvider:  group.EndpointProvider,
-			OutboundFormat:    group.OutboundFormat,
-			Mode:              group.Mode,
-			MatchRegex:        group.MatchRegex,
-			FirstTokenTimeOut: group.FirstTokenTimeOut,
-			AttemptTimeOut:    group.AttemptTimeOut,
-			SessionKeepTime:   group.SessionKeepTime,
-			Items:             groupItems,
-			LastTestPassed:    group.LastTestPassed,
-			LastTestAt:        group.LastTestAt,
-			ThinkingMode:      model.NormalizeThinkingMode(group.ThinkingMode),
+			ID:                      group.ID,
+			Name:                    group.Name,
+			Category:                group.Category,
+			Condition:               group.Condition,
+			ReasoningBufferStrategy: group.ReasoningBufferStrategy,
+			LastTestAllFailed:       group.LastTestAllFailed,
+			EndpointType:            group.EndpointType,
+			EndpointProvider:        group.EndpointProvider,
+			OutboundFormat:          group.OutboundFormat,
+			Mode:                    group.Mode,
+			MatchRegex:              group.MatchRegex,
+			FirstTokenTimeOut:       group.FirstTokenTimeOut,
+			AttemptTimeOut:          group.AttemptTimeOut,
+			SessionKeepTime:         group.SessionKeepTime,
+			Items:                   groupItems,
+			LastTestPassed:          group.LastTestPassed,
+			LastTestAt:              group.LastTestAt,
+			ThinkingMode:            model.NormalizeThinkingMode(group.ThinkingMode),
 		}
 	}
 	return items

@@ -53,6 +53,8 @@ var auditedManagementWriteRoutes = map[string]struct{}{
 	"POST /api/v1/model/delete":                                                      {},
 	"POST /api/v1/model/update":                                                      {},
 	"POST /api/v1/model/update-price":                                                {},
+	"POST /api/v1/model/normalize/rules":                                             {},
+	"POST /api/v1/model/normalize/generate":                                          {},
 	"POST /api/v1/model/price-category/create":                                       {},
 	"POST /api/v1/model/price-category/update":                                       {},
 	"POST /api/v1/model/price-category/delete":                                       {},
@@ -186,6 +188,16 @@ var auditedManagementWriteRoutes = map[string]struct{}{
 	"POST /api/v1/pool/unsched-rules/update/:id":         {},
 	"DELETE /api/v1/pool/unsched-rules/delete/:id":       {},
 	"PUT /api/v1/plan-provider/credentials/:id":          {},
+	"POST /api/v1/nodes":                                 {},
+	"PUT /api/v1/nodes/:id":                              {},
+	"POST /api/v1/nodes/:id/rotate-token":                {},
+	"DELETE /api/v1/nodes/:id":                           {},
+	"POST /api/v1/plugins/install":                       {},
+	"POST /api/v1/plugins/:id/enable":                    {},
+	"POST /api/v1/plugins/:id/disable":                   {},
+	"PUT /api/v1/plugins/:id/config":                     {},
+	"DELETE /api/v1/plugins/:id":                         {},
+	"POST /api/v1/plugins/:id/rpc/*path":                 {},
 }
 
 func AuditManagementWrite() gin.HandlerFunc {

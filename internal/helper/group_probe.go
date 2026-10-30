@@ -22,8 +22,11 @@ import (
 	"github.com/lingyuins/octopus/internal/store"
 	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
+	"github.com/lingyuins/octopus/internal/transformer/rewrite"
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
+
+var AcquirePoolProbeCredential func(context.Context, appmodel.Channel, string) (appmodel.Channel, appmodel.ChannelKey, func(), error)
 
 type GroupModelTestRequest struct {
 	GroupID int `json:"group_id" binding:"required"`
@@ -329,7 +332,7 @@ func runGroupModelTest(ctx context.Context, group *appmodel.Group, channels map[
 		go func() {
 			defer wg.Done()
 			for index := range jobs {
-				results <- indexedResult{index: index, result: testGroupModelItem(ctx, group.EndpointType, group.Items[index], channels)}
+				results <- indexedResult{index: index, result: testConfiguredGroupItem(ctx, group, group.Items[index], channels)}
 			}
 		}()
 	}
@@ -376,6 +379,11 @@ func runGroupModelTest(ctx context.Context, group *appmodel.Group, channels map[
 }
 
 func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.GroupItem, channels map[int]appmodel.Channel) GroupModelTestResult {
+	return testConfiguredGroupItem(ctx, &appmodel.Group{EndpointType: endpointType}, item, channels)
+}
+
+func testConfiguredGroupItem(ctx context.Context, group *appmodel.Group, item appmodel.GroupItem, channels map[int]appmodel.Channel) GroupModelTestResult {
+	endpointType := group.EndpointType
 	result := GroupModelTestResult{
 		ItemID:    item.ID,
 		ChannelID: item.ChannelID,
@@ -405,6 +413,19 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 
 	// 与中继一致：按待测模型尊重 key 冷却，避免 UI 测试 200 / 实际请求 502 认知差。
 	usedKey := channel.GetChannelKeyWithCooldown(item.ModelName, 300)
+	if channel.PoolID > 0 {
+		if AcquirePoolProbeCredential == nil {
+			result.Message = "pool connectivity probe unavailable"
+			return result
+		}
+		selectedChannel, key, release, selectErr := AcquirePoolProbeCredential(ctx, channel, item.ModelName)
+		if selectErr != nil {
+			result.Message = selectErr.Error()
+			return result
+		}
+		defer release()
+		channel, usedKey = selectedChannel, key
+	}
 	if strings.TrimSpace(usedKey.ChannelKey) == "" {
 		result.Message = channel.DescribeNoAvailableKey(item.ModelName)
 		recordTestLog(ctx, endpointType, item, result, channel, nil, 0, nil, nil)
@@ -425,8 +446,16 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 
 	// 构建探测请求，用于日志记录和出站 adapter 回退解析
 	probeRequest, probeErr := buildGroupProbeRequest(endpointType, item.ModelName)
+	if probeErr == nil {
+		probeRequest, probeErr = prepareGroupProbeRequest(&channel, group, probeRequest)
+	}
+	if probeErr != nil {
+		result.Message = probeErr.Error()
+		recordTestLog(ctx, endpointType, item, result, channel, nil, 0, nil, nil)
+		return result
+	}
 	var requestJSON []byte
-	if probeErr == nil && probeRequest != nil {
+	if probeRequest != nil {
 		requestJSON, _ = json.Marshal(probeRequest)
 	}
 
@@ -434,7 +463,7 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 	// Completions (/v1/chat/completions)，失败再回退 Responses API
 	// (/v1/responses)。这与 relay 主流程的 outboundAttemptTypes 一致，
 	// 避免 type=1 渠道在只支持 chat completions 的上游上探测失败（issue #187）。
-	adapterTypes := outbound.ResolveAttemptTypes(channel.Type, probeRequest, "")
+	adapterTypes := outbound.ResolveAttemptTypes(channel.Type, probeRequest, group.OutboundFormat)
 
 	startTime := time.Now()
 	var logAttempts []appmodel.ChannelAttempt
@@ -455,7 +484,13 @@ probeAdapters:
 				break probeAdapters
 			}
 			attemptStart := time.Now()
-			statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, outAdapter, &channel, usedKey.ChannelKey, endpointType, item.ModelName)
+			attemptCtx := ctx
+			cancelAttempt := func() {}
+			if group.AttemptTimeOut > 0 {
+				attemptCtx, cancelAttempt = context.WithTimeout(ctx, time.Duration(group.AttemptTimeOut)*time.Second)
+			}
+			statusCode, responseText, internalResp, err := sendGroupProbeRequestWithRequest(attemptCtx, outAdapter, &channel, usedKey.ChannelKey, probeRequest)
+			cancelAttempt()
 			attemptDuration := int(time.Since(attemptStart).Milliseconds())
 
 			result.StatusCode = statusCode
@@ -671,16 +706,22 @@ func cloneGroupModelProgress(progress *GroupModelTestProgress) GroupModelTestPro
 }
 
 func sendGroupProbeRequest(ctx context.Context, outAdapter transmodel.Outbound, channel *appmodel.Channel, key, endpointType, modelName string) (int, string, *transmodel.InternalLLMResponse, error) {
-	if channel == nil {
-		return 0, "", nil, fmt.Errorf("channel is nil")
-	}
-
-	httpClient, err := ChannelHttpClient(channel)
+	probeRequest, err := buildGroupProbeRequest(endpointType, modelName)
 	if err != nil {
 		return 0, "", nil, err
 	}
+	return sendGroupProbeRequestWithRequest(ctx, outAdapter, channel, key, probeRequest)
+}
 
-	probeRequest, err := buildGroupProbeRequest(endpointType, modelName)
+func sendGroupProbeRequestWithRequest(ctx context.Context, outAdapter transmodel.Outbound, channel *appmodel.Channel, key string, probeRequest *transmodel.InternalLLMRequest) (int, string, *transmodel.InternalLLMResponse, error) {
+	if channel == nil {
+		return 0, "", nil, fmt.Errorf("channel is nil")
+	}
+	if probeRequest == nil {
+		return 0, "", nil, fmt.Errorf("probe request is nil")
+	}
+
+	httpClient, err := ChannelHttpClient(channel)
 	if err != nil {
 		return 0, "", nil, err
 	}
@@ -738,6 +779,72 @@ func resolveGroupProbePrompt() string {
 		return defaultGroupProbePrompt
 	}
 	return trimmed
+}
+
+func prepareGroupProbeRequest(channel *appmodel.Channel, group *appmodel.Group, request *transmodel.InternalLLMRequest) (*transmodel.InternalLLMRequest, error) {
+	if channel == nil || request == nil {
+		return request, nil
+	}
+
+	effectiveRewrite, enabled, err := rewrite.Resolve(channel.Type, channel.RequestRewrite)
+	if err != nil {
+		return nil, err
+	}
+	prepared := request
+	if enabled {
+		prepared, err = rewrite.Apply(request, effectiveRewrite)
+		if err != nil {
+			return nil, err
+		}
+	}
+	applyGroupProbeParamOverride(channel, prepared)
+	if group == nil {
+		return prepared, nil
+	}
+	prepared = transmodel.WithThinkingMode(prepared, group.ThinkingMode)
+	if prepared.TransformerMetadata == nil {
+		prepared.TransformerMetadata = make(map[string]string, 1)
+	}
+	normalizedEndpointType := appmodel.NormalizeEndpointType(group.EndpointType)
+	if normalizedEndpointType != "" {
+		prepared.TransformerMetadata[transmodel.TransformerMetadataGroupEndpointType] = normalizedEndpointType
+	}
+	return prepared, nil
+}
+
+func applyGroupProbeParamOverride(channel *appmodel.Channel, request *transmodel.InternalLLMRequest) {
+	if channel == nil || request == nil || channel.ParamOverride == nil || strings.TrimSpace(*channel.ParamOverride) == "" {
+		return
+	}
+
+	var overrides map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(*channel.ParamOverride), &overrides); err != nil {
+		return
+	}
+	if value, ok := overrides["max_tokens"]; ok && request.MaxTokens == nil {
+		var parsed int64
+		if json.Unmarshal(value, &parsed) == nil {
+			request.MaxTokens = &parsed
+		}
+	}
+	if value, ok := overrides["max_completion_tokens"]; ok && request.MaxCompletionTokens == nil {
+		var parsed int64
+		if json.Unmarshal(value, &parsed) == nil {
+			request.MaxCompletionTokens = &parsed
+		}
+	}
+	if value, ok := overrides["temperature"]; ok && request.Temperature == nil {
+		var parsed float64
+		if json.Unmarshal(value, &parsed) == nil {
+			request.Temperature = &parsed
+		}
+	}
+	if value, ok := overrides["top_p"]; ok && request.TopP == nil {
+		var parsed float64
+		if json.Unmarshal(value, &parsed) == nil {
+			request.TopP = &parsed
+		}
+	}
 }
 
 func buildGroupProbeRequest(endpointType, modelName string) (*transmodel.InternalLLMRequest, error) {

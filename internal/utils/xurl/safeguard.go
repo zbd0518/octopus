@@ -154,6 +154,17 @@ func SafeDialContext(ctx context.Context, network, addr string) (net.Conn, error
 // 域名仍可能 302 到内网地址（或利用 DNS rebinding 在解析后更换指向），逐跳校验
 // 可封堵「重定向到内网」这一绕过路径。
 func CheckRedirectSafe(maxRedirects int) func(*http.Request, []*http.Request) error {
+	return checkRedirectSafe(maxRedirects, false)
+}
+
+// CheckRedirectSafeWithPin additionally replaces the inherited pinned IP on
+// every redirect. Clients using SafeDialContext must use this variant so a
+// redirect cannot validate one host while dialing the previous hop's address.
+func CheckRedirectSafeWithPin(maxRedirects int) func(*http.Request, []*http.Request) error {
+	return checkRedirectSafe(maxRedirects, true)
+}
+
+func checkRedirectSafe(maxRedirects int, pin bool) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
 		if maxRedirects > 0 && len(via) >= maxRedirects {
 			return fmt.Errorf("stopped after %d redirects", maxRedirects)
@@ -161,6 +172,17 @@ func CheckRedirectSafe(maxRedirects int) func(*http.Request, []*http.Request) er
 		if req.URL == nil || req.URL.Host == "" {
 			return fmt.Errorf("redirect url is invalid")
 		}
-		return AssertSafeHost(req.URL)
+		if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+			return fmt.Errorf("redirect url must use http or https")
+		}
+		if !pin {
+			return AssertSafeHost(req.URL)
+		}
+		requestCtx, err := AssertSafeRequestWithPin(req)
+		if err != nil {
+			return err
+		}
+		*req = *req.WithContext(requestCtx)
+		return nil
 	}
 }

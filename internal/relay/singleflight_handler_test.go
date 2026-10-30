@@ -26,7 +26,7 @@ import (
 	"github.com/lingyuins/octopus/internal/utils/xurl"
 )
 
-func TestSingleflightHandlerLeaderWritesAndSavesOnce(t *testing.T) {
+func TestSingleflightDisabledHandlerWritesAndSavesOnce(t *testing.T) {
 	for _, status := range []int{http.StatusOK, http.StatusBadRequest} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			if err := db.InitDB("sqlite", filepath.Join(t.TempDir(), "relay.db"), false); err != nil {
@@ -97,7 +97,8 @@ func TestSingleflightHandlerLeaderWritesAndSavesOnce(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("relay did not reach upstream")
 			}
-			key, ok := requestSingleflightKey(7, "chat", "test-model", "user: hello", &transmodel.InternalLLMRequest{})
+			parsed := &transmodel.InternalLLMRequest{}
+			key, ok := requestSingleflightKey(7, "chat", "test-model", "user: hello", parsed)
 			if !ok {
 				t.Fatal("request is not eligible for singleflight")
 			}
@@ -111,8 +112,8 @@ func TestSingleflightHandlerLeaderWritesAndSavesOnce(t *testing.T) {
 				t.Fatal("relay did not finish")
 			}
 			result := <-follower
-			if !result.Shared {
-				t.Fatal("test did not exercise a shared leader")
+			if result.Shared || result.Err == nil {
+				t.Fatal("cache-disabled request unexpectedly entered singleflight")
 			}
 			if calls.Load() != 1 {
 				t.Fatalf("upstream calls = %d, want 1", calls.Load())

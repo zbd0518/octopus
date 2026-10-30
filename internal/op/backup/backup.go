@@ -9,6 +9,8 @@ import (
 
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
+	channelop "github.com/lingyuins/octopus/internal/op/channel"
+	"github.com/lingyuins/octopus/internal/op/node"
 	"github.com/lingyuins/octopus/internal/utils/apikeyhash"
 	"github.com/lingyuins/octopus/internal/utils/crypto"
 	"github.com/lingyuins/octopus/internal/utils/log"
@@ -34,6 +36,13 @@ func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDu
 		ExportedAt:   time.Now().UTC(),
 		IncludeLogs:  includeLogs,
 		IncludeStats: includeStats,
+	}
+
+	// Node credentials and active sessions are never exported, even in memory.
+	if conn.Migrator().HasTable(&model.Node{}) {
+		if err := conn.Omit("token_hash").Find(&d.Nodes).Error; err != nil {
+			return nil, fmt.Errorf("export nodes: %w", err)
+		}
 	}
 
 	// Core tables
@@ -179,6 +188,40 @@ func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDu
 	}
 	if err := conn.Find(&d.SiteChannelBindings).Error; err != nil {
 		return nil, fmt.Errorf("export site_channel_bindings: %w", err)
+	}
+	if conn.Migrator().HasTable(&model.Plugin{}) {
+		if err := conn.Find(&d.Plugins).Error; err != nil {
+			return nil, fmt.Errorf("export plugins: %w", err)
+		}
+		for i := range d.Plugins {
+			d.Plugins[i].Status = model.PluginStatusNeedsReinstall
+			d.Plugins[i].Enabled = false
+			d.Plugins[i].Calls = 0
+			d.Plugins[i].Failures = 0
+			d.Plugins[i].TimeoutCount = 0
+		}
+		var entries []model.PluginKV
+		if err := conn.Find(&entries).Error; err != nil {
+			return nil, fmt.Errorf("export plugin_kv: %w", err)
+		}
+		for _, entry := range entries {
+			d.PluginKV = append(d.PluginKV, model.PluginKVBackup{
+				PluginID: entry.PluginID, Key: entry.Key, Value: entry.Value, UpdatedAt: entry.UpdatedAt,
+			})
+		}
+		var secrets []model.PluginSecret
+		if err := conn.Find(&secrets).Error; err != nil {
+			return nil, fmt.Errorf("export plugin_secrets: %w", err)
+		}
+		for _, secret := range secrets {
+			plain, err := crypto.Decrypt(secret.Value)
+			if err != nil {
+				return nil, fmt.Errorf("export plugin secret: %w", err)
+			}
+			d.PluginSecrets = append(d.PluginSecrets, model.PluginSecretBackup{
+				PluginID: secret.PluginID, Key: secret.Key, Value: plain, UpdatedAt: secret.UpdatedAt,
+			})
+		}
 	}
 
 	// 敏感字段在库中以 enc: 密文存储；导出前解密为明文，使备份文件
@@ -340,6 +383,33 @@ func ImportWithMode(ctx context.Context, dump *model.DBDump, mode string) (*mode
 }
 
 func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump, mode string) (*model.DBImportResult, error) {
+	if target != nil && target == db.GetDB() {
+		var result *model.DBImportResult
+		err := node.WithRestoreLock(func() ([]int, error) {
+			var ids []int
+			if mode == model.ImportModeFull && target.Migrator().HasTable(&model.Node{}) {
+				if err := target.WithContext(ctx).Model(&model.Node{}).Pluck("id", &ids).Error; err != nil {
+					return nil, err
+				}
+			}
+			var err error
+			result, err = importWithModeToDB(ctx, target, dump, mode)
+			// A live restore must discard old channel→node bindings before an
+			// administrator can enable or rotate a restored numeric node ID.
+			// Use an independent context even if the importing client disconnected.
+			refreshCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if refreshErr := channelop.RefreshCache(refreshCtx); refreshErr != nil {
+				return ids, fmt.Errorf("restore channel cache: %w", refreshErr)
+			}
+			return ids, err
+		})
+		return result, err
+	}
+	return importWithModeToDB(ctx, target, dump, mode)
+}
+
+func importWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump, mode string) (*model.DBImportResult, error) {
 	if dump == nil {
 		return nil, fmt.Errorf("empty dump")
 	}
@@ -381,6 +451,9 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 
 	err := cfg.conn.Transaction(func(tx *gorm.DB) error {
 		cfg.conn = tx
+		if err := validateNodeRestore(tx, dump, isFull); err != nil {
+			return err
+		}
 
 		if isFull {
 			// Delete in reverse dependency order to avoid FK violations.
@@ -390,6 +463,7 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 			// locked out admin). The users table is auth infrastructure, not
 			// application data, and must survive a restore.
 			deleteOrder := []string{
+				"plugin_kv", "plugin_secrets", "plugins",
 				"relay_logs", "stats_api_keys", "stats_channels", "stats_models",
 				"stats_hourlies", "stats_dailies", "stats_totals",
 				// Site tables — children before parents
@@ -402,10 +476,13 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 				"notification_deliveries", "notifications", "notification_preferences", "notification_policies",
 				"alert_histories", "alert_state_records", "alert_rules", "alert_notif_channels",
 				"audit_logs", "auto_strategy_states", "circuit_breaker_states",
-				"api_keys", "channel_keys", "channels",
+				"api_keys", "channel_keys", "channels", "nodes",
 				"llm_infos", "settings",
 			}
 			for i, table := range deleteOrder {
+				if (table == "nodes" || table == "plugins" || table == "plugin_kv" || table == "plugin_secrets") && !cfg.conn.Migrator().HasTable(table) {
+					continue
+				}
 				switch table {
 				case "stats_totals":
 					deleteOrder[i] = cfg.conn.NamingStrategy.TableName("stats_total")
@@ -426,6 +503,9 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 				}
 			}
 			for _, table := range deleteOrder {
+				if (table == "nodes" || table == "plugins" || table == "plugin_kv" || table == "plugin_secrets") && !cfg.conn.Migrator().HasTable(table) {
+					continue
+				}
 				// relay_logs 路由到独立日志库时，由事务外的 importRelayLogsToLogDB
 				// 负责清空与写入，主事务（主库）跳过它。
 				if table == "relay_logs" && logToSeparateDB {
@@ -435,6 +515,16 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 					return fmt.Errorf("full import: delete %s: %w", table, err)
 				}
 			}
+		}
+
+		// Restore node identity before channel references, but never credentials.
+		nodes := append([]model.Node(nil), dump.Nodes...)
+		for i := range nodes {
+			nodes[i].Enabled = false
+			nodes[i].TokenHash = ""
+		}
+		if err := cfg.doNothing("nodes", &nodes, len(nodes)); err != nil {
+			return err
 		}
 
 		// Import channels / keys / groups / items — skip existing
@@ -628,6 +718,43 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 		}
 		if len(dump.SiteChannelBindings) > 0 {
 			if err := cfg.doNothing("site_channel_bindings", &dump.SiteChannelBindings, len(dump.SiteChannelBindings)); err != nil {
+				return err
+			}
+		}
+		if len(dump.Plugins) > 0 {
+			if err := cfg.upsertAll("plugins", &dump.Plugins, len(dump.Plugins), []clause.Column{{Name: "id"}}); err != nil {
+				return err
+			}
+		}
+		if len(dump.PluginKV) > 0 {
+			entries := make([]model.PluginKV, 0, len(dump.PluginKV))
+			for _, entry := range dump.PluginKV {
+				if entry.PluginID == "" {
+					return fmt.Errorf("import plugin_kv: missing plugin_id")
+				}
+				entries = append(entries, model.PluginKV{
+					PluginID: entry.PluginID, Key: entry.Key, Value: entry.Value, UpdatedAt: entry.UpdatedAt,
+				})
+			}
+			if err := cfg.upsertAll("plugin_kv", &entries, len(entries), []clause.Column{{Name: "plugin_id"}, {Name: "key"}}); err != nil {
+				return err
+			}
+		}
+		if len(dump.PluginSecrets) > 0 {
+			secrets := make([]model.PluginSecret, 0, len(dump.PluginSecrets))
+			for _, secret := range dump.PluginSecrets {
+				if secret.PluginID == "" {
+					return fmt.Errorf("import plugin_secrets: missing plugin_id")
+				}
+				encrypted, err := crypto.Encrypt(secret.Value)
+				if err != nil {
+					return fmt.Errorf("encrypt plugin secret: %w", err)
+				}
+				secrets = append(secrets, model.PluginSecret{
+					PluginID: secret.PluginID, Key: secret.Key, Value: encrypted, UpdatedAt: secret.UpdatedAt,
+				})
+			}
+			if err := cfg.upsertAll("plugin_secrets", &secrets, len(secrets), []clause.Column{{Name: "plugin_id"}, {Name: "key"}}); err != nil {
 				return err
 			}
 		}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dlclark/regexp2"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 )
 
@@ -64,12 +65,18 @@ const (
 	SystemMessageStrategyMerge SystemMessageStrategy = "merge"
 )
 
+type PromptRewriteRule struct {
+	Pattern     string `json:"pattern"`
+	Replacement string `json:"replacement"`
+}
+
 type RequestRewriteConfig struct {
 	Enabled               bool                  `json:"enabled"`
 	Profile               RequestRewriteProfile `json:"profile,omitempty"`
 	ToolRoleStrategy      ToolRoleStrategy      `json:"tool_role_strategy,omitempty"`
 	SystemMessageStrategy SystemMessageStrategy `json:"system_message_strategy,omitempty"`
 	HeaderProfile         string                `json:"header_profile,omitempty"`
+	PromptRules           []PromptRewriteRule   `json:"prompt_rules,omitempty"`
 }
 
 type Channel struct {
@@ -114,6 +121,7 @@ type Channel struct {
 	KeyHealthAt int64 `json:"key_health_at,omitempty" gorm:"column:key_health_at;default:0"`
 	// PoolID 关联号池。0 = 使用 inline keys，>0 = 从号池调度器选账号。
 	PoolID        int                   `json:"pool_id" gorm:"default:0;index"`
+	NodeID        int                   `json:"node_id" gorm:"not null;default:0;index"`
 	Managed       bool                  `json:"managed" gorm:"-"`
 	ManagedSource *ManagedChannelSource `json:"managed_source,omitempty" gorm:"-"`
 }
@@ -199,6 +207,7 @@ type ChannelUpdateRequest struct {
 	RequestRewrite       *RequestRewriteConfig `json:"request_rewrite,omitempty"`
 	MatchRegex           *string               `json:"match_regex,omitempty"`
 	PoolID               *int                  `json:"pool_id,omitempty"`
+	NodeID               *int                  `json:"node_id,omitempty"`
 
 	KeysToAdd    []ChannelKeyAddRequest    `json:"keys_to_add,omitempty"`
 	KeysToUpdate []ChannelKeyUpdateRequest `json:"keys_to_update,omitempty"`
@@ -293,6 +302,15 @@ func (c *RequestRewriteConfig) Validate(channelType outbound.OutboundType) error
 	case "", SystemMessageStrategyKeep, SystemMessageStrategyMerge:
 	default:
 		return fmt.Errorf("unsupported system message strategy: %s", c.SystemMessageStrategy)
+	}
+
+	for i, rule := range c.PromptRules {
+		if strings.TrimSpace(rule.Pattern) == "" {
+			return fmt.Errorf("prompt rewrite pattern %d is empty", i+1)
+		}
+		if _, err := regexp2.Compile(rule.Pattern, regexp2.ECMAScript); err != nil {
+			return fmt.Errorf("invalid prompt rewrite pattern %d: %w", i+1, err)
+		}
 	}
 
 	return nil

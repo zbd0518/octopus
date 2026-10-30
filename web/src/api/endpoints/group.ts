@@ -4,6 +4,7 @@ import { apiClient, API_BASE_URL } from '../client';
 import { REFETCH_INTERVAL_DEFAULT } from '../constants';
 import { logger } from '@/lib/logger';
 import { useAuthStore } from './user';
+import { normalizeAIRouteCurrentBatch, normalizeAIRouteRunningBatch } from './group-progress';
 
 /**
  * 分组项信息
@@ -120,9 +121,12 @@ export interface AutoGroupResult {
 
 export type AIRouteScope = 'group' | 'table';
 
+export type AIRouteCategoryStrategy = 'vendor' | 'channel_tier';
+
 export interface GenerateAIRouteRequest {
     scope?: AIRouteScope;
     group_id?: number;
+    category_strategy?: AIRouteCategoryStrategy;
 }
 
 export interface GenerateAIRouteResult {
@@ -256,33 +260,11 @@ function normalizeGenerateAIRouteProgress(progress: GenerateAIRouteProgress): Ge
         : undefined;
 
     const normalizedBatch = progress.current_batch
-        ? {
-            ...progress.current_batch,
-            index: typeof progress.current_batch.index === 'number' ? progress.current_batch.index : 0,
-            total: typeof progress.current_batch.total === 'number' ? progress.current_batch.total : 0,
-            model_count: typeof progress.current_batch.model_count === 'number' ? progress.current_batch.model_count : 0,
-            channel_ids: Array.isArray(progress.current_batch.channel_ids) ? progress.current_batch.channel_ids : [],
-            channel_names: Array.isArray(progress.current_batch.channel_names) ? progress.current_batch.channel_names : [],
-            service_name: typeof progress.current_batch.service_name === 'string' ? progress.current_batch.service_name : undefined,
-            attempt: typeof progress.current_batch.attempt === 'number' ? progress.current_batch.attempt : 0,
-            status: typeof progress.current_batch.status === 'string' ? progress.current_batch.status : undefined,
-            message: typeof progress.current_batch.message === 'string' ? progress.current_batch.message : undefined,
-        }
+        ? normalizeAIRouteCurrentBatch(progress.current_batch)
         : undefined;
 
     const normalizedRunningBatches = Array.isArray(progress.running_batches)
-        ? progress.running_batches.map((batch) => ({
-            ...batch,
-            index: typeof batch.index === 'number' ? batch.index : 0,
-            total: typeof batch.total === 'number' ? batch.total : 0,
-            model_count: typeof batch.model_count === 'number' ? batch.model_count : 0,
-            channel_ids: Array.isArray(batch.channel_ids) ? batch.channel_ids : [],
-            channel_names: Array.isArray(batch.channel_names) ? batch.channel_names : [],
-            service_name: typeof batch.service_name === 'string' ? batch.service_name : undefined,
-            attempt: typeof batch.attempt === 'number' ? batch.attempt : 0,
-            status: typeof batch.status === 'string' ? batch.status as AIRouteBatchStatus : undefined,
-            message: typeof batch.message === 'string' ? batch.message : undefined,
-        }))
+        ? progress.running_batches.map(normalizeAIRouteRunningBatch)
         : [];
 
     return {

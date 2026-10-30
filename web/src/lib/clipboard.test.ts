@@ -7,11 +7,8 @@ type ClipboardLike = {
     writeText: (text: string) => Promise<void>;
 };
 
-type TextAreaLike = {
-    value: string;
-    style: Record<string, string>;
-    setAttribute: (name: string, value: string) => void;
-    select: () => void;
+type TextAreaLike = Pick<HTMLTextAreaElement, 'value' | 'setAttribute' | 'select'> & {
+    style: Pick<CSSStyleDeclaration, 'position' | 'top' | 'left'>;
 };
 
 type DocumentLike = {
@@ -30,14 +27,18 @@ test('writeClipboardText falls back to execCommand when clipboard permission is 
 
     const documentLike: DocumentLike = {
         body: {
-            appendChild: (node) => appended.push(node),
-            removeChild: (node) => removed.push(node),
+            appendChild: (node) => {
+                appended.push(node);
+            },
+            removeChild: (node) => {
+                removed.push(node);
+            },
         },
         createElement: (tag) => {
             assert.equal(tag, 'textarea');
             return {
                 value: '',
-                style: {},
+                style: { position: '', top: '', left: '' },
                 setAttribute: () => {},
                 select: () => {
                     selected = true;

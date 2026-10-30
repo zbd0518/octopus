@@ -16,9 +16,9 @@ import (
 	"github.com/lingyuins/octopus/internal/helper"
 	appmodel "github.com/lingyuins/octopus/internal/model"
 	dbmodel "github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/nodetransport"
 	ch "github.com/lingyuins/octopus/internal/op/channel"
-	grp "github.com/lingyuins/octopus/internal/op/group"
-	"github.com/lingyuins/octopus/internal/op/modelmapping"
+	"github.com/lingyuins/octopus/internal/op/pool"
 	rl "github.com/lingyuins/octopus/internal/op/ratelimitstore"
 	stg "github.com/lingyuins/octopus/internal/op/setting"
 	st "github.com/lingyuins/octopus/internal/op/stats"
@@ -31,7 +31,6 @@ import (
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 	"github.com/lingyuins/octopus/internal/transformer/rewrite"
 	"github.com/lingyuins/octopus/internal/utils/log"
-	"github.com/lingyuins/octopus/internal/utils/semantic_cache"
 	"github.com/lingyuins/octopus/internal/utils/xurl"
 	"github.com/tmaxmax/go-sse"
 )
@@ -191,6 +190,25 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 	if err != nil {
 		return
 	}
+	internalRequest.Model = strings.TrimSpace(internalRequest.Model)
+	changed, err := applyBeforeRoutePlugin(c.Request.Context(), c, internalRequest)
+	if err != nil {
+		resp.Error(c, http.StatusBadGateway, "plugin request processing failed")
+		return
+	}
+	if changed {
+		inAdapter = inbound.Get(inboundType)
+		if inAdapter == nil {
+			resp.Error(c, http.StatusBadRequest, "unsupported inbound type")
+			return
+		}
+		// Stateful adapters must be initialized from the rewritten protocol body;
+		// the validated internal DTO remains authoritative for forwarding.
+		if _, convErr := inAdapter.TransformRequest(c.Request.Context(), internalRequest.RawRequest); convErr != nil {
+			resp.Error(c, http.StatusBadRequest, "plugin returned an invalid request")
+			return
+		}
+	}
 	if !apiKeyAllowsModel(c.GetString("supported_models"), internalRequest.Model) {
 		resp.Error(c, http.StatusBadRequest, "model not supported")
 		return
@@ -245,15 +263,37 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 			}
 		}
 	}
+
 	var streamSession *relayStreamSession
 	var streamSessionOwned bool
 	var lastErr error
+	operationCtx, cancel := newRelayOperationContext()
+	defer cancel()
+	group, identity, err := resolveRelayModel(operationCtx, endpointType, requestModel)
+	if err != nil {
+		resp.Error(c, http.StatusNotFound, "model not found")
+		return
+	}
+	if !apiKeyAllowsGroupCategory(c.GetString("allowed_group_categories"), group.Category) {
+		resp.Error(c, http.StatusBadRequest, "model not supported")
+		return
+	}
+	if matched, conditionErr := condition.Evaluate(group.Condition, routingConditionContext(c, requestModel)); conditionErr != nil || !matched {
+		resp.Error(c, http.StatusNotFound, "model not found")
+		return
+	}
 
+	quota, quotaAllowed := reserveRelayQuota(c, requestModel)
+	if !quotaAllowed {
+		return
+	}
+	var quotaUsage int64
+	defer func() { settleRelayQuota(quota, quotaUsage) }()
 	if conversationID, sessionHash, ok := resolveRelayStreamSessionIdentity(endpointType, int(inboundType), apiKeyID, internalRequest); ok {
-		session, created, err := acquireRelayStreamSession(conversationID, apiKeyID, sessionHash)
+		session, created, err := acquireRelayStreamSessionForResume(conversationID, apiKeyID, sessionHash, internalRequest.ResumeFromEventID)
 		if err != nil {
 			statusCode := http.StatusConflict
-			if !errors.Is(err, errRelayConversationBusy) {
+			if !errors.Is(err, errRelayConversationBusy) && !errors.Is(err, errRelayReplayWindowExpired) {
 				statusCode = http.StatusInternalServerError
 			}
 			resp.Error(c, statusCode, err.Error())
@@ -284,40 +324,7 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		}()
 	}
 
-	operationCtx, cancel := newRelayOperationContext()
-	defer cancel()
-
-	// 获取通道分组
-	group, err := grp.GroupGetEnabledMapByEndpoint(endpointType, requestModel, operationCtx)
-	if err != nil {
-		lastErr = err
-		log.Infof("model not found: model=%s endpoint_type=%s reason=%v", requestModel, endpointType, err)
-		resp.Error(c, http.StatusNotFound, "model not found")
-		return
-	}
-	if !apiKeyAllowsGroupCategory(c.GetString("allowed_group_categories"), group.Category) {
-		lastErr = fmt.Errorf("group category not allowed for api key: category=%s", group.Category)
-		resp.Error(c, http.StatusBadRequest, "model not supported")
-		return
-	}
-
-	// 检查条件路由：条件不匹配则跳过
-	if group.Condition != "" {
-		condCtx := condition.RequestContext{
-			Model:    requestModel,
-			APIKeyID: apiKeyID,
-			Hour:     time.Now().UTC().Hour(),
-		}
-		if match, condErr := condition.Evaluate(group.Condition, condCtx); condErr != nil || !match {
-			lastErr = fmt.Errorf("condition not met for group %s", group.Name)
-			resp.Error(c, http.StatusNotFound, "model not found")
-			return
-		}
-	}
-
-	// 创建迭代器（策略排序 + 粘性优先）
-	iter := balancer.NewIterator(group, apiKeyID, requestModel, parseExcludedChannels(c.GetString("excluded_channels")))
-	if iter.Len() == 0 {
+	if !balancer.HasCandidates(group, parseExcludedChannels(c.GetString("excluded_channels"))) {
 		lastErr = errors.New("no available channel")
 		resp.Error(c, http.StatusServiceUnavailable, "no available channel")
 		return
@@ -341,9 +348,10 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		metrics:           metrics,
 		apiKeyID:          apiKeyID,
 		requestModel:      requestModel,
+		modelIdentity:     identity,
+		quotaUsage:        &quotaUsage,
 		groupEndpointType: group.EndpointType,
 		group:             &group, // 传递分组对象用于策略读取
-		iter:              iter,
 		streamSession:     streamSession,
 		retryCache:        newRetryRequestCache(),
 		privacyMap:        privacyPlaceholders,
@@ -355,19 +363,25 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		served, payload, cacheErr := maybeServeSemanticCacheHit(c, req, endpointFamily)
 		if cacheErr != nil {
 			log.Warnf("semantic cache lookup failed: %v", cacheErr)
+			if c.Writer.Written() {
+				lastErr = cacheErr
+				req.streamSession.Finish(cacheErr)
+				metrics.Save(false, cacheErr, nil)
+				return
+			}
 		}
 		if served {
 			log.Infof("semantic cache hit: model=%s endpoint=%s", requestModel, endpointFamily)
-			if normalizedPayload := semanticCacheHitPayload(payload, internalRequest); len(normalizedPayload) > 0 {
-				if internalResponse, parseErr := buildSemanticCacheHitInternalResponse(internalRequest, normalizedPayload); parseErr == nil {
-					metrics.SetInternalResponse(internalResponse, internalRequest.Model)
-				}
+			if entry, decodeErr := decodeCanonicalCache(payload); decodeErr == nil {
+				metrics.SetInternalResponse(entry.Response, entry.ActualModel)
+				metrics.Stats.InputCost, metrics.Stats.OutputCost = 0, 0
 			}
 			metrics.Save(true, nil, nil)
 			return
 		}
-		if _, text, ok, _ := getSemanticCacheLookupInput(req, endpointFamily); ok {
-			inflightKey, inflightEnabled = requestSingleflightKey(apiKeyID, endpointFamily, internalRequest.Model, text, internalRequest)
+		_, cacheEnabled := semanticCacheRuntimeConfig()
+		if namespace, text, ok, _ := getSemanticCacheLookupInput(req, endpointFamily); ok && cacheEnabled {
+			inflightKey, inflightEnabled = requestSingleflightKeyWithHeadersAndNamespace(apiKeyID, endpointFamily, internalRequest.Model, text, internalRequest, c.Request.Header, namespace)
 		}
 	}
 
@@ -377,50 +391,9 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 	maxTotalAttempts := getMaxTotalAttempts()
 
 	if inflightEnabled {
-		executed := false
-		result, sfErr, _ := relayInflightGroup.Do(inflightKey, func() (any, error) {
-			executed = true
-			return executeRelay(req, group, requestModel, maxKeyRetriesPerRoute, maxRouteRetries, ratelimitCooldown, maxTotalAttempts)
-		})
-		// The leader has already written its response and saved its metrics, even on failure.
-		if executed {
-			lastErr = sfErr
+		if served, sharedErr := serveSharedRelay(req, group, requestModel, inflightKey, maxKeyRetriesPerRoute, maxRouteRetries, ratelimitCooldown, maxTotalAttempts); served {
+			lastErr = sharedErr
 			return
-		}
-		if sfErr == nil {
-			if outcome, ok := result.(*inflightRelayResult); ok && outcome != nil {
-				if outcome.namespace != "" && outcome.requestText != "" {
-					cfg, ok := semanticCacheRuntimeConfig()
-					if ok {
-						embedding, _, embErr := lookupSemanticEmbeddingWithCache(req.operationCtx, req, cfg, outcome.namespace, outcome.requestText)
-						if embErr == nil {
-							if payload, found := semantic_cache.Lookup(outcome.namespace, embedding); found {
-								normalizedPayload := semanticCacheHitPayload(payload, internalRequest)
-								c.Data(http.StatusOK, "application/json", normalizedPayload)
-								if internalResponse, parseErr := buildSemanticCacheHitInternalResponse(internalRequest, normalizedPayload); parseErr == nil {
-									metrics.SetInternalResponse(internalResponse, outcome.actualModel)
-								}
-								metrics.Save(true, nil, nil)
-								return
-							}
-						}
-					}
-				}
-				if resp := cloneInternalResponse(outcome.internalResp); resp != nil {
-					metrics.SetInternalResponse(resp, outcome.actualModel)
-					// Cache miss: the leader already wrote its own response.
-					// Transform the internal response to the inbound format and
-					// write it to the shared caller's context so the client
-					// receives a complete body instead of an empty 200 (4C-01).
-					if inResponse, terr := req.inAdapter.TransformResponse(req.clientCtx, resp); terr == nil && len(inResponse) > 0 {
-						c.Data(http.StatusOK, "application/json", inResponse)
-					} else if terr != nil {
-						logRelayErrorfByContext(terr, "shared caller transform response: %v", terr)
-					}
-				}
-				metrics.Save(true, nil, outcome.attempts)
-				return
-			}
 		}
 	}
 
@@ -461,6 +434,22 @@ func (ra *relayAttempt) resetInboundAdapter() error {
 
 // attempt 统一管理一次通道尝试的完整生命周期
 func (ra *relayAttempt) attempt() attemptResult {
+	attemptStarted := time.Now()
+	ra.metrics.FirstTokenTime = time.Time{}
+	ra.metrics.InternalResponse = nil
+	ra.metrics.Stats = dbmodel.StatsMetrics{}
+	defer func() {
+		if ra.metrics.InternalResponse == nil && ra.inAdapter != nil {
+			ra.collectResponse()
+		}
+		if ra.quotaUsage != nil && ra.metrics.InternalResponse != nil {
+			*ra.quotaUsage += ra.metrics.Stats.InputToken + ra.metrics.Stats.OutputToken
+		}
+		ra.metrics.PhysicalUsage.InputToken += ra.metrics.Stats.InputToken
+		ra.metrics.PhysicalUsage.OutputToken += ra.metrics.Stats.OutputToken
+		ra.metrics.PhysicalUsage.InputCost += ra.metrics.Stats.InputCost
+		ra.metrics.PhysicalUsage.OutputCost += ra.metrics.Stats.OutputCost
+	}()
 	span := ra.iter.StartAttempt(ra.channel.ID, ra.usedKey.ID, ra.channel.Name, ra.internalRequest.Model)
 	span.SetAdapterType(ra.adapterType.String())
 
@@ -501,6 +490,21 @@ func (ra *relayAttempt) attempt() attemptResult {
 		}
 	}
 
+	if nodetransport.IsExecutionUncertain(fwdErr) {
+		span.End(dbmodel.AttemptFailed, statusCode, "node execution outcome is uncertain")
+		return attemptResult{Success: false, Written: ra.c.Writer.Written(), Err: fwdErr, Decision: ra.attachEvidence(ClassifyRelayError(statusCode, fwdErr, ra.c.Writer.Written()))}
+	}
+
+	if errors.Is(fwdErr, errPluginProcessing) {
+		span.End(dbmodel.AttemptFailed, statusCode, "plugin processing failed")
+		return attemptResult{
+			Success:  false,
+			Written:  ra.c.Writer.Written(),
+			Err:      fwdErr,
+			Decision: ra.attachEvidence(ClassifyRelayError(statusCode, fwdErr, ra.c.Writer.Written())),
+		}
+	}
+
 	// 空输出重试（issue #106）：上游返回 200 但输出为空，换 Key 重试。
 	// 不记录渠道失败统计/熔断（这不是渠道故障，只是模型偶尔返回空），
 	// 但占用一次 Key 级重试名额，用完后换下一渠道。
@@ -532,8 +536,9 @@ func (ra *relayAttempt) attempt() attemptResult {
 		// ====== 成功 ======
 		ra.collectResponse()
 		ra.collectAndStoreStreamResponse()
-		ra.usedKey.TotalCost += ra.metrics.Stats.InputCost + ra.metrics.Stats.OutputCost
-		ch.KeyUpdate(ra.usedKey)
+		if ra.channel.PoolID == 0 {
+			_ = ch.RecordKeyUsage(ra.channel.ID, ra.usedKey.ID, ra.metrics.Stats.InputCost+ra.metrics.Stats.OutputCost, 0, time.Now().Unix())
+		}
 
 		span.End(dbmodel.AttemptSuccess, statusCode, "")
 
@@ -557,20 +562,26 @@ func (ra *relayAttempt) attempt() attemptResult {
 		// Auto策略：记录首 Token 延迟（TTFT，毫秒）。仅流式请求有 FirstTokenTime；
 		// 非流式请求无首 token 概念，IsZero()==true 时自然跳过不记录（issue #183）。
 		if !ra.metrics.FirstTokenTime.IsZero() {
-			balancer.RecordAutoTTFT(ra.channel.ID, ra.internalRequest.Model, ra.metrics.FirstTokenTime.Sub(ra.metrics.StartTime).Milliseconds())
+			balancer.RecordAutoTTFT(ra.channel.ID, ra.internalRequest.Model, ra.metrics.FirstTokenTime.Sub(attemptStarted).Milliseconds())
 		}
 		// 可用度：成功加分（上限 100），仅 availability 策略生效。
 		balancer.RecordKeyAvailability(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, statusCode, true)
 		// 速度策略：记录 EMA 平滑 TPS（output_tokens / duration_seconds），仅 speed 策略生效。
 		balancer.RecordKeySpeed(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, ra.metrics.Stats.OutputToken, span.Duration().Milliseconds())
 		// 会话保持：更新粘性记录
-		balancer.SetSticky(ra.apiKeyID, ra.requestModel, ra.channel.ID, ra.usedKey.ID)
+		balancer.SetStickyModel(ra.apiKeyID, stickyRoutingKey(ra.group, ra.requestModel), ra.internalRequest.Model, ra.channel.ID, ra.usedKey.ID)
 
-		return attemptResult{Success: true, Decision: ra.attachEvidence(decision)}
+		ttft := float64(0)
+		if !ra.metrics.FirstTokenTime.IsZero() {
+			ttft = float64(ra.metrics.FirstTokenTime.Sub(attemptStarted).Milliseconds())
+		}
+		return attemptResult{Success: true, Decision: ra.attachEvidence(decision), TTFTMillis: max(0, ttft), OutputTokens: ra.metrics.Stats.OutputToken}
 	}
 
 	// ====== 失败 ======
-	ch.KeyUpdate(ra.usedKey)
+	if ra.channel.PoolID == 0 {
+		_ = ch.RecordKeyUsage(ra.channel.ID, ra.usedKey.ID, 0, 0, time.Now().Unix())
+	}
 
 	// 构造日志消息：决策摘要 + 上游原始错误（issue #93）。
 	// fwdErr 形如 "upstream error: 429: {\"error\":...}"，已包含上游真实响应体，
@@ -631,7 +642,7 @@ func parseRequest(inboundType inbound.InboundType, c *gin.Context) (*model.Inter
 	}
 	internalRequest, err := inAdapter.TransformRequest(c.Request.Context(), body)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		resp.Error(c, http.StatusBadRequest, err.Error())
 		return nil, nil, err
 	}
 
@@ -706,6 +717,10 @@ func (ra *relayAttempt) forward() (int, error) {
 
 	// 复制请求头
 	ra.copyHeaders(outboundRequest, effectiveRewrite)
+
+	if err := applyBeforeUpstreamPlugin(ctx, outboundRequest, ra.channel.ID, fmt.Sprintf("%s:%d", ra.c.GetString("request_id"), ra.tryIndex)); err != nil {
+		return 0, fmt.Errorf("%w: upstream request: %w", errPluginProcessing, err)
+	}
 
 	// 发送请求
 	response, err := ra.sendRequest(outboundRequest)
@@ -1022,6 +1037,16 @@ func (ra *relayAttempt) copyHeaders(outboundRequest *http.Request, effectiveRewr
 
 // sendRequest 发送 HTTP 请求
 func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, error) {
+	if ra.channel != nil && ra.channel.NodeID != 0 {
+		if ra.poolProxyConfigID != nil {
+			return nil, errors.New("node channel cannot use a pool proxy")
+		}
+		client, err := helper.ChannelHttpClient(ra.channel)
+		if err != nil {
+			return nil, err
+		}
+		return client.Do(req)
+	}
 	// SSRF 防护（issue #219）：校验最终出站 URL 并把安全 IP 钉入 context，
 	// 杜绝 DNS rebinding。relay 主链路的渠道/号池 Base URL 在此前未经校验，
 	// editor 可借此打云元数据端点等内网地址。
@@ -1496,6 +1521,7 @@ func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Respo
 		logRelayErrorfByContext(err, "failed to transform response: %v", err)
 		return fmt.Errorf("failed to transform outbound response: %w", err)
 	}
+	ra.metrics.SetInternalResponse(internalResponse, ra.internalRequest.Model)
 
 	// 隐私保护占位符还原（issue 020）：转换到内部格式后立即还原，
 	// 后续输出拦截、入站序列化、metrics/日志拿到的都是还原后的文本。
@@ -1515,7 +1541,7 @@ func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Respo
 		}
 		data, _ := jsonAPI.Marshal(errorResp)
 		ra.c.Data(http.StatusOK, "application/json", data)
-		return nil
+		return errResponseFilterBlocked
 	}
 
 	applyReasoningExhaustedHeader(ra.c, internalResponse)
@@ -1533,9 +1559,12 @@ func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Respo
 		return fmt.Errorf("failed to transform inbound response: %w", err)
 	}
 
-	storeSemanticCacheResponse(ctx, ra.internalRequest, inResponse)
-
+	inResponse, err = applyBeforeSendPlugin(ctx, ra.c, inResponse, ra.c.GetString("request_id"))
+	if err != nil {
+		return fmt.Errorf("plugin response processing failed: %w", err)
+	}
 	ra.c.Data(http.StatusOK, "application/json", inResponse)
+	ra.storeCanonicalCacheResponse(internalResponse)
 	return nil
 }
 
@@ -1583,9 +1612,7 @@ func (ra *relayAttempt) collectAndStoreStreamResponse() {
 	if internalResponse == nil {
 		return
 	}
-	if responseJSON, err := jsonAPI.Marshal(internalResponse); err == nil {
-		storeSemanticCacheResponse(ra.operationCtx, ra.internalRequest, responseJSON)
-	}
+	ra.storeCanonicalCacheResponse(internalResponse)
 }
 
 func rewriteConversationRequestByProvider(group dbmodel.Group, req *model.InternalLLMRequest) *model.InternalLLMRequest {
@@ -1667,6 +1694,8 @@ func handleClientDisconnect(req *relayRequest, allAttempts []dbmodel.ChannelAtte
 func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, maxKeyRetriesPerRoute int, maxRouteRetries int, ratelimitCooldown int, maxTotalAttempts int) (*inflightRelayResult, error) {
 	var allAttempts []dbmodel.ChannelAttempt
 	var lastErr error
+	var activePoolLease *poolscheduler.AccountLease
+	defer func() { activePoolLease.Release() }()
 	rateLimitHoldCfg := getRateLimitHoldConfig()
 
 	// roundDecisions 返回到当前为止累计的决策纪录条数（真实转发 + 冷却跳过 + 熔断跳过）。
@@ -1674,7 +1703,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 	// 只统计转发会让最大总尝试上限形同虚设，attempts 仍会无上限膨胀（见 issue #192）。
 	// 因此改用「决策纪录总数」作为上限，同时约束转发工作量与 relay_logs 体积。
 	roundDecisions := func(iter *balancer.Iterator) int {
-		return len(allAttempts) + len(iter.Attempts())
+		return len(allAttempts) + iter.DecisionCount()
 	}
 	// reachedMaxTotalAttempts 判断累计决策纪录是否已达到「最大总尝试次数」上限。
 	// 传入当前路由迭代器以统计本轮的决策记录；0/负数已在调用方回退为默认上限。
@@ -1692,8 +1721,10 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 	// 转发），说明渠道全部不可用，继续下一轮只会重复同样的失败并膨胀 attempts，应快速失败。
 	lastRoundForwarded := 0
 
-	// 应用全局模型映射表（Phase 7）
-	requestModel = modelmapping.Resolve(req.operationCtx, requestModel, group.ID)
+	identity := req.modelIdentity
+	if identity.client == "" {
+		identity = relayModelIdentity{client: requestModel, route: requestModel}
+	}
 
 	for routeRound := 1; routeRound <= maxRouteRetries; routeRound++ {
 		roundAppended = false
@@ -1710,13 +1741,22 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 		// 快速失败防护（issue #192）：上一轮完全没有真实转发（全部是冷却/熔断跳过），
 		// 说明当前所有渠道都不可用。继续下一轮只会以相同方式失败并重复膨胀 attempts，
 		// 这里直接落到 exhausted 返回 502，而不是继续死循环。
-		if roundAppended && lastRoundForwarded == 0 && routeRound > 1 {
+		if lastRoundForwarded == 0 && routeRound > 1 {
 			log.Warnf("[%s] all channels unavailable (no real progress in round R%d), failing fast: model=%s, decisions=%d, last_error=%v",
 				req.internalRequest.RawAPIFormat, routeRound-1, requestModel, len(allAttempts), lastErr)
 			goto exhausted
 		}
 
-		routeIter := balancer.NewIterator(group, req.apiKeyID, requestModel, parseExcludedChannels(req.c.GetString("excluded_channels")))
+		filteredGroup, filterErr := applyRouteFilterPlugin(req.operationCtx, group, req.requestModel, req.c.GetString("request_id"))
+		if filterErr != nil {
+			if !req.c.Writer.Written() {
+				resp.Error(req.c, http.StatusBadGateway, "plugin route filtering failed")
+			}
+			req.metrics.Save(false, filterErr, allAttempts)
+			return nil, filterErr
+		}
+		group = filteredGroup
+		routeIter := balancer.NewIterator(group, req.apiKeyID, stickyRoutingKey(&group, req.requestModel), parseExcludedChannels(req.c.GetString("excluded_channels")))
 		req.iter = routeIter
 
 		for routeIter.Next() {
@@ -1746,10 +1786,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				continue
 			}
 
-			// Apply global model mapping before resolving to upstream model
-			mappedModel := modelmapping.Resolve(req.operationCtx, requestModel, group.ID)
-
-			resolvedModelName := resolveCandidateModelName(mappedModel, item)
+			resolvedModelName := identity.candidate(item)
 			if strings.TrimSpace(resolvedModelName) == "" {
 				routeIter.Skip(channel.ID, 0, channel.Name, "resolved upstream model is empty")
 				continue
@@ -1776,6 +1813,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 			req.internalRequest.Model = resolvedModelName
 			var failedKeyIDs []int
 			rateLimitHoldWaited := time.Duration(0)
+		keyAttempts:
 			for keyRound := 1; keyRound <= maxKeyRetriesPerRoute; keyRound++ {
 				if reachedMaxTotalAttempts(routeIter) {
 					lastErr = fmt.Errorf("reached relay max total attempts: %d", maxTotalAttempts)
@@ -1804,14 +1842,23 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					for _, kid := range failedKeyIDs {
 						excludeAccountIDs = append(excludeAccountIDs, kid)
 					}
-					acct, selErr := poolscheduler.SelectAccount(channel.PoolID, sessionHash, excludeAccountIDs, 1, resolvedModelName)
-					if selErr != nil || acct == nil {
+					lease, selErr := poolscheduler.SelectAccountLease(channel.PoolID, sessionHash, excludeAccountIDs, 1, resolvedModelName)
+					if selErr != nil || lease == nil {
 						routeIter.Skip(channel.ID, 0, channel.Name, "no available pool account")
 						lastErr = fmt.Errorf("channel %s: no available pool account", channel.Name)
 						break
 					}
+					activePoolLease = lease
+					acct, cred, credentialErr := pool.CredentialsForRelay(lease.Account)
+					if credentialErr != nil {
+						activePoolLease.Release()
+						failedKeyIDs = append(failedKeyIDs, lease.Account.ID)
+						routeIter.Skip(channel.ID, lease.Account.ID, channel.Name, credentialErr.Error())
+						lastErr = credentialErr
+						keyRound--
+						continue
+					}
 					poolAccount = acct
-					cred := dbmodel.ParsePoolCredential(acct.Credentials)
 					poolCredType = cred.Type
 					poolProxyConfigID = acct.ProxyConfigID
 					poolBaseURL = acct.BaseURL
@@ -1911,8 +1958,8 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				currentAttempts := append(allAttempts, req.iter.Attempts()...)
 				if result.Success {
 					if poolAccount != nil {
-						poolscheduler.ReportResult(channel.PoolID, poolAccount.ID, true, 0, 0)
-						poolscheduler.ReleaseSlot(channel.PoolID, poolAccount.ID)
+						poolscheduler.ReportResult(channel.PoolID, poolAccount.ID, true, result.TTFTMillis, result.OutputTokens)
+						activePoolLease.Release()
 					}
 					namespace, requestText, _ := semanticCacheStoreMetadata(req.internalRequest)
 					req.metrics.Save(true, nil, currentAttempts)
@@ -1932,21 +1979,13 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 
 				// 号池模式：上报失败 + 释放槽位 + 设置冷却。
 				if poolAccount != nil {
-					// ReportResult 故意保持无条件调用（即使 SkipFailureAccounting）。
-					// 取舍：客户端断连确实会给账号 EWMA errorRate 记一笔失败（轻污染），
-					// 但 ReportResult 同时是 globalPoolStats 条目与 lastActivity 的
-					// 唯一创建点（scheduler.go 的 LoadOrStore），跳过它会让 PurgeStale
-					// 出现结构性盲区——PurgeStale Range 的是 globalPoolStats 而非
-					// globalPoolSlots，账号若从无 stats 条目（首次请求即断连）就永远
-					// 遍历不到，进程内并发槽位永久假死。默认 EffectiveConcurrency
-					// 为 1，单次泄漏即完全饱和，远比 EWMA 轻污染严重。
-					// poolscheduler 目前也没有「只刷新 lastActivity 不记失败」的导出
-					// 函数可替代（待后续 PR 补 TouchActivity 后再改成条件调用）。
-					poolscheduler.ReportResult(channel.PoolID, poolAccount.ID, false, 0, 0)
+					if !result.Decision.SkipFailureAccounting {
+						poolscheduler.ReportResult(channel.PoolID, poolAccount.ID, false, 0, 0)
+					}
 					// ReleaseSlot 必须无条件执行：漏掉即号池并发槽位泄漏。
 					// 下方的 client disconnected 早退绝不能前移到这一行之前。
 					// 回归守卫：relay_circuit_accounting_mem_test.go。
-					poolscheduler.ReleaseSlot(channel.PoolID, poolAccount.ID)
+					activePoolLease.Release()
 					// 限流/过载冷却只对真实上游信号生效：客户端断连、内容拦截
 					// 的 Code 不是渠道侧限流证据，不该把账号打入冷却。
 					if result.Decision.Code == http.StatusTooManyRequests && !result.Decision.SkipFailureAccounting {
@@ -2049,13 +2088,13 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 						}
 						// 等待预算耗尽：结束本渠道，转下一渠道。
 						failedKeyIDs = append(failedKeyIDs, usedKey.ID)
-						break
+						break keyAttempts
 					}
 					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
 				case ScopeNextChannel:
 					lastErr = result.Err
 					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
-					break
+					break keyAttempts
 				default:
 					lastErr = result.Err
 					req.metrics.Save(false, lastErr, currentAttempts)

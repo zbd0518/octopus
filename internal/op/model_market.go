@@ -2,11 +2,13 @@ package op
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
 
 	"sync"
+	"sync/atomic"
 
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/modelnormalize"
@@ -22,6 +24,9 @@ type modelMarketStatsAggregate struct {
 
 type modelMarketLLMAggregate struct {
 	name          string
+	canonicalName string
+	primaryName   string
+	variants      map[string]struct{}
 	price         model.LLMPrice
 	hasPrice      bool
 	hasExactPrice bool
@@ -30,11 +35,18 @@ type modelMarketLLMAggregate struct {
 // marketCache provides a short-lived TTL cache for the aggregated model market
 // response. This avoids redundant recomputation when multiple clients request
 // the data within a short window (e.g. concurrent polling).
-var marketCache struct {
-	mu        sync.RWMutex
-	result    model.ModelMarketResponse
-	expiresAt time.Time
+type modelMarketCacheEntry struct {
+	result          model.ModelMarketResponse
+	expiresAt       time.Time
+	cacheGeneration uint64
+	lastUpdateTime  time.Time
 }
+
+var marketCache struct {
+	mu      sync.RWMutex
+	entries map[bool]modelMarketCacheEntry
+}
+var marketCacheGeneration atomic.Uint64
 
 const marketCacheTTL = 5 * time.Second
 
@@ -45,23 +57,36 @@ var marketSingleFlight singleflight.Group
 
 // ModelMarketInvalidateCache forces the next ModelMarketGet call to recompute.
 func ModelMarketInvalidateCache() {
+	marketCacheGeneration.Add(1)
 	marketCache.mu.Lock()
-	marketCache.expiresAt = time.Time{}
+	marketCache.entries = nil
 	marketCache.mu.Unlock()
 }
 
 func ModelMarketGet(ctx context.Context, lastUpdateTime time.Time) (model.ModelMarketResponse, error) {
+	dedupe, err := setting.GetBool(model.SettingKeyModelNormalizeMarketDedupeDefault)
+	if err != nil {
+		dedupe = true
+	}
+	return ModelMarketGetWithDedupe(ctx, lastUpdateTime, dedupe)
+}
+
+func ModelMarketGetWithDedupe(ctx context.Context, lastUpdateTime time.Time, dedupe bool) (model.ModelMarketResponse, error) {
+	cacheGeneration := marketCacheGeneration.Load()
 	// Fast path: return cached result if still valid.
 	marketCache.mu.RLock()
-	if time.Now().Before(marketCache.expiresAt) {
-		cached := marketCache.result
+	if entry, ok := marketCache.entries[dedupe]; ok &&
+		entry.cacheGeneration == cacheGeneration &&
+		entry.lastUpdateTime.Equal(lastUpdateTime) &&
+		time.Now().Before(entry.expiresAt) {
+		cached := entry.result
 		marketCache.mu.RUnlock()
 		return cached, nil
 	}
 	marketCache.mu.RUnlock()
 
 	// 缓存 miss：合并并发重算，避免多请求各自全量执行（DB 查询 + 聚合）。
-	result, err, _ := marketSingleFlight.Do("market", func() (any, error) {
+	result, err, _ := marketSingleFlight.Do(fmt.Sprintf("market:%t", dedupe), func() (any, error) {
 		// singleflight 的执行结果由所有并发等待者共享，不能绑定首个进入者的
 		// 请求 ctx——该客户端断开会让其余等待者一起收到 context.Canceled。
 		sfCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -77,7 +102,8 @@ func ModelMarketGet(ctx context.Context, lastUpdateTime time.Time) (model.ModelM
 			return model.ModelMarketResponse{}, err
 		}
 
-		items, summary := buildModelMarket(models, modelChannels, channelCache.GetAll(), StatsModelList(), lastUpdateTime)
+		rules := modelnormalize.CurrentRules()
+		items, summary := buildModelMarketWithRules(models, modelChannels, channelCache.GetAll(), StatsModelList(), lastUpdateTime, dedupe, rules)
 		resp := model.ModelMarketResponse{
 			Summary: summary,
 			Items:   items,
@@ -85,8 +111,17 @@ func ModelMarketGet(ctx context.Context, lastUpdateTime time.Time) (model.ModelM
 
 		// Store in cache.
 		marketCache.mu.Lock()
-		marketCache.result = resp
-		marketCache.expiresAt = time.Now().Add(marketCacheTTL)
+		if marketCacheGeneration.Load() == cacheGeneration {
+			if marketCache.entries == nil {
+				marketCache.entries = make(map[bool]modelMarketCacheEntry, 2)
+			}
+			marketCache.entries[dedupe] = modelMarketCacheEntry{
+				result:          resp,
+				expiresAt:       time.Now().Add(marketCacheTTL),
+				cacheGeneration: cacheGeneration,
+				lastUpdateTime:  lastUpdateTime,
+			}
+		}
 		marketCache.mu.Unlock()
 
 		return resp, nil
@@ -104,9 +139,55 @@ func buildModelMarket(
 	stats []model.StatsModel,
 	lastUpdateTime time.Time,
 ) ([]model.ModelMarketItem, model.ModelMarketSummary) {
+	dedupe, err := setting.GetBool(model.SettingKeyModelNormalizeMarketDedupeDefault)
+	if err != nil {
+		dedupe = true
+	}
+	return buildModelMarketWithDedupe(models, modelChannels, channelsByID, stats, lastUpdateTime, dedupe)
+}
+
+func buildModelMarketWithDedupe(
+	models []model.LLMInfo,
+	modelChannels []model.LLMChannel,
+	channelsByID map[int]model.Channel,
+	stats []model.StatsModel,
+	lastUpdateTime time.Time,
+	dedupe bool,
+) ([]model.ModelMarketItem, model.ModelMarketSummary) {
+	return buildModelMarketWithRules(
+		models,
+		modelChannels,
+		channelsByID,
+		stats,
+		lastUpdateTime,
+		dedupe,
+		modelnormalize.CurrentRules(),
+	)
+}
+
+func buildModelMarketWithRules(
+	models []model.LLMInfo,
+	modelChannels []model.LLMChannel,
+	channelsByID map[int]model.Channel,
+	stats []model.StatsModel,
+	lastUpdateTime time.Time,
+	dedupe bool,
+	rules modelnormalize.Rules,
+) ([]model.ModelMarketItem, model.ModelMarketSummary) {
+	marketKey := func(name string) string {
+		name = strings.TrimSpace(name)
+		if dedupe {
+			return modelnormalize.NormalizeWithRules(name, rules)
+		}
+		return name
+	}
+	canonicalKey := func(name string) string {
+		return modelnormalize.NormalizeWithRules(strings.TrimSpace(name), rules)
+	}
+
 	statsByModelName := make(map[string]modelMarketStatsAggregate)
 	for _, item := range stats {
-		name := normalizeMarketModelName(item.Name)
+		name := marketKey(item.Name)
 		if name == "" {
 			continue
 		}
@@ -119,11 +200,50 @@ func buildModelMarket(
 
 	channelsByModelName := make(map[string][]model.ModelMarketChannel)
 	seenChannelsByModel := make(map[string]map[int]struct{})
-	for _, item := range modelChannels {
-		name := normalizeMarketModelName(item.Name)
+
+	llmByModelName := make(map[string]modelMarketLLMAggregate)
+	modelNames := make([]string, 0, len(models))
+	ensureAggregate := func(rawName string) (string, modelMarketLLMAggregate) {
+		rawName = strings.TrimSpace(rawName)
+		name := marketKey(rawName)
+		if name == "" {
+			return "", modelMarketLLMAggregate{}
+		}
+		aggregate, exists := llmByModelName[name]
+		if !exists {
+			aggregate = modelMarketLLMAggregate{
+				name:          name,
+				canonicalName: canonicalKey(rawName),
+				primaryName:   rawName,
+				variants:      make(map[string]struct{}),
+			}
+			modelNames = append(modelNames, name)
+		}
+		if rawName != "" {
+			aggregate.variants[rawName] = struct{}{}
+			aggregate.primaryName = choosePrimaryModelName(aggregate.primaryName, rawName, aggregate.canonicalName, dedupe)
+		}
+		return name, aggregate
+	}
+
+	for _, llm := range models {
+		name, aggregate := ensureAggregate(llm.Name)
 		if name == "" {
 			continue
 		}
+		aggregate = chooseModelMarketPrice(aggregate, llm, canonicalKey(llm.Name))
+		llmByModelName[name] = aggregate
+	}
+
+	// The channel list is part of the catalog. Models that have no price row
+	// still receive a market item with zero price values.
+	for _, item := range modelChannels {
+		name, aggregate := ensureAggregate(item.Name)
+		if name == "" {
+			continue
+		}
+		llmByModelName[name] = aggregate
+
 		if seenChannelsByModel[name] == nil {
 			seenChannelsByModel[name] = make(map[int]struct{})
 		}
@@ -148,22 +268,6 @@ func buildModelMarket(
 		})
 	}
 
-	llmByModelName := make(map[string]modelMarketLLMAggregate)
-	modelNames := make([]string, 0, len(models))
-	for _, llm := range models {
-		name := normalizeMarketModelName(llm.Name)
-		if name == "" {
-			continue
-		}
-		aggregate, exists := llmByModelName[name]
-		if !exists {
-			aggregate.name = name
-			modelNames = append(modelNames, name)
-		}
-		aggregate = chooseModelMarketPrice(aggregate, llm, name)
-		llmByModelName[name] = aggregate
-	}
-
 	items := make([]model.ModelMarketItem, 0, len(modelNames))
 	totalWaitTime := int64(0)
 	totalRequests := int64(0)
@@ -172,6 +276,12 @@ func buildModelMarket(
 
 	for _, name := range modelNames {
 		llm := llmByModelName[name]
+		variantNames := make([]string, 0, len(llm.variants))
+		for variant := range llm.variants {
+			variantNames = append(variantNames, variant)
+		}
+		slices.Sort(variantNames)
+
 		modelItemChannels := channelsByModelName[name]
 		if modelItemChannels == nil {
 			modelItemChannels = make([]model.ModelMarketChannel, 0)
@@ -201,6 +311,10 @@ func buildModelMarket(
 
 		items = append(items, model.ModelMarketItem{
 			Name:             llm.name,
+			CanonicalName:    llm.canonicalName,
+			PrimaryName:      llm.primaryName,
+			VariantNames:     variantNames,
+			VariantCount:     len(variantNames),
 			Input:            llm.price.Input,
 			Output:           llm.price.Output,
 			CacheRead:        llm.price.CacheRead,
@@ -264,22 +378,69 @@ func buildModelMarket(
 	}
 }
 
-func normalizeMarketModelName(name string) string {
-	if enabled, err := setting.GetBool(model.SettingKeyModelNormalizeMarketDedupeDefault); err == nil && enabled {
-		return modelnormalize.Normalize(name)
+func choosePrimaryModelName(current, candidate, canonical string, dedupe bool) string {
+	current = strings.TrimSpace(current)
+	candidate = strings.TrimSpace(candidate)
+	if current == "" {
+		return candidate
 	}
-	return strings.ToLower(strings.TrimSpace(name))
+	if candidate == "" || !dedupe {
+		return current
+	}
+	currentExact := strings.EqualFold(current, canonical)
+	candidateExact := strings.EqualFold(candidate, canonical)
+	if candidateExact != currentExact {
+		if candidateExact {
+			return candidate
+		}
+		return current
+	}
+	if len(candidate) != len(current) {
+		if len(candidate) < len(current) {
+			return candidate
+		}
+		return current
+	}
+	if strings.Compare(candidate, current) < 0 {
+		return candidate
+	}
+	return current
+}
+
+func normalizeMarketModelName(name string) string {
+	if enabled, err := setting.GetBool(model.SettingKeyModelNormalizeMarketDedupeDefault); err == nil {
+		if enabled {
+			return modelnormalize.Normalize(name)
+		}
+		return strings.ToLower(strings.TrimSpace(name))
+	}
+	return modelnormalize.Normalize(name)
 }
 
 func chooseModelMarketPrice(aggregate modelMarketLLMAggregate, llm model.LLMInfo, canonical string) modelMarketLLMAggregate {
 	price := llm.LLMPrice
 	hasPrice := price.Input != 0 || price.Output != 0 || price.CacheRead != 0 || price.CacheWrite != 0
-	isExactCanonical := strings.ToLower(strings.TrimSpace(llm.Name)) == canonical
+	name := strings.TrimSpace(llm.Name)
+	isExactCanonical := strings.EqualFold(name, canonical)
 
-	if !aggregate.hasPrice || (isExactCanonical && hasPrice && !aggregate.hasExactPrice) {
+	shouldReplace := false
+	switch {
+	case !aggregate.hasPrice && hasPrice:
+		shouldReplace = true
+	case aggregate.hasPrice && hasPrice && isExactCanonical && !aggregate.hasExactPrice:
+		shouldReplace = true
+	case aggregate.hasPrice == hasPrice && aggregate.hasExactPrice == isExactCanonical:
+		// LLMList is backed by a map, so use the source name as the final
+		// tie-breaker and keep price selection deterministic.
+		if strings.Compare(name, aggregate.primaryName) < 0 {
+			shouldReplace = true
+		}
+	}
+	if shouldReplace || (!aggregate.hasPrice && !aggregate.hasExactPrice && aggregate.price == (model.LLMPrice{})) {
 		aggregate.price = price
 		aggregate.hasPrice = hasPrice
 		aggregate.hasExactPrice = isExactCanonical && hasPrice
+		aggregate.primaryName = choosePrimaryModelName(aggregate.primaryName, name, canonical, true)
 	}
 	return aggregate
 }

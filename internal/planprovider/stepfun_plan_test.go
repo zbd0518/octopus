@@ -197,24 +197,45 @@ func TestDecodeSenseNovaAccountID_EmptyToken(t *testing.T) {
 }
 
 func TestQuerySenseNovaPlanTokenPlan_Success(t *testing.T) {
-	var gotAuth, gotMethod string
+	var gotAuth, gotMethod, gotPath string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
 
-		// 校验 URL 参数
-		if !strings.Contains(r.URL.RawQuery, "account_id=test-tenant-id") {
-			t.Errorf("URL missing account_id: %s", r.URL.RawQuery)
-		}
-		if !strings.Contains(r.URL.RawQuery, "model_ids=sensenova-6.7-flash-lite") {
-			t.Errorf("URL missing model_ids: %s", r.URL.RawQuery)
+		if r.URL.RawQuery != "" {
+			t.Errorf("unexpected query string: %s", r.URL.RawQuery)
 		}
 
 		resp := map[string]any{
-			"model_remaining_percent": map[string]any{
-				"deepseek-v4-flash":        100,
-				"sensenova-6.7-flash-lite": 80,
-				"sensenova-u1-fast":        50,
+			"pools": []map[string]any{
+				{
+					"pool_type": "dedicated",
+					"name":      "Flash-Lite积分池",
+					"window_5h": map[string]any{
+						"limit": "999",
+						"used":  "123",
+					},
+					"window_7d": map[string]any{
+						"limit": "9999",
+						"used":  "456",
+					},
+				},
+				{
+					"pool_type": "default",
+					"window_5h": map[string]any{
+						"limit":     "120000",
+						"used":      "0",
+						"remaining": "120000",
+						"reset_at":  "1793257798",
+					},
+					"window_7d": map[string]any{
+						"limit":     "1200000",
+						"used":      "0",
+						"remaining": "1200000",
+						"reset_at":  "1793844598",
+					},
+				},
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -223,11 +244,10 @@ func TestQuerySenseNovaPlanTokenPlan_Success(t *testing.T) {
 	defer ts.Close()
 
 	origURL := senseNovaPlanURL
-	senseNovaPlanURL = ts.URL
+	senseNovaPlanURL = ts.URL + "/lite/console/v1/tokenplan/pool-usage"
 	defer func() { senseNovaPlanURL = origURL }()
 
-	token := makeTestSenseNovaToken(t, "test-tenant-id")
-	result, err := querySenseNovaPlanTokenPlan(context.Background(), token)
+	result, err := querySenseNovaPlanTokenPlan(context.Background(), "test-token")
 	if err != nil {
 		t.Fatalf("querySenseNovaPlanTokenPlan() error = %v", err)
 	}
@@ -236,38 +256,37 @@ func TestQuerySenseNovaPlanTokenPlan_Success(t *testing.T) {
 	if gotMethod != http.MethodGet {
 		t.Errorf("method = %s, want GET", gotMethod)
 	}
+	if gotPath != "/lite/console/v1/tokenplan/pool-usage" {
+		t.Errorf("path = %s, want /lite/console/v1/tokenplan/pool-usage", gotPath)
+	}
 	if !strings.Contains(gotAuth, "Bearer ") {
 		t.Errorf("Authorization = %q, want Bearer", gotAuth)
 	}
 
 	// 校验解析结果
-	if result.QuotaTotal != 100 {
-		t.Errorf("QuotaTotal = %f, want 100", result.QuotaTotal)
+	if result.QuotaTotal != 0 || result.QuotaUsed != 0 || result.QuotaResetAt != nil {
+		t.Errorf("monthly quota = %v/%v/%v, want empty", result.QuotaUsed, result.QuotaTotal, result.QuotaResetAt)
 	}
-	// 最高已用 = 100-50 = 50
-	if result.QuotaUsed != 50 {
-		t.Errorf("QuotaUsed = %f, want 50", result.QuotaUsed)
+	if result.FiveHourTotal != 120000 || result.FiveHourUsed != 0 {
+		t.Errorf("5h quota = %v/%v, want 0/120000", result.FiveHourUsed, result.FiveHourTotal)
 	}
-	// 校验模型明细
-	if len(result.Models) != 3 {
-		t.Fatalf("Models len = %d, want 3", len(result.Models))
+	if result.WeeklyTotal != 1200000 || result.WeeklyUsed != 0 {
+		t.Errorf("7d quota = %v/%v, want 0/1200000", result.WeeklyUsed, result.WeeklyTotal)
 	}
-	for _, m := range result.Models {
-		var wantUsed float64
-		switch m.ModelName {
-		case "deepseek-v4-flash":
-			wantUsed = 0 // 100-100=0
-		case "sensenova-6.7-flash-lite":
-			wantUsed = 20 // 100-80=20
-		case "sensenova-u1-fast":
-			wantUsed = 50 // 100-50=50
-		default:
-			t.Errorf("unexpected model: %s", m.ModelName)
-			continue
-		}
-		if m.QuotaUsed != wantUsed {
-			t.Errorf("model %s: QuotaUsed = %f, want %f", m.ModelName, m.QuotaUsed, wantUsed)
-		}
+	if result.DedicatedPoolName != "Flash-Lite积分池" {
+		t.Errorf("dedicated pool name = %q, want Flash-Lite积分池", result.DedicatedPoolName)
+	}
+	if result.DedicatedFiveHourTotal != 999 || result.DedicatedFiveHourUsed != 123 {
+		t.Errorf("dedicated 5h quota = %v/%v, want 123/999", result.DedicatedFiveHourUsed, result.DedicatedFiveHourTotal)
+	}
+	if result.DedicatedWeeklyTotal != 9999 || result.DedicatedWeeklyUsed != 456 {
+		t.Errorf("dedicated 7d quota = %v/%v, want 456/9999", result.DedicatedWeeklyUsed, result.DedicatedWeeklyTotal)
+	}
+	if result.FiveHourResetAt == nil || !result.FiveHourResetAt.Equal(time.Unix(1793257798, 0)) {
+		t.Errorf("5h reset_at = %v, want %v", result.FiveHourResetAt, time.Unix(1793257798, 0))
+	}
+	if result.WeeklyResetAt == nil || !result.WeeklyResetAt.Equal(time.Unix(1793844598, 0)) {
+		t.Errorf("7d reset_at = %v, want %v", result.WeeklyResetAt, time.Unix(1793844598, 0))
 	}
 }
 
@@ -281,13 +300,20 @@ func TestQuerySenseNovaPlanTokenPlan_EmptyToken(t *testing.T) {
 	}
 }
 
-func TestQuerySenseNovaPlanTokenPlan_InvalidToken(t *testing.T) {
-	// Token 无法解码出 account_id
+func TestQuerySenseNovaPlanTokenPlan_NoPools(t *testing.T) {
+	// 新接口不需要从 JWT 解码 account_id，任意非空 Bearer Token 都交给上游校验。
+	// 这里覆盖空池响应，确保不会再次静默回退到 0/100。
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"pools": []any{}})
+	}))
+	defer ts.Close()
+
+	origURL := senseNovaPlanURL
+	senseNovaPlanURL = ts.URL + "/lite/console/v1/tokenplan/pool-usage"
+	defer func() { senseNovaPlanURL = origURL }()
+
 	_, err := querySenseNovaPlanTokenPlan(context.Background(), "invalid.token")
-	if err == nil {
-		t.Fatal("expected error for invalid token, got nil")
-	}
-	if !strings.Contains(err.Error(), "account_id") {
-		t.Errorf("error = %q, want 'account_id'", err.Error())
+	if err == nil || !strings.Contains(err.Error(), "no quota pools") {
+		t.Fatalf("error = %v, want no quota pools error", err)
 	}
 }

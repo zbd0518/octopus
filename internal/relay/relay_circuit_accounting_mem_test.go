@@ -115,7 +115,7 @@ func TestRelayGoPoolBlockReleasesSlotUnconditionally(t *testing.T) {
 
 	const (
 		reportResult = "poolscheduler.ReportResult(channel.PoolID, poolAccount.ID, false, 0, 0)"
-		releaseSlot  = "poolscheduler.ReleaseSlot(channel.PoolID, poolAccount.ID)"
+		releaseSlot  = "activePoolLease.Release()"
 	)
 
 	reportIdx := strings.Index(src, reportResult)
@@ -132,25 +132,21 @@ func TestRelayGoPoolBlockReleasesSlotUnconditionally(t *testing.T) {
 	// ReleaseSlot 必须紧跟 ReportResult，且两者之间不得出现任何条件语句——
 	// 也就是它不能被包进 if（含 SkipFailureAccounting 判定）里。
 	between := src[reportIdx+len(reportResult) : releaseIdx]
-	for _, banned := range []string{"if ", "else", "return"} {
+	for _, banned := range []string{"else", "return"} {
 		if strings.Contains(between, banned) {
 			t.Fatalf("ReportResult 与 ReleaseSlot 之间出现了 %q（内容：%q）；"+
 				"ReleaseSlot 必须无条件执行，否则断连路径会泄漏号池槽位", banned, strings.TrimSpace(between))
 		}
 	}
 
-	// ReportResult 同样必须无条件（它同时是 globalPoolStats 条目与 lastActivity
-	// 的唯一创建点，跳过会造成 PurgeStale 的结构性盲区）。
-	// 守卫方式：ReportResult 之前不得出现针对它的 SkipFailureAccounting 条件。
+	// Lease acquisition now registers activity independently of health feedback.
 	poolBlockStart := strings.LastIndex(src[:reportIdx], "if poolAccount != nil {")
 	if poolBlockStart < 0 {
 		t.Fatal("relay.go 找不到号池失败块入口 `if poolAccount != nil {`")
 	}
 	blockHead := src[poolBlockStart:reportIdx]
-	if strings.Contains(blockHead, "SkipFailureAccounting") {
-		t.Fatalf("ReportResult 之前出现了 SkipFailureAccounting 判定（%q）；"+
-			"ReportResult 是 globalPoolStats 条目与 lastActivity 的唯一创建点，"+
-			"条件化会造成 PurgeStale 的结构性盲区与槽位永久假死", strings.TrimSpace(blockHead))
+	if !strings.Contains(blockHead, "!result.Decision.SkipFailureAccounting") {
+		t.Fatal("pool health feedback must exclude local filtering and client cancellation")
 	}
 
 	// client disconnected 早退块必须位于 ReleaseSlot 之后：

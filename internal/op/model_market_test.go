@@ -182,6 +182,109 @@ func TestBuildModelMarket_UsesEmptyChannelsSliceWhenModelHasNoChannels(t *testin
 	}
 }
 
+func TestBuildModelMarket_IncludesChannelOnlyModelsAndVariants(t *testing.T) {
+	items, summary := buildModelMarketWithDedupe(
+		[]model.LLMInfo{{Name: "priced-model", LLMPrice: model.LLMPrice{Input: 1}}},
+		[]model.LLMChannel{
+			{Name: "priced-model", ChannelID: 1, ChannelName: "A", Enabled: true},
+			{Name: "dmxapi-channel-only", ChannelID: 1, ChannelName: "A", Enabled: true},
+			{Name: "channel-only", ChannelID: 2, ChannelName: "B", Enabled: true},
+		},
+		map[int]model.Channel{
+			1: {ID: 1, Keys: []model.ChannelKey{{Enabled: true}}},
+			2: {ID: 2, Keys: []model.ChannelKey{{Enabled: true}, {Enabled: true}}},
+		},
+		nil,
+		time.Time{},
+		true,
+	)
+
+	if len(items) != 2 {
+		t.Fatalf("len(items) = %d, want 2: %+v", len(items), items)
+	}
+	if summary.CoverageCount != 3 {
+		t.Fatalf("CoverageCount = %d, want 3", summary.CoverageCount)
+	}
+
+	var channelOnly model.ModelMarketItem
+	for _, item := range items {
+		if item.Name == "channel-only" {
+			channelOnly = item
+		}
+	}
+	if channelOnly.Name != "channel-only" || channelOnly.PrimaryName != "channel-only" {
+		t.Fatalf("channel-only item = %+v", channelOnly)
+	}
+	if channelOnly.Input != 0 || channelOnly.ChannelCount != 2 || channelOnly.EnabledKeyCount != 3 {
+		t.Fatalf("channel-only coverage = %+v", channelOnly)
+	}
+
+	var priced model.ModelMarketItem
+	for _, item := range items {
+		if item.Name == "priced-model" {
+			priced = item
+		}
+	}
+	if priced.VariantCount != 1 || len(priced.VariantNames) != 1 || priced.PrimaryName != "priced-model" {
+		t.Fatalf("priced variants = %+v", priced)
+	}
+}
+
+func TestBuildModelMarket_DedupeModeControlsCanonicalAndRawItems(t *testing.T) {
+	inputs := []model.LLMInfo{
+		{Name: "kimi-k2.5"},
+		{Name: "dmxapi-kimi-k2.5"},
+	}
+
+	deduped, _ := buildModelMarketWithDedupe(inputs, nil, nil, nil, time.Time{}, true)
+	if len(deduped) != 1 || deduped[0].Name != "kimi-k2.5" || deduped[0].VariantCount != 2 {
+		t.Fatalf("deduped = %+v", deduped)
+	}
+
+	raw, _ := buildModelMarketWithDedupe(inputs, nil, nil, nil, time.Time{}, false)
+	if len(raw) != 2 {
+		t.Fatalf("raw len = %d, want 2: %+v", len(raw), raw)
+	}
+	for _, item := range raw {
+		if item.VariantCount != 1 || item.CanonicalName != "kimi-k2.5" {
+			t.Fatalf("raw item = %+v", item)
+		}
+	}
+}
+
+func TestBuildModelMarket_RawModePreservesEveryCaseSensitiveChannelName(t *testing.T) {
+	items, _ := buildModelMarketWithDedupe(
+		nil,
+		[]model.LLMChannel{
+			{Name: "GPT-4o", ChannelID: 1, ChannelName: "A"},
+			{Name: "gpt-4o", ChannelID: 2, ChannelName: "B"},
+			{Name: "@cf/openai/gpt-4o", ChannelID: 3, ChannelName: "C"},
+		},
+		nil,
+		nil,
+		time.Time{},
+		false,
+	)
+	if len(items) != 3 {
+		t.Fatalf("raw items = %+v, want one item for each exact name", items)
+	}
+	seen := make(map[string]bool, len(items))
+	for _, item := range items {
+		seen[item.Name] = true
+		if item.PrimaryName != item.Name {
+			t.Fatalf("raw primary_name = %q, want %q", item.PrimaryName, item.Name)
+		}
+		if item.VariantCount != 1 {
+			t.Fatalf("raw variant_count = %d, want 1", item.VariantCount)
+		}
+	}
+	for _, name := range []string{"GPT-4o", "gpt-4o", "@cf/openai/gpt-4o"} {
+		if !seen[name] {
+			t.Fatalf("raw model %q missing from %+v", name, items)
+		}
+	}
+}
+
 func withModelMarketDedupeDefault(t *testing.T, value string) {
 	t.Helper()
 

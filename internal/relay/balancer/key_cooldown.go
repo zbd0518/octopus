@@ -89,10 +89,10 @@ func IsKeyOnCooldown(channelID, keyID int, modelName string) bool {
 }
 
 // RecordKeyCooldown 记录某 (channelID, keyID, modelName) 的冷却。
-// 仅 statusCode >= 400 才记录（与原 ChannelKey.StatusCode 判断条件一致）。
+// Client input errors do not imply that an upstream key is unavailable.
 // 冷却时长来自 SettingKeyRatelimitCooldown（默认 300s）。
 func RecordKeyCooldown(channelID, keyID int, modelName string, statusCode int) {
-	if statusCode < 400 || strings.TrimSpace(modelName) == "" || keyID == 0 {
+	if statusCode < 400 || statusCode == 400 || statusCode == 422 || strings.TrimSpace(modelName) == "" || keyID == 0 {
 		return
 	}
 	cooldown := getRatelimitCooldown()

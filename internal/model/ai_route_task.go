@@ -6,6 +6,7 @@ type AIRouteTask struct {
 	ID               string                           `json:"id" gorm:"primaryKey;size:64"`
 	Scope            AIRouteScope                     `json:"scope" gorm:"size:16;not null;index:idx_ai_route_task_scope_group_done,priority:1"`
 	GroupID          int                              `json:"group_id" gorm:"not null;default:0;index:idx_ai_route_task_scope_group_done,priority:2"`
+	CategoryStrategy AIRouteCategoryStrategy          `json:"category_strategy,omitempty" gorm:"size:32;not null;default:''"`
 	Status           AIRouteTaskStatus                `json:"status" gorm:"size:32;not null;index"`
 	CurrentStep      AIRouteTaskStep                  `json:"current_step" gorm:"size:32;not null"`
 	ProgressPercent  int                              `json:"progress_percent" gorm:"not null;default:0"`
@@ -38,6 +39,7 @@ func NewAIRouteTask(progress GenerateAIRouteProgress) AIRouteTask {
 		ID:               progress.ID,
 		Scope:            progress.Scope,
 		GroupID:          progress.GroupID,
+		CategoryStrategy: progress.CategoryStrategy,
 		Status:           progress.Status,
 		CurrentStep:      progress.CurrentStep,
 		ProgressPercent:  progress.ProgressPercent,
@@ -73,6 +75,7 @@ func (task *AIRouteTask) ToProgress() GenerateAIRouteProgress {
 		ID:               task.ID,
 		Scope:            task.Scope,
 		GroupID:          task.GroupID,
+		CategoryStrategy: task.CategoryStrategy,
 		Status:           task.Status,
 		CurrentStep:      task.CurrentStep,
 		ProgressPercent:  task.ProgressPercent,

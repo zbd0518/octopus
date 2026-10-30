@@ -75,7 +75,15 @@ func compareRank(leftName string, rightName string, statsByName map[string]model
 func Update(m model.LLMInfo, ctx context.Context) error {
 	_, ok := modelCache.Get(m.Name)
 	if !ok {
-		return fmt.Errorf("model not found")
+		// Channel-only models are part of the model market even when the
+		// price catalog has no row yet. Editing their price creates the
+		// traceable raw-name price record on first save.
+		m.PriceManual = true
+		if err := db.GetDB().WithContext(ctx).Create(&m).Error; err != nil {
+			return err
+		}
+		modelCache.Set(m.Name, m.LLMPrice)
+		return nil
 	}
 	// 模型管理页编辑 = 手动设置价格：标记 price_manual，同步刷新不覆盖。
 	m.PriceManual = true
@@ -89,7 +97,10 @@ func Update(m model.LLMInfo, ctx context.Context) error {
 func Delete(name string, ctx context.Context) error {
 	_, ok := modelCache.Get(name)
 	if !ok {
-		return fmt.Errorf("model not found")
+		// A channel-only market item has no price row to delete. Treat the
+		// operation as an idempotent no-op so the canonical card remains
+		// usable and the client can refresh without a false error.
+		return nil
 	}
 	if err := db.GetDB().WithContext(ctx).Delete(&model.LLMInfo{Name: name}).Error; err != nil {
 		return err

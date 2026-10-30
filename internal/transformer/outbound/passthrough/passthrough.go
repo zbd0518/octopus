@@ -128,7 +128,11 @@ func rewritePassthroughModel(raw []byte, modelName string) ([]byte, error) {
 		// Keep the original body when it is not a JSON object (defensive).
 		return raw, nil
 	}
-	if current, ok := obj["model"].(string); ok && current == modelName {
+	_, hasEvent := obj["last_event_id"]
+	_, hasResume := obj["resume_from_sequence"]
+	delete(obj, "last_event_id")
+	delete(obj, "resume_from_sequence")
+	if current, ok := obj["model"].(string); ok && current == modelName && !hasEvent && !hasResume {
 		return raw, nil
 	}
 	obj["model"] = modelName

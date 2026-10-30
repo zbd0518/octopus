@@ -93,10 +93,13 @@ func TestGetGroupListEncodesEmptyItemsAsArray(t *testing.T) {
 	})
 
 	group := &model.Group{
-		Name:         "empty-items",
-		EndpointType: model.EndpointTypeChat,
-		Mode:         model.GroupModeRoundRobin,
-		ThinkingMode: "off",
+		Name:                    "empty-items",
+		EndpointType:            model.EndpointTypeChat,
+		Mode:                    model.GroupModeRoundRobin,
+		ThinkingMode:            "off",
+		Category:                "premium",
+		Condition:               `[{"key":"api_key_name","op":"equals","value":"named"}]`,
+		ReasoningBufferStrategy: "buffer",
 	}
 	if err := grp.GroupCreate(group, ctx); err != nil {
 		t.Fatalf("create group: %v", err)
@@ -114,8 +117,11 @@ func TestGetGroupListEncodesEmptyItemsAsArray(t *testing.T) {
 
 	var response struct {
 		Data []struct {
-			Items        json.RawMessage `json:"items"`
-			ThinkingMode string          `json:"thinking_mode"`
+			Items                   json.RawMessage `json:"items"`
+			ThinkingMode            string          `json:"thinking_mode"`
+			Category                string          `json:"category"`
+			Condition               string          `json:"condition"`
+			ReasoningBufferStrategy string          `json:"reasoning_buffer_strategy"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
@@ -123,6 +129,9 @@ func TestGetGroupListEncodesEmptyItemsAsArray(t *testing.T) {
 	}
 	if len(response.Data) != 1 {
 		t.Fatalf("unexpected response payload: %+v", response.Data)
+	}
+	if response.Data[0].Category != group.Category || response.Data[0].Condition != group.Condition || response.Data[0].ReasoningBufferStrategy != group.ReasoningBufferStrategy {
+		t.Fatalf("editable fields missing from group list: %+v", response.Data[0])
 	}
 	if response.Data[0].ThinkingMode != "off" {
 		t.Fatalf("thinking_mode = %q, want off", response.Data[0].ThinkingMode)

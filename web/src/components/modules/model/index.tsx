@@ -48,8 +48,9 @@ export function Model() {
     const tFilter = useTranslations('modelFilter');
     const activeItem = useNavStore((s) => s.activeItem);
     const view = useModelViewStore((s) => s.modelView);
+    const dedupe = useModelViewStore((s) => s.dedupe);
     const marketActive = activeItem === 'model' && view === 'market';
-    const { data: market, isLoading, error, refetch } = useModelMarket(marketActive);
+    const { data: market, isLoading, error, refetch } = useModelMarket(dedupe, marketActive);
     const filterBodyId = useId();
     const { data: settings } = useSettingList();
     // 归一化去重依赖运行时规则（来自 DB Setting），需在筛选前注入。
@@ -62,7 +63,7 @@ export function Model() {
     const modelSortMode = useToolbarViewOptionsStore((s) => s.modelSortMode);
     const modelLatencyUnit = useToolbarViewOptionsStore((s) => s.modelLatencyUnit);
 
-    const { capability, provider, dedupe, setCapability, setProvider, setDedupe, initializeDedupe, resetFilters } = useModelViewStore();
+    const { capability, provider, setCapability, setProvider, setDedupe, initializeDedupe, resetFilters } = useModelViewStore();
     const setPricingFilter = useToolbarViewOptionsStore((s) => s.setModelFilter);
     const setSearchTerm = useSearchStore((s) => s.setSearchTerm);
     useEffect(() => {

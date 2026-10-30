@@ -65,6 +65,8 @@ func penaltyForStatusCode(statusCode int) float64 {
 		return keyAvailabilityPenaltyServer
 	case statusCode == 408:
 		return keyAvailabilityPenaltyTimeout
+	case statusCode == 400 || statusCode == 422:
+		return 0
 	case statusCode >= 400:
 		return keyAvailabilityPenaltyGeneric
 	default:

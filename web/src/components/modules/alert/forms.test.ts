@@ -7,7 +7,12 @@ import {
     channelDraftToPayload,
     createAlertChannelDraft,
     createAlertRuleDraft,
+    type AlertChannelDraft,
 } from './forms.ts';
+
+function channelDraft(overrides: Partial<AlertChannelDraft>): AlertChannelDraft {
+    return { ...createAlertChannelDraft(), ...overrides };
+}
 
 test('createAlertRuleDraft returns expected defaults for a new rule', () => {
     assert.deepEqual(createAlertRuleDraft(), {
@@ -129,14 +134,14 @@ test('applyAlertChannelDraft updates editable fields and preserves channel metad
             headers: '{"x-test":"1"}',
             config: '',
         },
-        {
+        channelDraft({
             name: 'ops-new',
             type: 'webhook',
             url: 'https://new.example.com',
             secret: 'new-secret',
             gotify: { server_url: '', token: '' },
             email: { smtp_host: '', smtp_port: 587, username: '', password: '', from: '', to: '', use_tls: true },
-        }
+        })
     );
 
     assert.equal(updated.name, 'ops-new');
@@ -150,14 +155,14 @@ test('applyAlertChannelDraft updates editable fields and preserves channel metad
 test('applyAlertChannelDraft serializes gotify config', () => {
     const updated = applyAlertChannelDraft(
         { id: 1, name: '', type: 'gotify', url: '', secret: '', config: '' },
-        {
+        channelDraft({
             name: 'my-gotify',
             type: 'gotify',
             url: '',
             secret: '',
             gotify: { server_url: 'https://gotify.example.com', token: 'my-token', priority: 7 },
             email: { smtp_host: '', smtp_port: 587, username: '', password: '', from: '', to: '', use_tls: true },
-        }
+        })
     );
 
     assert.equal(updated.type, 'gotify');
@@ -172,14 +177,14 @@ test('applyAlertChannelDraft serializes gotify config', () => {
 test('applyAlertChannelDraft serializes email config', () => {
     const updated = applyAlertChannelDraft(
         { id: 2, name: '', type: 'email', url: '', secret: '', config: '' },
-        {
+        channelDraft({
             name: 'my-email',
             type: 'email',
             url: '',
             secret: '',
             gotify: { server_url: '', token: '' },
             email: { smtp_host: 'smtp.example.com', smtp_port: 465, username: 'user', password: 'pass', from: 'a@b.com', to: 'c@d.com', use_tls: true },
-        }
+        })
     );
 
     assert.equal(updated.type, 'email');

@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.7.0] - 2026-10-30
+
+### Added
+
+- Add a sandboxed plugin runtime with relay integration, an isolated management interface, SDKs, a packaging CLI, and observer examples.
+- Add reverse node transport for local Magpie plugins, with node lifecycle management, channel binding, session handling, and relay integration.
+- Add localized node settings and one-time token setup, with permission checks, audit coverage, and safe backup restoration that clears node credentials and disables restored nodes.
+
+### Fixed
+
+- Correct SenseNova quota-pool handling and dedicated-pool presentation.
+
+### Changed
+
+- Document Magpie plugin setup and node transport limits.
+- Align application, frontend package, and Docker Compose versions to v2.7.0.
+
+## [v2.6.4-fix] - 2026-10-29
+
+### Fixed
+
+- Upgrade the Go toolchain and Docker build image to Go 1.27.3 to address CVE-2026-111943.
+
+## [v2.6.4] - 2026-10-29
+
+### Added
+
+- Add category-aware AI route generation with model suggestions and a reviewable model-normalization workflow.
+- Add canonical model-market aggregation with variant details and visibility for channel-only models.
+- Add configurable regular-expression prompt cleaning for system and developer messages.
+
+### Fixed
+
+- Decrypt pool credentials only for forwarding, acquire account concurrency atomically, release leases on early exits, and isolate pool accounts from ordinary channel-key persistence.
+- Persist channel-key usage as update-only increments without restoring deleted keys or overwriting credential/configuration changes.
+- Correct request-level round-robin/weighted rotation, next-channel retry scope, half-open probe admission, no-progress termination, and media attempt budgets.
+- Restore group list editing fields, protect group member snapshots/index publication, and match AI-generated routes by endpoint and name.
+- Correct quota admission/usage settlement, stream recovery errors and authorization, Responses cache replay, shared-response isolation, and protected upstream credential headers.
+
+### Changed
+
+- API-key RPM/TPM limits now constrain the key across models as well as any model sublimits. Known token usage can create quota debt; configured Redis quota failures return 503 rather than independent memory allowances.
+- Cache/coalescing isolates output parameters and excludes tools, multimodal content, and stateful continuation references. Cache TTL remains sliding idle expiry; cache hits do not add physical upstream cost.
+- Document unscoped/scoped model mapping order, bounded stream recovery, supported pool-media credentials, and the absence of response-ID channel affinity.
+- Align application, frontend package, and Docker Compose versions to v2.6.4.
+
 ## [v2.6.3-fix2] - 2026-10-09
 
 ### Fixed

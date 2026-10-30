@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
@@ -16,6 +17,10 @@ var (
 	mappingsCache []*model.ModelMapping
 	compiledRegex = make(map[int]*regexp.Regexp)
 )
+
+var mappingGeneration atomic.Uint64
+
+func Generation() uint64 { return mappingGeneration.Load() }
 
 // InitCache loads all model mappings from the database into memory.
 func InitCache(ctx context.Context) error {
@@ -31,6 +36,7 @@ func InitCache(ctx context.Context) error {
 	defer cacheMu.Unlock()
 
 	mappingsCache = mappings
+	mappingGeneration.Add(1)
 	compiledRegex = make(map[int]*regexp.Regexp)
 
 	for _, m := range mappings {
@@ -166,6 +172,31 @@ func Resolve(ctx context.Context, requestModel string, groupID int) string {
 	}
 
 	return requestModel
+}
+
+func ResolveGlobal(requestModel string) (string, bool) {
+	return resolveScope(requestModel, nil)
+}
+
+func ResolveGroup(requestModel string, groupID int) (string, bool) {
+	return resolveScope(requestModel, &groupID)
+}
+
+func resolveScope(requestModel string, groupID *int) (string, bool) {
+	cacheMu.RLock()
+	defer cacheMu.RUnlock()
+	for _, mapping := range mappingsCache {
+		if groupID == nil && mapping.ScopeGroupID != nil {
+			continue
+		}
+		if groupID != nil && (mapping.ScopeGroupID == nil || *mapping.ScopeGroupID != *groupID) {
+			continue
+		}
+		if matchPattern(mapping, requestModel) {
+			return strings.TrimSpace(mapping.TargetModel), true
+		}
+	}
+	return requestModel, false
 }
 
 // matchPattern checks if the requestModel matches the mapping pattern.

@@ -19,6 +19,9 @@ import { ProxySelector } from '@/components/modules/proxy-pool/ProxySelector';
 import { useAlertNotifChannelList } from '@/api/endpoints/alert';
 import { useSettingList, SettingKey } from '@/api/endpoints/setting';
 import { usePoolList } from '@/api/endpoints/pool';
+import { useNodeList } from '@/api/endpoints/node';
+import { useNavStore } from '@/components/modules/navbar/nav-store';
+import { withNodeTransport } from './node-binding';
 import { channelTemplates } from './templates';
 import { CHANNEL_TYPE_OPTIONS } from './type-options';
 import { isOpenAICompatBaseUrlSuffixMode } from './base-url-suffix';
@@ -104,6 +107,7 @@ export interface ChannelFormData {
     key_selection_strategy: string;
     match_regex: string;
     pool_id: number;
+    node_id: number;
 }
 
 /**
@@ -125,6 +129,7 @@ export function createDefaultRequestRewriteFormData(): RequestRewriteConfig {
         tool_role_strategy: ToolRoleStrategy.Keep,
         system_message_strategy: SystemMessageStrategy.Keep,
         header_profile: RequestRewriteHeaderProfile.None,
+        prompt_rules: [],
     };
 }
 
@@ -135,22 +140,47 @@ export function normalizeRequestRewriteFormData(config?: RequestRewriteConfig | 
         tool_role_strategy: config?.tool_role_strategy ?? ToolRoleStrategy.Keep,
         system_message_strategy: config?.system_message_strategy ?? SystemMessageStrategy.Keep,
         header_profile: config?.header_profile ?? RequestRewriteHeaderProfile.None,
+        prompt_rules: (config?.prompt_rules ?? []).map((rule) => ({
+            pattern: rule.pattern ?? '',
+            replacement: rule.replacement ?? '',
+        })),
     };
 }
 
 export function isRequestRewriteSupportedChannelType(channelType: ChannelType): boolean {
-    return channelType === ChannelType.OpenAIChat || channelType === ChannelType.MiMoChat || channelType === ChannelType.OpenAIResponse;
+    switch (channelType) {
+        case ChannelType.OpenAIChat:
+        case ChannelType.OpenAIResponse:
+        case ChannelType.Anthropic:
+        case ChannelType.Gemini:
+        case ChannelType.Volcengine:
+        case ChannelType.MiMoChat:
+        case ChannelType.Cloudflare:
+            return true;
+        default:
+            return false;
+    }
+}
+
+export function isOpenAIChatCompatRewriteSupportedChannelType(channelType: ChannelType): boolean {
+    return channelType === ChannelType.OpenAIChat
+        || channelType === ChannelType.MiMoChat
+        || channelType === ChannelType.OpenAIResponse;
 }
 
 export function getEffectiveRequestRewriteFormData(channelType: ChannelType, config?: RequestRewriteConfig | null): RequestRewriteConfig {
     const normalized = normalizeRequestRewriteFormData(config);
     if (isRequestRewriteSupportedChannelType(channelType)) {
-        return normalized;
+        return {
+            ...normalized,
+            prompt_rules: normalized.prompt_rules?.filter((rule) => rule.pattern.trim() !== ''),
+        };
     }
 
     return {
         ...normalized,
         enabled: false,
+        prompt_rules: [],
     };
 }
 
@@ -698,7 +728,13 @@ export function ChannelForm({
     const { data: channelGroups = [] } = useChannelGroupList();
     const { data: notifChannels = [] } = useAlertNotifChannelList();
     const { data: pools = [] } = usePoolList();
+    const channelActive = useNavStore((state) => state.activeItem === 'channel');
+    const { data: nodeList } = useNodeList(channelActive);
+    const nodes = nodeList?.nodes ?? [];
+    const isNode = formData.node_id > 0;
+    const canBindNode = nodeList?.can_write === true;
     const requestRewriteSupported = isRequestRewriteSupportedChannelType(formData.type);
+    const openAIChatCompatSupported = isOpenAIChatCompatRewriteSupportedChannelType(formData.type);
     const isCreateLayout = layout === 'create';
     const sectionClassName = isCreateLayout
         ? 'min-w-0 space-y-3 border-b border-border pb-5'
@@ -714,7 +750,38 @@ export function ChannelForm({
     const effectiveKeyStrategy = formData.key_selection_strategy || globalKeyStrategy;
     const showPriorityInput = effectiveKeyStrategy === 'priority';
     // 号池绑定渠道不在表单里编辑 key，此时不提供“回填到 key”操作（表单里没有可写的 key）
-    const canFillPerKeyModels = formData.pool_id === 0;
+    const canFillPerKeyModels = formData.pool_id === 0 && !isNode;
+    const promptRules = formData.request_rewrite.prompt_rules ?? [];
+    const updatePromptRule = (index: number, field: 'pattern' | 'replacement', value: string) => {
+        const nextRules = promptRules.map((rule, ruleIndex) =>
+            ruleIndex === index ? { ...rule, [field]: value } : rule,
+        );
+        onFormDataChange({
+            ...formData,
+            request_rewrite: {
+                ...formData.request_rewrite,
+                prompt_rules: nextRules,
+            },
+        });
+    };
+    const addPromptRule = () => {
+        onFormDataChange({
+            ...formData,
+            request_rewrite: {
+                ...formData.request_rewrite,
+                prompt_rules: [...promptRules, { pattern: '', replacement: '' }],
+            },
+        });
+    };
+    const removePromptRule = (index: number) => {
+        onFormDataChange({
+            ...formData,
+            request_rewrite: {
+                ...formData.request_rewrite,
+                prompt_rules: promptRules.filter((_, ruleIndex) => ruleIndex !== index),
+            },
+        });
+    };
 
     // Ensure the form always shows at least 1 row for base_urls / keys / custom_header.
     // This avoids "empty list" UI and also keeps URL + APIKEY layout consistent.
@@ -886,7 +953,8 @@ export function ChannelForm({
         [formData.custom_header]
     );
 
-    const buildTestPayload = () => ({
+    const buildTestPayload = () => withNodeTransport({
+        node_id: formData.node_id,
         type: formData.type,
         base_urls: (formData.base_urls ?? []).filter((u) => u.url.trim()).map((u) => ({
             url: u.url.trim(),
@@ -953,12 +1021,13 @@ export function ChannelForm({
     };
 
     const handleRefreshModels = async () => {
-        if (!formData.base_urls?.[0]?.url || !effectiveKey) return;
+        if (!isNode && (!formData.base_urls?.[0]?.url || !effectiveKey)) return;
         setModelPickerDraft(autoModels);
         setFetchedModels([]);
         setPerKeyResults(null);
 
-        const payload = {
+        const payload = withNodeTransport({
+            node_id: formData.node_id,
             type: formData.type,
             base_urls: formData.base_urls,
             keys: formData.keys
@@ -970,7 +1039,7 @@ export function ChannelForm({
             channel_proxy: formData.channel_proxy?.trim() || '',
             match_regex: formData.match_regex.trim() || '',
             custom_header: normalizedHeaders,
-        };
+        });
 
         const handleModels = (data: unknown) => {
             const models = normalizeFetchedModels(data);
@@ -989,7 +1058,7 @@ export function ChannelForm({
         };
 
         const enabledKeys = formData.keys.filter((k) => k.enabled && k.channel_key.trim());
-        if (enabledKeys.length > 1) {
+        if (!isNode && enabledKeys.length > 1) {
             fetchModelsPerKey.mutate(
                 {
                     ...payload,
@@ -1288,6 +1357,30 @@ export function ChannelForm({
             </section>
 
             <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
+                <label htmlFor={`${idPrefix}-node`} className={labelClassName}>{t('nodeBinding')}</label>
+                <Select value={String(formData.node_id)} disabled={!canBindNode} onValueChange={(value) => onFormDataChange({
+                    ...formData,
+                    node_id: Number(value),
+                    pool_id: 0,
+                    proxy_mode: 'direct',
+                    proxy_config_id: null,
+                    channel_proxy: '',
+                })}>
+                    <SelectTrigger id={`${idPrefix}-node`} className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="0">{t('httpTransport')}</SelectItem>
+                        {nodes.map((node) => <SelectItem key={node.id} value={String(node.id)}>{node.name} · {t(node.online ? 'nodeOnline' : 'nodeOffline')}{!node.enabled ? ` · ${t('nodeDisabled')}` : ''}</SelectItem>)}
+                        {isNode && !nodes.some((node) => node.id === formData.node_id) && <SelectItem value={String(formData.node_id)}>{t('nodeUnavailable', { id: formData.node_id })}</SelectItem>}
+                    </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">{t(canBindNode ? 'nodeHint' : 'nodeAdminOnly')}</p>
+                {isNode && <>
+                    <Button type="button" variant="outline" disabled={testChannel.isPending} onClick={handleTestChannel}>{t('test.button')}</Button>
+                    {testSummary && <p role="status" className="text-sm">{t(testSummary.passed ? 'test.success' : 'test.partialSuccess')}</p>}
+                </>}
+            </section>
+
+            {!isNode && <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
                 <div className="flex min-w-0 items-center justify-between gap-2">
                     <SectionHeader icon={Cable} title={t('baseUrlConfig')} hint={t('baseUrlHint')} />
                     <div className="flex shrink-0 items-center gap-2">
@@ -1361,7 +1454,7 @@ export function ChannelForm({
                         );
                     })}
                 </div>
-            </section>
+            </section>}
 
             <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
                 <div className="flex min-w-0 items-center justify-between gap-2">
@@ -1369,7 +1462,7 @@ export function ChannelForm({
                     <MorphingDialog onOpen={handleRefreshModels}>
                         <MorphingDialogTrigger
                             ariaLabel={t('modelRefresh')}
-                            disabled={!formData.base_urls?.[0]?.url || !effectiveKey || isFetchingModels}
+                            disabled={(!isNode && (!formData.base_urls?.[0]?.url || !effectiveKey)) || isFetchingModels}
                             className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-border px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                         >
                             <RefreshCw className={`size-4 ${isFetchingModels ? 'animate-spin' : ''}`} />
@@ -1448,7 +1541,7 @@ export function ChannelForm({
                 </div>
             </section>
 
-            {formData.pool_id === 0 && (
+            {formData.pool_id === 0 && !isNode && (
             <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
                 <div className="flex min-w-0 items-center justify-between gap-2">
                     <SectionHeader icon={KeyRound} title={t('apiKeyConfig')} />
@@ -1733,25 +1826,36 @@ export function ChannelForm({
                     </AccordionTrigger>
                     <AccordionContent className="pt-4">
                         <div className="space-y-4">
-                        <div className={fieldGroupClassName}>
-                            <label htmlFor={`${idPrefix}-key-strategy`} className={labelClassName}>{t('keySelectionStrategy')}</label>
-                            <Select
-                                value={formData.key_selection_strategy || '__inherit__'}
-                                onValueChange={(value) => onFormDataChange({ ...formData, key_selection_strategy: value === '__inherit__' ? '' : value })}
-                            >
-                                <SelectTrigger id={`${idPrefix}-key-strategy`} className="h-11 w-full rounded-lg">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent className="rounded-lg">
-                                    <SelectItem className="rounded-xl" value="__inherit__">{t('keySelectionStrategyInherit')}</SelectItem>
-                                    <SelectItem className="rounded-xl" value="cost">{t('keySelectionStrategyCost')}</SelectItem>
-                                    <SelectItem className="rounded-xl" value="availability">{t('keySelectionStrategyAvailability')}</SelectItem>
-                                    <SelectItem className="rounded-xl" value="speed">{t('keySelectionStrategySpeed')}</SelectItem>
-                                    <SelectItem className="rounded-xl" value="priority">{t('keySelectionStrategyPriority')}</SelectItem>
-                                </SelectContent>
-                            </Select>
+                        <div className="grid min-w-0 items-start gap-4 md:grid-cols-2">
+                            {!isNode && <ProxySelector
+                                layout="stacked"
+                                value={{ proxy_mode: formData.proxy_mode, proxy_config_id: formData.proxy_config_id }}
+                                onChange={(next) => onFormDataChange({
+                                    ...formData,
+                                    proxy_mode: next.proxy_mode as ChannelProxyMode,
+                                    proxy_config_id: next.proxy_config_id ?? null,
+                                })}
+                            />}
+                            <div className={fieldGroupClassName}>
+                                <label htmlFor={`${idPrefix}-key-strategy`} className={labelClassName}>{t('keySelectionStrategy')}</label>
+                                <Select
+                                    value={formData.key_selection_strategy || '__inherit__'}
+                                    onValueChange={(value) => onFormDataChange({ ...formData, key_selection_strategy: value === '__inherit__' ? '' : value })}
+                                >
+                                    <SelectTrigger id={`${idPrefix}-key-strategy`} className="h-11 w-full rounded-lg">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent className="rounded-lg">
+                                        <SelectItem className="rounded-xl" value="__inherit__">{t('keySelectionStrategyInherit')}</SelectItem>
+                                        <SelectItem className="rounded-xl" value="cost">{t('keySelectionStrategyCost')}</SelectItem>
+                                        <SelectItem className="rounded-xl" value="availability">{t('keySelectionStrategyAvailability')}</SelectItem>
+                                        <SelectItem className="rounded-xl" value="speed">{t('keySelectionStrategySpeed')}</SelectItem>
+                                        <SelectItem className="rounded-xl" value="priority">{t('keySelectionStrategyPriority')}</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
                         </div>
-                        <div className={fieldGroupClassName}>
+                        {!isNode && <div className={fieldGroupClassName}>
                             <label htmlFor={`${idPrefix}-pool`} className={labelClassName}>
                                 {t('poolBinding')}
                                 {formData.pool_id > 0 ? <Hint text={t('poolHint')} /> : null}
@@ -1770,7 +1874,7 @@ export function ChannelForm({
                                     ))}
                                 </SelectContent>
                             </Select>
-                        </div>
+                        </div>}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className={fieldGroupClassName}>
                                 <label htmlFor={`${idPrefix}-auto-group`} className={labelClassName}>
@@ -1792,7 +1896,7 @@ export function ChannelForm({
                                 </Select>
                             </div>
 
-                            <div className={fieldGroupClassName}>
+                            {!isNode && <div className={fieldGroupClassName}>
                                 <label htmlFor={`${idPrefix}-channel-proxy`} className={labelClassName}>
                                     {t('channelProxy')}
                                 </label>
@@ -1804,7 +1908,7 @@ export function ChannelForm({
                                     placeholder={t('channelProxyPlaceholder')}
                                     className="rounded-lg"
                                 />
-                            </div>
+                            </div>}
                         </div>
 
                         <div className={fieldGroupClassName}>
@@ -1928,7 +2032,9 @@ export function ChannelForm({
                                         </SelectTrigger>
                                         <SelectContent className="rounded-lg">
                                             <SelectItem className="rounded-xl" value={RequestRewriteProfile.Preserve}>保留</SelectItem>
-                                            <SelectItem className="rounded-xl" value={RequestRewriteProfile.OpenAIChatCompat}>{t('requestRewriteProfileOpenAIChatCompat')}</SelectItem>
+                                            {openAIChatCompatSupported && (
+                                                <SelectItem className="rounded-xl" value={RequestRewriteProfile.OpenAIChatCompat}>{t('requestRewriteProfileOpenAIChatCompat')}</SelectItem>
+                                            )}
                                         </SelectContent>
                                     </Select>
                                 </div>
@@ -2008,6 +2114,77 @@ export function ChannelForm({
                                     </Select>
                                 </div>
                             </div>
+
+                            <div className="space-y-3 rounded-lg border border-border/30 bg-muted/10 p-3 sm:p-4">
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <p className="text-sm font-medium text-card-foreground">
+                                            {t('promptRewriteRules')}
+                                            <Hint text={t('promptRewriteRulesHint')} />
+                                        </p>
+                                        <p className="mt-1 text-xs text-muted-foreground">{t('promptRewriteRulesDescription')}</p>
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={addPromptRule}
+                                        disabled={!requestRewriteSupported || !formData.request_rewrite.enabled}
+                                        className="shrink-0 gap-1.5 rounded-lg"
+                                    >
+                                        <Plus className="size-3.5" />
+                                        {t('promptRewriteAdd')}
+                                    </Button>
+                                </div>
+
+                                {promptRules.length === 0 ? (
+                                    <p className="text-xs text-muted-foreground">{t('promptRewriteRulesEmpty')}</p>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {promptRules.map((rule, index) => (
+                                            <div key={`${idPrefix}-prompt-rule-${index}`} className="grid grid-cols-1 items-end gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                                                <div className="min-w-0 space-y-1">
+                                                    <label htmlFor={`${idPrefix}-prompt-rule-pattern-${index}`} className="text-xs text-muted-foreground">
+                                                        {t('promptRewritePattern')}
+                                                    </label>
+                                                    <Input
+                                                        id={`${idPrefix}-prompt-rule-pattern-${index}`}
+                                                        value={rule.pattern}
+                                                        onChange={(event) => updatePromptRule(index, 'pattern', event.target.value)}
+                                                        placeholder={t('promptRewritePatternPlaceholder')}
+                                                        disabled={!requestRewriteSupported || !formData.request_rewrite.enabled}
+                                                        className="rounded-lg font-mono text-xs"
+                                                    />
+                                                </div>
+                                                <div className="min-w-0 space-y-1">
+                                                    <label htmlFor={`${idPrefix}-prompt-rule-replacement-${index}`} className="text-xs text-muted-foreground">
+                                                        {t('promptRewriteReplacement')}
+                                                    </label>
+                                                    <Input
+                                                        id={`${idPrefix}-prompt-rule-replacement-${index}`}
+                                                        value={rule.replacement}
+                                                        onChange={(event) => updatePromptRule(index, 'replacement', event.target.value)}
+                                                        placeholder={t('promptRewriteReplacementPlaceholder')}
+                                                        disabled={!requestRewriteSupported || !formData.request_rewrite.enabled}
+                                                        className="rounded-lg font-mono text-xs"
+                                                    />
+                                                </div>
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    onClick={() => removePromptRule(index)}
+                                                    disabled={!requestRewriteSupported || !formData.request_rewrite.enabled}
+                                                    aria-label={t('promptRewriteRemove')}
+                                                    className="size-9 shrink-0 text-muted-foreground hover:text-destructive"
+                                                >
+                                                    <Trash2 className="size-4" />
+                                                </Button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                         </div>
                     </AccordionContent>
@@ -2022,15 +2199,6 @@ export function ChannelForm({
                         />
                         <span className="text-sm font-medium text-card-foreground">{t('enabled')}</span>
                     </label>
-                    <ProxySelector
-                        layout="row"
-                        value={{ proxy_mode: formData.proxy_mode, proxy_config_id: formData.proxy_config_id }}
-                        onChange={(next) => onFormDataChange({
-                            ...formData,
-                            proxy_mode: next.proxy_mode as ChannelProxyMode,
-                            proxy_config_id: next.proxy_config_id ?? null,
-                        })}
-                    />
                 </div>
                 <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-border/10 pt-4">
                     <label className="flex items-center gap-2 cursor-pointer">
@@ -2045,7 +2213,7 @@ export function ChannelForm({
                     {/* 号池渠道（pool_id !== 0）不渲染该开关：其 relay 走 poolscheduler，按
                         PoolAccount.Models 过滤，完全不消费 ChannelKey.SupportedModels，开关打开也无效。
                         门禁写法与下方 key 编辑区的 formData.pool_id === 0 / canFillPerKeyModels 保持一致。 */}
-                    {formData.pool_id === 0 && (
+                    {formData.pool_id === 0 && !isNode && (
                     <div className="flex items-center gap-1">
                         <label className={cn('flex items-center gap-2', formData.auto_sync ? 'cursor-pointer' : 'cursor-not-allowed')}>
                             <Switch

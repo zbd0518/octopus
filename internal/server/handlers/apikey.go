@@ -10,6 +10,7 @@ import (
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/apikey"
 	"github.com/lingyuins/octopus/internal/op/group"
+	"github.com/lingyuins/octopus/internal/op/ratelimitstore"
 	st "github.com/lingyuins/octopus/internal/op/stats"
 	"github.com/lingyuins/octopus/internal/server/auth"
 	"github.com/lingyuins/octopus/internal/server/middleware"
@@ -60,6 +61,10 @@ func createAPIKey(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
 		return
 	}
+	if err := ratelimitstore.ValidateLimits(ratelimitstore.Limits{RPM: req.RateLimitRPM, TPM: req.RateLimitTPM}, req.PerModelQuotaJSON); err != nil {
+		resp.ErrorWithKey(c, http.StatusBadRequest, "Invalid rate limit configuration", "errors.invalidParameter", nil)
+		return
+	}
 	apiKey := req.toModel()
 	apiKey.ID = 0
 	// Use custom key if provided; otherwise auto-generate.
@@ -100,6 +105,10 @@ func updateAPIKey(c *gin.Context) {
 	var req apiKeyRequestPayload
 	if err := c.ShouldBindJSON(&req); err != nil {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
+		return
+	}
+	if err := ratelimitstore.ValidateLimits(ratelimitstore.Limits{RPM: req.RateLimitRPM, TPM: req.RateLimitTPM}, req.PerModelQuotaJSON); err != nil {
+		resp.ErrorWithKey(c, http.StatusBadRequest, "Invalid rate limit configuration", "errors.invalidParameter", nil)
 		return
 	}
 	apiKey := req.toModel()

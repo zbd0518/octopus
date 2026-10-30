@@ -49,6 +49,7 @@ import {
     endpointTypeLabelKey,
     normalizeEndpointType,
     supportsGroupTest,
+    reasoningBufferPatch,
 } from './utils';
 import { getModelIcon } from '@/lib/model-icons';
 import {
@@ -641,6 +642,7 @@ export function GroupListItem({
                 payload.reasoning_buffer_strategy = nextReasoningBufferStrategy;
             if (nextThinkingMode !== (group.thinking_mode ?? 'auto'))
                 payload.thinking_mode = nextThinkingMode;
+            Object.assign(payload, reasoningBufferPatch(group.reasoning_buffer_strategy, values.reasoning_buffer_strategy));
             if (items_to_add.length) payload.items_to_add = items_to_add;
             if (items_to_update.length)
                 payload.items_to_update = items_to_update;
@@ -1113,6 +1115,7 @@ export function GroupListItem({
                             <div className="flex items-center gap-1 border-t border-border/25 pt-2">
                                 {/* Edit */}
                                 <MorphingDialog
+                                    disableSharedLayout
                                     onOpen={() => setEditorOpen(true)}
                                     onClose={() => setEditorOpen(false)}
                                 >

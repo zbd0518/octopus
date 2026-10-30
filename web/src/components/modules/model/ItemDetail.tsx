@@ -230,6 +230,29 @@ function ChannelsSection({ model, density }: ChannelsSectionProps) {
     );
 }
 
+function VariantsSection({ model, density }: { model: ModelMarketItem; density: DetailDensity }) {
+    const t = useTranslations('model');
+    const variants = model.variant_names ?? [];
+    if (variants.length <= 1) return null;
+    return (
+        <div className={SECTION_CLASS[density]}>
+            <div className={density === 'desktop' ? 'flex items-center justify-between gap-2' : 'flex items-center justify-between gap-1'}>
+                <h4 className={SECTION_TITLE_CLASS[density]}>{t('detail.variants')}</h4>
+                <span className={density === 'desktop' ? 'text-xs text-muted-foreground' : 'text-[0.65rem] text-muted-foreground'}>
+                    {t('detail.variantCount', { count: variants.length })}
+                </span>
+            </div>
+            <div className={cn('mt-2 flex flex-wrap', TAGS_ROW_CLASS[density])}>
+                {variants.map((variant) => (
+                    <span key={variant} className={TAG_PILL_CLASS[density]} title={variant}>
+                        {variant}
+                    </span>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 export function ChannelTagsRow({
     model,
     maxVisible,
@@ -285,6 +308,7 @@ export function ModelItemDetail({
                     <PricingSection model={model} brandColor={brandColor} density="desktop" />
                     <RuntimeSection model={model} latencyUnit={latencyUnit} density="desktop" />
                 </div>
+                <VariantsSection model={model} density="desktop" />
                 <ChannelsSection model={model} density="desktop" />
             </div>
         );
@@ -294,6 +318,7 @@ export function ModelItemDetail({
         <div className="space-y-3">
             <PricingSection model={model} brandColor={brandColor} density="mobile" />
             <RuntimeSection model={model} latencyUnit={latencyUnit} density="mobile" />
+            <VariantsSection model={model} density="mobile" />
             <ChannelsSection model={model} density="mobile" />
         </div>
     );

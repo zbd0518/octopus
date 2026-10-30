@@ -16,6 +16,10 @@ The public relay API supports both OpenAI-style and Anthropic-style clients:
 
 JSON media endpoints can also proxy upstream SSE streams when the provider supports `stream=true`.
 
+Key RPM/TPM limits apply across models together with per-model sublimits, including configurations with only model limits. Known upstream usage settles TPM reservations and may create token debt. Media without usage consumes RPM without invented token counts. A configured Redis quota backend returns 503 when unavailable or admission is uncertain instead of granting separate memory quotas. Cache/replay requests consume ingress RPM but do not duplicate upstream TPM or cost.
+
+Recovery cursors return 409 for missing, trimmed, or replay-disabled sessions; retrying a failed session without a cursor starts a new execution. Recovery rechecks current categories and conditions. Media retains provider-specific rewriting and response forwarding, supports API key/Bearer/cookie accounts, and rejects OAuth media protocols requiring unsupported adapters. Attempt timeout includes the response body; a media stream's first-token timeout means its first response data byte.
+
 Semantic cache is currently evaluated for non-streaming and streaming OpenAI Chat and OpenAI Responses text requests (streaming cache hits replay from the SSE session buffer). Anthropic, embeddings, and media / utility requests bypass the cache and continue through the normal relay flow.
 
 **Log module: two views**
@@ -35,11 +39,11 @@ Requests with model name prefixed `zen/<model>` bypass group model mapping and r
 
 **Response ID Affinity:**
 
-For the OpenAI Responses API, follow-up requests referencing the same response ID are automatically routed to the same upstream channel to maintain conversation continuity.
+Gateway affinity for `previous_response_id` is not implemented. Passthrough preserves legitimate upstream fields, but does not guarantee the same upstream account on follow-up requests. Stateful continuation requires a route pinned to a compatible upstream.
 
 **Model Mapping:**
 
-Global model name rewriting rules are applied in the relay pipeline before group resolution. Rules support exact, wildcard (glob), and regex matching with priority ordering and optional group scope.
+Unscoped rules match once before group resolution and prefer a group named by the target. If absent, the original group may be used with an upstream-model override. Group-scoped rules match the original client model after group selection and override upstream models without selecting another group. The first matching rule wins; mappings are not recursive. Allowlists and model subquotas use the client model, while cooldown and health use the upstream model.
 
 ---
 
@@ -70,7 +74,7 @@ A top-level module for managing upstream accounts (Anthropic, OpenAI, Gemini, Gr
 
 ### 🔁 Model Mapping
 
-Global model name rewriting rules applied in the relay pipeline before group resolution:
+Rules support unscoped name routing before group selection and scoped upstream overrides afterward; see the mapping order above:
 
 - **Match types**: Exact, Wildcard (glob), and Regex
 - **Target model**: the rewritten model name

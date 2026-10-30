@@ -3,11 +3,16 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/lingyuins/octopus/internal/conf"
 	"github.com/lingyuins/octopus/internal/db"
+	"github.com/lingyuins/octopus/internal/nodetransport"
 	"github.com/lingyuins/octopus/internal/op"
+	"github.com/lingyuins/octopus/internal/op/modelnormalizeai"
+	"github.com/lingyuins/octopus/internal/op/ratelimitstore"
+	"github.com/lingyuins/octopus/internal/plugin"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
 	"github.com/lingyuins/octopus/internal/server"
 	"github.com/lingyuins/octopus/internal/store"
@@ -97,6 +102,11 @@ func runStart() error {
 	} else if interruptedCount > 0 {
 		log.Warnf("marked %d stale ai route task(s) as interrupted on startup", interruptedCount)
 	}
+	if interruptedCount, err := modelnormalizeai.RecoverInterrupted(startupTaskCtx); err != nil {
+		log.Warnf("model normalization task recovery failed: %v", err)
+	} else if interruptedCount > 0 {
+		log.Warnf("marked %d stale model normalization task(s) as interrupted on startup", interruptedCount)
+	}
 	startupTaskCancel()
 
 	if err := op.InitCache(); err != nil {
@@ -124,11 +134,18 @@ func runStart() error {
 		shutdown.Shutdown()
 		return fmt.Errorf("user init error: %w", err)
 	}
+	pluginManager, err := plugin.Init(filepath.Join(conf.DataDir(), "plugins"))
+	if err != nil {
+		shutdown.Shutdown()
+		return fmt.Errorf("plugin init error: %w", err)
+	}
+	shutdown.Register(func() error { pluginManager.Close(); return nil })
 	if err := op.EnsureDevBootstrapData(context.Background()); err != nil {
 		shutdown.Shutdown()
 		return fmt.Errorf("dev bootstrap init error: %w", err)
 	}
 
+	shutdown.Register(nodetransport.DefaultManager.Close)
 	if err := server.Start(); err != nil {
 		shutdown.Shutdown()
 		return fmt.Errorf("server start error: %w", err)
@@ -156,6 +173,11 @@ func runStart() error {
 	})
 	shutdown.Register(op.SaveCache)
 	shutdown.Register(func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return ratelimitstore.WaitForSettlements(ctx)
+	})
+	shutdown.Register(func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
@@ -171,6 +193,9 @@ func runStart() error {
 
 	task.Init()
 	go task.RUN()
+	if err := pluginManager.FinalizeUninstalls(context.Background()); err != nil {
+		log.Warnf("plugin uninstall cleanup error: %v", err)
+	}
 	shutdown.Listen()
 	return nil
 }

@@ -115,7 +115,6 @@ export function System() {
                                 label={t('system.fields.importExport')}
                                 value={`${data?.import_enabled ? t('system.fields.enabled') : t('system.fields.disabled')} / ${data?.export_enabled ? t('system.fields.enabled') : t('system.fields.disabled')}`}
                             />
-                            <InfoRow label={t('system.fields.aiRouteGroup')} value={String(data?.ai_route_group_id ?? 0)} />
                             <InfoRow
                                 label={t('system.fields.aiRouteTimeout')}
                                 value={`${data?.ai_route_timeout_seconds ?? 0}s`}

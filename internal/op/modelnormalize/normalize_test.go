@@ -15,7 +15,7 @@ func TestNormalizeWithRules_UsesBuiltinRules(t *testing.T) {
 		"agent/kimi-k2.5":          "kimi-k2.5",
 		"kimi-k2.5-cc":             "kimi-k2.5",
 		"Kimi-K2.5-CC":             "kimi-k2.5",
-		"kimi-k2.5-preview-fast":   "kimi-k2.5",
+		"kimi-k2.5-preview-fast":   "kimi-k2.5-preview-fast",
 	}
 
 	for input, want := range tests {
@@ -140,5 +140,76 @@ func TestNormalizeWithRules_SuffixMatchingCaseInsensitive(t *testing.T) {
 	rules = Rules{FunctionalSuffixes: []string{`-V\d+`}}
 	if got := NormalizeWithRules("model-v20250514", rules); got != "model" {
 		t.Fatalf("正则后缀大小写: got %q, want model", got)
+	}
+}
+
+func TestNormalizeWithRules_PreservesSemanticModelVariants(t *testing.T) {
+	rules := Rules{}
+	tests := map[string]string{
+		"gpt-4o":                      "gpt-4o",
+		"gpt-4o-mini":                 "gpt-4o-mini",
+		"gemini-2.5-flash":            "gemini-2.5-flash",
+		"gemini-2.5-pro":              "gemini-2.5-pro",
+		"deepseek-v4-flash":           "deepseek-v4-flash",
+		"deepseek-v4-pro":             "deepseek-v4-pro",
+		"grok-4-1-fast-reasoning":     "grok-4-1-fast-reasoning",
+		"grok-4-1-fast-non-reasoning": "grok-4-1-fast-non-reasoning",
+		"qwen3-vl-32b-thinking":       "qwen3-vl-32b-thinking",
+	}
+	for input, want := range tests {
+		if got := NormalizeWithRules(input, rules); got != want {
+			t.Fatalf("NormalizeWithRules(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestValidateRulesRejectsSemanticSuffixAndUnstableCanonical(t *testing.T) {
+	if err := ValidateRules(Rules{FunctionalSuffixes: []string{"-thinking"}}); err == nil {
+		t.Fatal("ValidateRules accepted protected thinking suffix")
+	}
+	if err := ValidateRules(Rules{
+		FunctionalSuffixes: []string{"-cc"},
+		ExplicitMappings: []ExplicitMapping{{
+			Variant:   "gpt-4o-cc",
+			Canonical: "gpt-4o-cc",
+		}},
+	}); err == nil {
+		t.Fatal("ValidateRules accepted canonical changed by suffix rules")
+	}
+}
+
+func TestNormalizeWithRules_ExplicitFullMatchPreservesSemanticVariant(t *testing.T) {
+	rules := Rules{
+		FunctionalSuffixes: []string{"-cc"},
+		ExplicitMappings: []ExplicitMapping{{
+			Variant:   "deepseek-v4-pro-thinking",
+			Canonical: "deepseek-v4-pro-thinking",
+		}},
+	}
+	if got := NormalizeWithRules("deepseek-v4-pro-thinking", rules); got != "deepseek-v4-pro-thinking" {
+		t.Fatalf("explicit semantic mapping = %q", got)
+	}
+}
+
+func TestAnalyzeNamesReportsConflictsAndHighRiskMerges(t *testing.T) {
+	rules := Rules{
+		ExplicitMappings: []ExplicitMapping{
+			{Variant: "gpt-4o-mini", Canonical: "gpt-4o"},
+			{Variant: "gpt-4o", Canonical: "gpt-4o"},
+			{Variant: "claude-opus-4-6", Canonical: "claude-opus-4.6"},
+			{Variant: "claude-opus-4.6", Canonical: "claude-opus-4-6"},
+			{Variant: "grok-4-1-fast-reasoning", Canonical: "grok-4-1"},
+			{Variant: "grok-4-1-fast-non-reasoning", Canonical: "grok-4-1"},
+		},
+	}
+	report := AnalyzeNames([]string{
+		"gpt-4o", "gpt-4o-mini",
+		"grok-4-1-fast-reasoning", "grok-4-1-fast-non-reasoning",
+	}, rules)
+	if len(report.HighRiskMerges) < 2 {
+		t.Fatalf("high-risk merges = %+v, want semantic risk", report.HighRiskMerges)
+	}
+	if len(report.Diagnostics) == 0 {
+		t.Fatal("diagnostics empty, want explicit mapping warning/error")
 	}
 }

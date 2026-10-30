@@ -50,6 +50,10 @@ function MetricTile({
 
 export const ModelItem = memo(function ModelItem({ model, layout = 'grid', latencyUnit = 'auto' }: ModelItemProps) {
     const t = useTranslations('model');
+    const displayName = (model.variant_count ?? 0) > 1
+        ? (model.canonical_name || model.name)
+        : model.name;
+    const primaryName = model.primary_name || model.name;
     const isListLayout = layout === 'list';
     const [isExpanded, setIsExpanded] = useState(false);
     const instanceId = useId();
@@ -69,9 +73,10 @@ export const ModelItem = memo(function ModelItem({ model, layout = 'grid', laten
         confirmDelete,
         isUpdatePending,
         isDeletePending,
+        canMutate,
     } = useModelActions(model);
 
-    const { Avatar: ModelAvatar, color: brandColor, label: providerLabel } = useMemo(() => getModelIcon(model.name), [model.name]);
+    const { Avatar: ModelAvatar, color: brandColor, label: providerLabel } = useMemo(() => getModelIcon(displayName), [displayName]);
     const requestCount = totalRequests(model.request_success, model.request_failed);
     const latencyLabel = formatAverageLatency(model.average_latency_ms, requestCount, latencyUnit);
     const successRateLabel = formatSuccessRate(model.success_rate, requestCount);
@@ -96,9 +101,9 @@ export const ModelItem = memo(function ModelItem({ model, layout = 'grid', laten
                                 </div>
                                 <Tooltip side="top" sideOffset={10} align="start">
                                     <TooltipTrigger className="block max-w-full truncate text-left text-base font-semibold leading-tight text-card-foreground sm:text-lg">
-                                        {model.name}
+                                        {displayName}
                                     </TooltipTrigger>
-                                    <TooltipContent key={model.name}>{model.name}</TooltipContent>
+                                    <TooltipContent key={displayName}>{displayName}</TooltipContent>
                                 </Tooltip>
                                 {isPeakBilling && (
                                     <Badge
@@ -119,7 +124,7 @@ export const ModelItem = memo(function ModelItem({ model, layout = 'grid', laten
 
                             <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
                                 <CopyIconButton
-                                    text={model.name}
+                                    text={primaryName}
                                     className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border/25 bg-card text-muted-foreground transition-colors hover:bg-card hover:text-foreground sm:h-10 sm:w-10"
                                     copyIconClassName="size-3.5 sm:size-4"
                                     checkIconClassName="size-3.5 sm:size-4"
@@ -138,8 +143,9 @@ export const ModelItem = memo(function ModelItem({ model, layout = 'grid', laten
                                 <button
                                     type="button"
                                     onClick={openEdit}
+                                    disabled={!canMutate}
                                     aria-label={t('card.edit')}
-                                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border/25 bg-card text-muted-foreground transition-colors hover:bg-card hover:text-foreground sm:h-10 sm:w-10"
+                                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border/25 bg-card text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 sm:h-10 sm:w-10"
                                     title={t('card.edit')}
                                 >
                                     <Pencil className="size-3.5 sm:size-4" />
@@ -147,8 +153,9 @@ export const ModelItem = memo(function ModelItem({ model, layout = 'grid', laten
                                 <button
                                     type="button"
                                     onClick={openDelete}
+                                    disabled={!canMutate}
                                     aria-label={t('card.delete')}
-                                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-destructive/15 bg-destructive/8 text-destructive transition-colors hover:bg-destructive hover:text-destructive-foreground sm:h-10 sm:w-10"
+                                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-destructive/15 bg-destructive/8 text-destructive transition-colors hover:bg-destructive hover:text-destructive-foreground disabled:cursor-not-allowed disabled:opacity-40 sm:h-10 sm:w-10"
                                     title={t('card.delete')}
                                 >
                                     <Trash2 className="size-3.5 sm:size-4" />
@@ -192,7 +199,7 @@ export const ModelItem = memo(function ModelItem({ model, layout = 'grid', laten
             </div>
 
             <ModelEditDialog
-                modelName={model.name}
+                modelName={primaryName}
                 brandColor={brandColor}
                 open={isEditOpen}
                 onOpenChange={(open) => { if (!open) closeEdit(); }}
@@ -204,7 +211,7 @@ export const ModelItem = memo(function ModelItem({ model, layout = 'grid', laten
                 peakBilling={isPeakBilling}
             />
             <ModelDeleteDialog
-                modelName={model.name}
+                modelName={primaryName}
                 open={isDeleteOpen}
                 isPending={isDeletePending}
                 onOpenChange={(open) => { if (!open) closeDelete(); }}

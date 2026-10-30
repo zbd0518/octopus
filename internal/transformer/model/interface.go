@@ -45,7 +45,7 @@ client		-> inbound.TransformRequest(ctx, body)
 
 流式
 client		-> inbound.TransformRequest(ctx, body)
-        	-> outbound.TransformStream(ctx, chunk)
+			-> outbound.TransformRequest(ctx, request)
         	-> http.Do(request)
         	-> outbound.TransformStream(ctx, chunk)
         	-> inbound.TransformStream(ctx, chunk)

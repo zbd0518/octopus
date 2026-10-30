@@ -29,7 +29,9 @@ internal/
 │   ├── llm/            # LLM price catalog operations
 │   ├── modelmapping/   # Model mapping rule management
 │   ├── modelnormalize/ # Model-name normalization rules
+│   ├── modelnormalizeai/ # AI normalization candidates, coverage, and task progress
 │   ├── navorder/       # Navigation order and visibility persistence
+│   ├── node/           # Local node lifecycle, token rotation, and channel binding validation
 │   ├── notification/   # Notification center (messages, SSE stream, preferences)
 │   ├── ops/            # Ops dashboard data aggregation (telemetry, quota, health)
 │   ├── pool/           # Account pool CRUD, credentials, quota, unschedulable rules, and account testing
@@ -41,6 +43,7 @@ internal/
 │   ├── stats/          # Request statistics aggregation, cache, and site-model backfill
 │   ├── user/           # User management and authentication
 │   └── webauthn/       # WebAuthn / Passkey registration and authentication
+├── nodetransport/      # Cloud-side reverse node sessions, multiplexing and runtime snapshots
 ├── relay/              # Core relay pipeline
 │   ├── balancer/       # Load balancing strategies (RoundRobin, Random, Failover, Weighted, Auto)
 │   ├── condition/      # Request condition evaluation

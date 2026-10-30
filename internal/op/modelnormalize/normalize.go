@@ -20,10 +20,11 @@ var builtinRouterPrefixes = []string{
 
 var builtinFunctionalSuffixes = []string{
 	"-cc",
-	"-fast",
-	"-thinking",
-	"-preview",
-	"-beta",
+	"-free",
+	"-:free",
+	"-(free)",
+	"-vip",
+	"-ssvip",
 	"-latest",
 }
 
@@ -36,9 +37,20 @@ type Rules struct {
 	RouterPrefixes     []string
 	FunctionalSuffixes []string
 	ExplicitMappings   []ExplicitMapping
-	// explicitByKey 预处理缓存：dotDashKey(normalizeToBase(variant)) → canonical。
-	// 同一 key 多条映射只保留第一条，自动消解用户的双向/冲突映射（存量数据也生效）。
-	explicitByKey map[string]string
+	// explicitFullByKey matches after path/router-prefix cleanup but before
+	// functional suffix cleanup, preserving semantic variants when explicit.
+	explicitFullByKey map[string]string
+	// explicitBaseByKey matches after safe functional suffix cleanup.
+	explicitBaseByKey map[string]string
+}
+
+// NormalizationResult describes both the canonical value and how it was
+// obtained. Consumers that have their own legacy identity rules can use
+// ExplicitMapping to avoid overriding a user-approved semantic mapping.
+type NormalizationResult struct {
+	Canonical       string
+	RouterBase      string
+	ExplicitMapping bool
 }
 
 var rulesCache struct {
@@ -54,6 +66,10 @@ var suffixRegexCache sync.Map
 
 func Normalize(name string) string {
 	return NormalizeWithRules(name, CurrentRules())
+}
+
+func NormalizeDetailed(name string) NormalizationResult {
+	return NormalizeWithRulesDetailed(name, CurrentRules())
 }
 
 func CurrentRules() Rules {
@@ -76,30 +92,56 @@ func CurrentRules() Rules {
 }
 
 func NormalizeWithRules(name string, rules Rules) string {
+	return NormalizeWithRulesDetailed(name, rules).Canonical
+}
+
+// NormalizeWithRulesDetailed applies explicit mappings in two phases:
+// semantic/full variant first, then the safe base-name equivalent. Generic
+// suffix stripping only runs after both explicit phases have missed.
+func NormalizeWithRulesDetailed(name string, rules Rules) NormalizationResult {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
-		return ""
+		return NormalizationResult{}
 	}
 
-	// 显式映射：输入先完整规范化（剥路径+前缀+后缀）为基础名，再按
-	// dotDashKey（-/. 统一、小写）查映射。同一 key 多条映射只取第一条，
-	// 自动消解用户的双向/冲突映射（如 claude-opus-4-6 ↔ claude-opus-4.6），
-	// 使同一模型不同命名归一到同一个 canonical。映射带任意渠道前缀/路径
-	// 均与裸名变体互相命中。
+	// Check explicit mappings before generic suffix stripping. This allows a
+	// rule to preserve semantic variants such as "-thinking" or "-reasoning".
 	if len(rules.ExplicitMappings) > 0 {
-		keyMap := rules.explicitByKey
-		if keyMap == nil {
-			keyMap = buildExplicitByKey(rules.ExplicitMappings, rules)
+		fullMap := rules.explicitFullByKey
+		baseMap := rules.explicitBaseByKey
+		if fullMap == nil || baseMap == nil {
+			fullMap, baseMap = buildExplicitByKey(rules.ExplicitMappings, rules)
+		}
+		full := normalizeToRouterBase(trimmed, rules)
+		if canonical, ok := fullMap[dotDashKey(full)]; ok {
+			return NormalizationResult{
+				Canonical:       canonical,
+				RouterBase:      full,
+				ExplicitMapping: true,
+			}
 		}
 		base := normalizeToBase(trimmed, rules)
-		if canonical, ok := keyMap[dotDashKey(base)]; ok {
-			return canonical
+		if canonical, ok := baseMap[dotDashKey(base)]; ok {
+			return NormalizationResult{
+				Canonical:       canonical,
+				RouterBase:      full,
+				ExplicitMapping: true,
+			}
 		}
 	}
 
-	result := stripPathAndRouterPrefix(trimmed, rules)
-	result = stripFunctionalSuffixes(result, rules)
-	return strings.ToLower(result)
+	routerBase := normalizeToRouterBase(trimmed, rules)
+	result := stripFunctionalSuffixes(routerBase, rules)
+	result = strings.ToLower(strings.TrimSpace(result))
+	if result == "" {
+		// A malformed path-like input should not make a non-empty model vanish
+		// from the market. Keep a deterministic fallback for coverage/reporting.
+		result = strings.ToLower(trimmed)
+	}
+	return NormalizationResult{
+		Canonical:  result,
+		RouterBase: routerBase,
+	}
 }
 
 // dotDashKey 把 - 和 . 统一为 . 并小写，用于显式映射的等价匹配与冲突检测。
@@ -110,29 +152,45 @@ func dotDashKey(s string) string {
 	return strings.ReplaceAll(s, "-", ".")
 }
 
-// buildExplicitByKey 预处理显式映射：key = dotDashKey(normalizeToBase(variant))，
-// value = canonical（小写）。同一 key 只保留第一条（按用户配置顺序），
-// 运行时据此自动忽略反向/冲突映射。
-func buildExplicitByKey(mappings []ExplicitMapping, rules Rules) map[string]string {
-	m := make(map[string]string, len(mappings))
+// buildExplicitByKey precomputes both semantic/full-name and base-name
+// mappings. The first mapping wins for legacy conflicting settings; new
+// settings are validated before persistence.
+func buildExplicitByKey(mappings []ExplicitMapping, rules Rules) (map[string]string, map[string]string) {
+	full := make(map[string]string, len(mappings))
+	base := make(map[string]string, len(mappings))
 	for _, mapping := range mappings {
-		key := dotDashKey(normalizeToBase(mapping.Variant, rules))
 		canonical := strings.ToLower(strings.TrimSpace(mapping.Canonical))
-		if key == "" || canonical == "" {
+		if canonical == "" {
 			continue
 		}
-		if _, exists := m[key]; !exists {
-			m[key] = canonical
+		fullKey := dotDashKey(normalizeToRouterBase(mapping.Variant, rules))
+		if fullKey != "" {
+			if _, exists := full[fullKey]; !exists {
+				full[fullKey] = canonical
+			}
+		}
+		baseKey := dotDashKey(normalizeToBase(mapping.Variant, rules))
+		if baseKey != "" {
+			if _, exists := base[baseKey]; !exists {
+				base[baseKey] = canonical
+			}
 		}
 	}
-	return m
+	return full, base
 }
 
-// normalizeToBase 完整规范化：剥路径 + 路由前缀 + 功能性后缀，返回小写基础名。
+// normalizeToRouterBase strips paths and router prefixes but leaves functional
+// suffixes intact. It is used for semantic explicit mappings.
+func normalizeToRouterBase(name string, rules Rules) string {
+	return strings.ToLower(stripPathAndRouterPrefix(name, rules))
+}
+
+// normalizeToBase performs the full generic cleanup and returns a lower-case
+// base name.
 func normalizeToBase(name string, rules Rules) string {
-	result := stripPathAndRouterPrefix(name, rules)
+	result := normalizeToRouterBase(name, rules)
 	result = stripFunctionalSuffixes(result, rules)
-	return strings.ToLower(result)
+	return result
 }
 
 // stripFunctionalSuffixes 循环剥离功能性后缀。
@@ -289,7 +347,7 @@ func loadRules() Rules {
 	// 预构建显式映射索引：NormalizeWithRules 是市场热路径（每模型名调用一次），
 	// 若每次调用都 buildExplicitByKey（O(映射数)），模型名上万 × 映射上百时
 	// 单次市场聚合可达秒级，是网关 504 的候选成因。此处缓存刷新时构建一次。
-	rules.explicitByKey = buildExplicitByKey(rules.ExplicitMappings, rules)
+	rules.explicitFullByKey, rules.explicitBaseByKey = buildExplicitByKey(rules.ExplicitMappings, rules)
 	return rules
 }
 

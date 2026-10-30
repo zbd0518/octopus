@@ -1,7 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
 import { apiClient } from '../client';
+import { API_BASE_URL } from '../client';
 import { REFETCH_INTERVAL_CONFIG } from '../constants';
 import { logger } from '@/lib/logger';
+import { useAuthStore } from './user';
 
 /**
  * LLM 价格信息
@@ -20,6 +23,73 @@ export interface LLMInfo extends LLMPrice {
     name: string;
     price_manual?: boolean;      // 价格是否手动设置（同步刷新时保留）
     billing_schedule?: string;   // 峰谷计费标识（"deepseek_v4" 或空，只读展示用）
+}
+
+export interface ModelNormalizeRuleSet {
+    router_prefixes: string[];
+    functional_suffixes: string[];
+    explicit_mappings: Array<{ variant: string; canonical: string }>;
+    market_dedupe_default?: boolean;
+}
+
+export interface ModelNormalizeCoverageCluster {
+    canonical: string;
+    variants: string[];
+}
+
+export interface ModelNormalizeCoverage {
+    input_count: number;
+    canonical_count: number;
+    merged_cluster_count: number;
+    merged_variant_count: number;
+    unchanged_count: number;
+    unresolved?: string[];
+    clusters?: ModelNormalizeCoverageCluster[];
+    high_risk_merges?: ModelNormalizeCoverageCluster[];
+    diagnostics?: Array<{
+        severity: string;
+        kind: string;
+        message: string;
+        index?: number;
+        variant?: string;
+        canonical?: string;
+    }>;
+}
+
+export type ModelNormalizeTaskStatus = 'queued' | 'running' | 'completed' | 'failed';
+export type ModelNormalizeTaskStep =
+    | 'queued'
+    | 'collecting_models'
+    | 'building_batches'
+    | 'analyzing_batches'
+    | 'validating'
+    | 'completed'
+    | 'failed';
+
+export interface ModelNormalizeTask {
+    id: string;
+    status: ModelNormalizeTaskStatus;
+    current_step: ModelNormalizeTaskStep;
+    progress_percent: number;
+    total_batches: number;
+    completed_batches: number;
+    done: boolean;
+    result_ready: boolean;
+    event_sequence?: number;
+    message?: string;
+    error_reason?: string;
+    summary?: {
+        total_models: number;
+        processed_models: number;
+        total_batches: number;
+        completed_batches: number;
+    };
+    result?: {
+        rules: ModelNormalizeRuleSet;
+        coverage: ModelNormalizeCoverage;
+        valid?: boolean;
+        validation_errors?: string[];
+    };
 }
 
 /**
@@ -66,6 +136,10 @@ export interface ModelMarketChannel {
 }
 
 export interface ModelMarketItem extends LLMInfo {
+    canonical_name?: string;
+    primary_name?: string;
+    variant_names?: string[];
+    variant_count?: number;
     channel_count: number;
     enabled_key_count: number;
     average_latency_ms: number;
@@ -104,6 +178,10 @@ function normalizeModelMarketResponse(response: Partial<ModelMarketResponse> | n
         items: items.map((item) => ({
             ...item,
             channels: Array.isArray(item.channels) ? item.channels : [],
+            variant_names: Array.isArray(item.variant_names) ? item.variant_names : [],
+            variant_count: typeof item.variant_count === 'number'
+                ? item.variant_count
+                : (Array.isArray(item.variant_names) ? item.variant_names.length : 0),
         })),
     };
 }
@@ -150,15 +228,177 @@ export function useModelChannelList() {
     });
 }
 
-export function useModelMarket(enabled = true) {
+export function useModelMarket(dedupe = true, enabled = true) {
     return useQuery({
-        queryKey: ['models', 'market'],
+        queryKey: ['models', 'market', dedupe],
         enabled,
         queryFn: async () => {
-            const response = await apiClient.get<ModelMarketResponse>('/api/v1/model/market');
+            const response = await apiClient.get<ModelMarketResponse>(
+                `/api/v1/model/market?dedupe=${dedupe ? 'true' : 'false'}`,
+            );
             return normalizeModelMarketResponse(response);
         },
         refetchInterval: REFETCH_INTERVAL_CONFIG,
+    });
+}
+
+export function useSaveModelNormalizeRules() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async (data: ModelNormalizeRuleSet) => {
+            return apiClient.post<null>('/api/v1/model/normalize/rules', data);
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['settings', 'list'] });
+            queryClient.invalidateQueries({ queryKey: ['models', 'market'] });
+        },
+    });
+}
+
+export function useModelNormalizeCoverage(enabled = true) {
+    return useQuery({
+        queryKey: ['models', 'normalize', 'coverage'],
+        enabled,
+        queryFn: async () => apiClient.get<ModelNormalizeCoverage>('/api/v1/model/normalize/coverage'),
+        refetchInterval: REFETCH_INTERVAL_CONFIG,
+    });
+}
+
+export function useStartModelNormalize() {
+    return useMutation({
+        mutationFn: async () => apiClient.post<ModelNormalizeTask>('/api/v1/model/normalize/generate', {}),
+    });
+}
+
+export function useModelNormalizeProgress(taskId: string | null, enabled = true) {
+    const queryClient = useQueryClient();
+    const token = useAuthStore((state) => state.token);
+    const [isStreamConnected, setIsStreamConnected] = useState(false);
+    const abortRef = useRef<AbortController | null>(null);
+
+    useEffect(() => {
+        if (!enabled || !taskId || !token) {
+            setIsStreamConnected(false);
+            return;
+        }
+        let cancelled = false;
+        let retryTimer: number | null = null;
+        let retryResolve: (() => void) | null = null;
+        let retryAttempt = 0;
+
+        const waitForRetry = (delayMs: number) =>
+            new Promise<void>((resolve) => {
+                retryResolve = resolve;
+                retryTimer = window.setTimeout(() => {
+                    retryTimer = null;
+                    retryResolve = null;
+                    resolve();
+                }, delayMs);
+            });
+
+        const connect = async () => {
+            while (!cancelled) {
+                const current = queryClient.getQueryData<ModelNormalizeTask>([
+                    'models', 'normalize', 'progress', taskId,
+                ]);
+                if (current?.done) {
+                    setIsStreamConnected(false);
+                    return;
+                }
+                try {
+                    const controller = new AbortController();
+                    abortRef.current = controller;
+                    const response = await fetch(`${API_BASE_URL}/api/v1/model/normalize/stream/${taskId}`, {
+                        headers: { Authorization: `Bearer ${token}` },
+                        signal: controller.signal,
+                    });
+                    if (!response.ok) throw new Error(`model normalization stream failed: ${response.status}`);
+                    if (!response.body) throw new Error('model normalization stream is empty');
+
+                    retryAttempt = 0;
+                    setIsStreamConnected(true);
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+                    const handleEvent = (chunk: string) => {
+                        const dataLines = chunk.split('\n')
+                            .filter((line) => line.startsWith('data:'))
+                            .map((line) => line.slice(5).trimStart());
+                        if (dataLines.length === 0) return;
+                        try {
+                            const incoming = JSON.parse(dataLines.join('\n')) as ModelNormalizeTask;
+                            if (!incoming.id || typeof incoming.status !== 'string') return;
+                            queryClient.setQueryData<ModelNormalizeTask>(
+                                ['models', 'normalize', 'progress', taskId],
+                                (previous) => (
+                                    previous && (previous.event_sequence ?? 0) > (incoming.event_sequence ?? 0)
+                                        ? previous
+                                        : incoming
+                                ),
+                            );
+                        } catch (error) {
+                            logger.error('parse model normalization progress failed:', error);
+                        }
+                    };
+
+                    while (!cancelled) {
+                        const { value, done } = await reader.read();
+                        if (done) break;
+                        buffer += decoder.decode(value, { stream: true });
+                        let boundary = buffer.indexOf('\n\n');
+                        while (boundary >= 0) {
+                            handleEvent(buffer.slice(0, boundary));
+                            buffer = buffer.slice(boundary + 2);
+                            boundary = buffer.indexOf('\n\n');
+                        }
+                        if (queryClient.getQueryData<ModelNormalizeTask>([
+                            'models', 'normalize', 'progress', taskId,
+                        ])?.done) {
+                            controller.abort();
+                            setIsStreamConnected(false);
+                            return;
+                        }
+                    }
+                    if (cancelled) return;
+                    setIsStreamConnected(false);
+                } catch (error) {
+                    if (cancelled || (error instanceof Error && error.name === 'AbortError')) return;
+                    setIsStreamConnected(false);
+                    logger.warn('model normalization progress stream failed, falling back to polling:', error);
+                } finally {
+                    abortRef.current = null;
+                }
+                await waitForRetry(Math.min(1000 * 2 ** retryAttempt, 10000));
+                retryAttempt += 1;
+            }
+        };
+
+        void connect();
+        return () => {
+            cancelled = true;
+            if (retryTimer !== null) {
+                window.clearTimeout(retryTimer);
+                retryTimer = null;
+            }
+            retryResolve?.();
+            retryResolve = null;
+            abortRef.current?.abort();
+            abortRef.current = null;
+            setIsStreamConnected(false);
+        };
+    }, [enabled, queryClient, taskId, token]);
+
+    return useQuery({
+        queryKey: ['models', 'normalize', 'progress', taskId],
+        enabled: enabled && Boolean(taskId),
+        retry: false,
+        queryFn: async () => apiClient.get<ModelNormalizeTask>(
+            `/api/v1/model/normalize/progress/${taskId}`,
+        ),
+        refetchInterval: (query) => {
+            const data = query.state.data;
+            return !enabled || !taskId || data?.done ? false : isStreamConnected ? false : 1500;
+        },
     });
 }
 
@@ -304,6 +544,8 @@ export function useLastUpdateTime() {
  */
 export interface ModelCapability {
     name: string;
+    canonical_name?: string;
+    aliases?: string[];
     endpoints: string[];
     conversation: boolean;
     available: boolean;

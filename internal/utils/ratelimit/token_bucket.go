@@ -56,6 +56,18 @@ func (tb *TokenBucket) AllowN(n int) bool {
 	return false
 }
 
+// Consume records completed usage even when it exceeds the available balance.
+func (tb *TokenBucket) Consume(n int) {
+	if n <= 0 {
+		return
+	}
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	now := time.Now()
+	tb.tokens = min(tb.burst, tb.tokens+now.Sub(tb.lastUpdate).Seconds()*tb.rate) - float64(n)
+	tb.lastUpdate = now
+}
+
 // TokensRemaining returns the current number of tokens available.
 func (tb *TokenBucket) TokensRemaining() int {
 	tb.mu.Lock()

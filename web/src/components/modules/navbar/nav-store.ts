@@ -6,6 +6,7 @@ export type NavItem =
     | 'hub'
     | 'channel'
     | 'pool'
+    | 'plugins'
     | 'group'
     | 'model'
     | 'analytics'
@@ -21,6 +22,7 @@ export const DEFAULT_NAV_ORDER: NavItem[] = [
     'hub',
     'channel',
     'pool',
+    'plugins',
     'group',
     'model',
     'analytics',

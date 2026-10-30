@@ -15,6 +15,7 @@ import (
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/pool"
 	"github.com/lingyuins/octopus/internal/op/setting"
+	pluginevent "github.com/lingyuins/octopus/internal/plugin/event"
 	"gorm.io/gorm"
 )
 
@@ -93,67 +94,13 @@ func stickyKey(poolID int, sessionHash string) string {
 	return fmt.Sprintf("%d:%s", poolID, sessionHash)
 }
 
-// SelectAccount 从指定池选择一个可用账号。
-// sessionHash 非空时启用粘性；excludeIDs 排除已尝试过的账号。
-// modelName 非空时按账号绑定的模型列表过滤（空 Models 表示不限）。
-// 返回选中的账号（已 acquire 并发槽位），调用方完成后必须调用 ReleaseSlot。
+// SelectAccount selects an account with an acquired slot; callers must call ReleaseSlot.
 func SelectAccount(poolID int, sessionHash string, excludeIDs []int, poolDefaultConcurrency int, modelName string) (*model.PoolAccount, error) {
-	// L1: 粘性会话
-	escapedStickyID := 0
-	if sessionHash != "" {
-		acct, ok, escapedID := trySticky(poolID, sessionHash, excludeIDs, poolDefaultConcurrency, modelName)
-		if ok {
-			return acct, nil
-		}
-		if escapedID > 0 {
-			escapedStickyID = escapedID
-		}
-	}
-
-	// L2: 获取可调度候选
-	candidates, err := pool.ListSchedulableAccounts(poolID)
+	lease, err := SelectAccountLease(poolID, sessionHash, excludeIDs, poolDefaultConcurrency, modelName)
 	if err != nil {
 		return nil, err
 	}
-	candidates = filterExcluded(candidates, excludeIDs)
-	candidates = filterByModel(candidates, modelName)
-	// L2.5: 可选分层过滤（priority 阈值），管理员显式配置即遵守（不 fallback）。
-	candidates = filterLayeredByPriority(candidates)
-	if len(candidates) == 0 {
-		// 候选为空时，尝试触发池内 token 过期的 OAuth 账号刷新（异步，不阻塞）。
-		triggerRefreshForExpired(poolID, modelName)
-		return nil, ErrNoAvailableAccount
-	}
-
-	// L3: 并发槽位过滤
-	candidates = filterBySlot(candidates, poolID, poolDefaultConcurrency)
-	if len(candidates) == 0 {
-		return nil, ErrNoAvailableAccount
-	}
-
-	// Escape only when another candidate can serve this request; caller-provided
-	// exclusions, model constraints, priority filters and slot limits still apply.
-	if escapedStickyID > 0 {
-		alternatives := filterExcluded(candidates, []int{escapedStickyID})
-		if len(alternatives) > 0 {
-			candidates = alternatives
-		}
-	}
-
-	// L4: 评分排序 + 选择
-	selected := selectByStrategy(candidates, poolID)
-
-	// L5: acquire 槽位 + 绑定粘性
-	acquireSlot(poolID, selected.ID)
-	// B1-#9: an escaped session does not rebind in this pass (the original
-	// sticky entry is kept; the session returns to it once stats recover).
-	if sessionHash != "" && escapedStickyID == 0 {
-		globalPoolSticky.Store(stickyKey(poolID, sessionHash), &stickyEntry{
-			AccountID:    selected.ID,
-			LastActivity: time.Now(),
-		})
-	}
-	return &selected, nil
+	return lease.Account, nil
 }
 
 // ReportResult 上报请求结果，更新 EWMA 统计和 DB 累计计数。
@@ -193,6 +140,7 @@ func ReportResult(poolID, accountID int, success bool, ttftMs float64, outputTok
 	// 入队非阻塞，队列满则丢弃当前 job（计数降级，下次请求会再累积）。
 	select {
 	case poolReportCh <- job:
+		pluginevent.Publish("pool.account.changed", map[string]any{"pool_id": poolID, "account_id": accountID, "success": success, "ttft_ms": ttftMs, "output_tokens": outputTokens})
 	default:
 		poolReportDroppedCount.Add(1)
 	}
@@ -376,16 +324,23 @@ func RecoverAccount(poolID, accountID int) error {
 func ReleaseSlot(poolID, accountID int) {
 	key := statsKey(poolID, accountID)
 	if val, ok := globalPoolSlots.Load(key); ok {
-		atomic.AddInt64(val.(*int64), -1)
+		releaseSlotCounter(val.(*int64))
 	}
 }
 
 // RemovePool 清理池相关的所有内存状态。
 func RemovePool(poolID int) {
+	slotLifecycleLock.Lock()
+	defer slotLifecycleLock.Unlock()
+	globalPoolSlots.Range(func(k, v any) bool {
+		if parsePoolID(k.(string)) == poolID && atomic.LoadInt64(v.(*int64)) == 0 {
+			globalPoolSlots.CompareAndDelete(k, v)
+		}
+		return true
+	})
 	globalPoolStats.Range(func(k, _ interface{}) bool {
 		if s := k.(string); len(s) > 0 && parsePoolID(s) == poolID {
 			globalPoolStats.Delete(k)
-			globalPoolSlots.Delete(k)
 		}
 		return true
 	})
@@ -400,9 +355,13 @@ func RemovePool(poolID int) {
 
 // RemoveAccount 清理单个账号的内存状态。
 func RemoveAccount(poolID, accountID int) {
+	slotLifecycleLock.Lock()
+	defer slotLifecycleLock.Unlock()
 	key := statsKey(poolID, accountID)
 	globalPoolStats.Delete(key)
-	globalPoolSlots.Delete(key)
+	if value, ok := globalPoolSlots.Load(key); ok && atomic.LoadInt64(value.(*int64)) == 0 {
+		globalPoolSlots.CompareAndDelete(key, value)
+	}
 	RemoveAuthError(poolID, accountID)
 	// 清理指向该账号的粘性条目。
 	globalPoolSticky.Range(func(k, v interface{}) bool {
@@ -417,16 +376,40 @@ func RemoveAccount(poolID, accountID int) {
 
 // PurgeStale 清理长时间无活动的内存统计（后台任务调用）。
 func PurgeStale(idleThreshold time.Duration) {
+	if idleThreshold <= 0 {
+		return
+	}
+	slotLifecycleLock.Lock()
+	defer slotLifecycleLock.Unlock()
 	cutoff := time.Now().Add(-idleThreshold)
-	globalPoolStats.Range(func(k, v interface{}) bool {
+	globalPoolSlots.Range(func(k, v any) bool {
+		if atomic.LoadInt64(v.(*int64)) != 0 {
+			return true
+		}
+		value, exists := globalPoolStats.Load(k)
+		if !exists {
+			globalPoolSlots.CompareAndDelete(k, v)
+			return true
+		}
+		stats := value.(*accountStats)
+		stats.mu.Lock()
+		if stats.lastActivity.Before(cutoff) {
+			globalPoolStats.CompareAndDelete(k, value)
+			globalPoolSlots.CompareAndDelete(k, v)
+		}
+		stats.mu.Unlock()
+		return true
+	})
+	globalPoolStats.Range(func(k, v any) bool {
+		if _, exists := globalPoolSlots.Load(k); exists {
+			return true
+		}
 		stats := v.(*accountStats)
 		stats.mu.Lock()
-		idle := stats.lastActivity.Before(cutoff)
-		stats.mu.Unlock()
-		if idle {
-			globalPoolStats.Delete(k)
-			globalPoolSlots.Delete(k)
+		if stats.lastActivity.Before(cutoff) {
+			globalPoolStats.CompareAndDelete(k, v)
 		}
+		stats.mu.Unlock()
 		return true
 	})
 }
@@ -502,7 +485,7 @@ func trySticky(poolID int, sessionHash string, excludeIDs []int, poolDefaultConc
 		return nil, false, 0
 	}
 	// 粘性命中，刷新 LastActivity（活跃会话续期，与 balancer.SetSticky 一致）。
-	entry.LastActivity = time.Now()
+	globalPoolSticky.CompareAndSwap(key, entry, &stickyEntry{AccountID: accountID, LastActivity: time.Now()})
 	return acct, true, 0
 }
 

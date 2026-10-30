@@ -15,6 +15,7 @@ import (
 	"github.com/lingyuins/octopus/internal/op/channel"
 	"github.com/lingyuins/octopus/internal/op/notification"
 	"github.com/lingyuins/octopus/internal/op/setting"
+	pluginevent "github.com/lingyuins/octopus/internal/plugin/event"
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
@@ -150,6 +151,7 @@ func updateChannelKeyHealth(channelID int, passed bool, allFailed bool, at int64
 			"key_health_at":         at,
 		})
 	}
+	pluginevent.Publish("channel.health.changed", map[string]any{"channel_id": channelID, "channel_name": ch.Name, "passed": passed, "all_failed": allFailed, "at": at})
 }
 
 // handleKeyHealthFailure 处理巡检失败：递增连续失败计数，达到阈值且通过冷却时发通知。

@@ -709,6 +709,64 @@ function QuotaTier({
     );
 }
 
+type QuotaTierData = {
+    key: string;
+    label: string;
+    total: number;
+    used: number;
+    resetAt: string | null;
+};
+
+function QuotaPool({
+    label,
+    tiers,
+    compact,
+}: {
+    label?: string | null;
+    tiers: QuotaTierData[];
+    compact: boolean;
+}) {
+    const visibleTiers = tiers.filter((tier) => tier.total > 0);
+    if (visibleTiers.length === 0) return null;
+
+    return (
+        <div className={label ? 'space-y-1.5' : undefined}>
+            {label && (
+                <p className="text-xs font-medium text-muted-foreground">
+                    {label}
+                </p>
+            )}
+            {compact ? (
+                <div className="flex items-center gap-4 flex-wrap text-xs">
+                    {visibleTiers.map((tier) => (
+                        <QuotaTier
+                            key={tier.key}
+                            label={tier.label}
+                            total={tier.total}
+                            used={tier.used}
+                            resetAt={tier.resetAt}
+                            compact
+                        />
+                    ))}
+                </div>
+            ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {visibleTiers.map((tier, idx) => (
+                        <QuotaTier
+                            key={tier.key}
+                            label={tier.label}
+                            total={tier.total}
+                            used={tier.used}
+                            resetAt={tier.resetAt}
+                            className={idx === visibleTiers.length - 1 && visibleTiers.length % 2 === 1 ? 'sm:col-span-2' : undefined}
+                        />
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
 function ProviderCard({
     provider,
     onRefresh,
@@ -732,15 +790,31 @@ function ProviderCard({
 
     // Find category info for display
     const isBalance = provider.provider_type === 'balance';
+    const isSenseNova = provider.category === 'sensenova_plan';
 
-    // 有效配额档（total>0）。外层先过滤，使 length/idx 反映真实渲染数，
-    // 用于 normal 网格布局的"奇数末项跨两列"判断（QuotaTier 内部
-    // total<=0 返回 null 不产生 DOM，但若不过滤，map 的 idx 会被 null 项污染）。
-    const tiers = [
+    const generalPoolTiers: QuotaTierData[] = [
         { key: 'five_hour', label: t('plan.tierFiveHour') || '近5小时用量', total: provider.five_hour_total, used: provider.five_hour_used, resetAt: provider.five_hour_reset_at },
         { key: 'weekly', label: t('plan.tierWeekly') || '近一周用量', total: provider.weekly_total, used: provider.weekly_used, resetAt: provider.weekly_reset_at },
         { key: 'monthly', label: t('plan.tierMonthly') || '近一月用量', total: provider.quota_total, used: provider.quota_used, resetAt: provider.quota_reset_at },
-    ].filter((tier) => tier.total > 0);
+    ];
+    const dedicatedPoolTiers: QuotaTierData[] = [
+        { key: 'dedicated_five_hour', label: t('plan.tierFiveHour') || '近5小时用量', total: provider.dedicated_five_hour_total, used: provider.dedicated_five_hour_used, resetAt: provider.dedicated_five_hour_reset_at },
+        { key: 'dedicated_weekly', label: t('plan.tierWeekly') || '近一周用量', total: provider.dedicated_weekly_total, used: provider.dedicated_weekly_used, resetAt: provider.dedicated_weekly_reset_at },
+    ];
+    const quotaPools = [
+        {
+            key: 'general',
+            label: isSenseNova ? (t('plan.poolGeneral') || '通用积分池') : null,
+            tiers: generalPoolTiers,
+        },
+        ...(isSenseNova
+            ? [{
+                key: 'dedicated',
+                label: provider.dedicated_pool_name || (t('plan.poolDedicated') || '专用积分池'),
+                tiers: dedicatedPoolTiers,
+            }]
+            : []),
+    ];
 
     return (
         <div className={cn(
@@ -844,39 +918,24 @@ function ProviderCard({
                     </div>
                 </div>
             ) : compact ? (
-                <div className="flex items-center gap-4 flex-wrap text-xs">
-                    <QuotaTier
-                        label={t('plan.tierFiveHour') || '5h'}
-                        total={provider.five_hour_total}
-                        used={provider.five_hour_used}
-                        resetAt={provider.five_hour_reset_at}
-                        compact
-                    />
-                    <QuotaTier
-                        label={t('plan.tierWeekly') || '周'}
-                        total={provider.weekly_total}
-                        used={provider.weekly_used}
-                        resetAt={provider.weekly_reset_at}
-                        compact
-                    />
-                    <QuotaTier
-                        label={t('plan.tierMonthly') || '月'}
-                        total={provider.quota_total}
-                        used={provider.quota_used}
-                        resetAt={provider.quota_reset_at}
-                        compact
-                    />
+                <div className="space-y-2">
+                    {quotaPools.map((pool) => (
+                        <QuotaPool
+                            key={pool.key}
+                            label={pool.label}
+                            tiers={pool.tiers}
+                            compact
+                        />
+                    ))}
                 </div>
             ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {tiers.map((tier, idx) => (
-                        <QuotaTier
-                            key={tier.key}
-                            label={tier.label}
-                            total={tier.total}
-                            used={tier.used}
-                            resetAt={tier.resetAt}
-                            className={idx === tiers.length - 1 && tiers.length % 2 === 1 ? 'sm:col-span-2' : undefined}
+                <div className="space-y-3">
+                    {quotaPools.map((pool) => (
+                        <QuotaPool
+                            key={pool.key}
+                            label={pool.label}
+                            tiers={pool.tiers}
+                            compact={false}
                         />
                     ))}
                 </div>

@@ -47,6 +47,10 @@ function InlineMetric({
 
 export const MobileModelItem = memo(function MobileModelItem({ model, latencyUnit = 'auto' }: MobileModelItemProps) {
     const t = useTranslations('model');
+    const displayName = (model.variant_count ?? 0) > 1
+        ? (model.canonical_name || model.name)
+        : model.name;
+    const primaryName = model.primary_name || model.name;
     const [isExpanded, setIsExpanded] = useState(false);
     const instanceId = useId();
     const detailRegionId = `mobile-model-detail-${instanceId}`;
@@ -65,9 +69,10 @@ export const MobileModelItem = memo(function MobileModelItem({ model, latencyUni
         confirmDelete,
         isUpdatePending,
         isDeletePending,
+        canMutate,
     } = useModelActions(model);
 
-    const { Avatar: ModelAvatar, color: brandColor, label: providerLabel } = useMemo(() => getModelIcon(model.name), [model.name]);
+    const { Avatar: ModelAvatar, color: brandColor, label: providerLabel } = useMemo(() => getModelIcon(displayName), [displayName]);
     const requestCount = totalRequests(model.request_success, model.request_failed);
     const latencyLabel = formatAverageLatency(model.average_latency_ms, requestCount, latencyUnit);
     const successRateLabel = formatSuccessRate(model.success_rate, requestCount);
@@ -94,7 +99,7 @@ export const MobileModelItem = memo(function MobileModelItem({ model, latencyUni
                     {/* Row 1: name + chevron */}
                     <div className="flex items-center gap-2">
                         <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-tight text-card-foreground">
-                            {model.name}
+                            {displayName}
                         </span>
                         <ChevronDown
                             className={cn('size-4 shrink-0 text-muted-foreground transition-transform duration-200', isExpanded && 'rotate-180')}
@@ -138,7 +143,7 @@ export const MobileModelItem = memo(function MobileModelItem({ model, latencyUni
                             {/* Action buttons */}
                             <div className="flex items-center gap-2">
                                 <CopyIconButton
-                                    text={model.name}
+                                    text={primaryName}
                                     className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border/25 bg-card text-muted-foreground transition-colors hover:text-foreground"
                                     copyIconClassName="size-3"
                                     checkIconClassName="size-3"
@@ -146,16 +151,18 @@ export const MobileModelItem = memo(function MobileModelItem({ model, latencyUni
                                 <button
                                     type="button"
                                     onClick={openEdit}
+                                    disabled={!canMutate}
                                     aria-label={t('card.edit')}
-                                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border/25 bg-card text-muted-foreground transition-colors hover:text-foreground"
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border/25 bg-card text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
                                 >
                                     <Pencil className="size-3" />
                                 </button>
                                 <button
                                     type="button"
                                     onClick={openDelete}
+                                    disabled={!canMutate}
                                     aria-label={t('card.delete')}
-                                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-destructive/15 bg-destructive/8 text-destructive transition-colors hover:bg-destructive hover:text-destructive-foreground"
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-destructive/15 bg-destructive/8 text-destructive transition-colors hover:bg-destructive hover:text-destructive-foreground disabled:cursor-not-allowed disabled:opacity-40"
                                 >
                                     <Trash2 className="size-3" />
                                 </button>
@@ -175,7 +182,7 @@ export const MobileModelItem = memo(function MobileModelItem({ model, latencyUni
             </AnimatePresence>
 
             <ModelEditDialog
-                modelName={model.name}
+                modelName={primaryName}
                 brandColor={brandColor}
                 open={isEditOpen}
                 onOpenChange={(open) => { if (!open) closeEdit(); }}
@@ -187,7 +194,7 @@ export const MobileModelItem = memo(function MobileModelItem({ model, latencyUni
                 peakBilling={isPeakBilling}
             />
             <ModelDeleteDialog
-                modelName={model.name}
+                modelName={primaryName}
                 open={isDeleteOpen}
                 isPending={isDeletePending}
                 onOpenChange={(open) => { if (!open) closeDelete(); }}

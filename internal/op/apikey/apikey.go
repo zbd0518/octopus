@@ -2,7 +2,10 @@ package apikey
 
 import (
 	"context"
+	"errors"
+
 	"fmt"
+	"gorm.io/gorm"
 	"strings"
 
 	"github.com/lingyuins/octopus/internal/db"
@@ -59,6 +62,7 @@ func Create(key *model.APIKey, ctx context.Context) error {
 	key.APIKey = raw
 	keyCache.Set(key.ID, *key)
 	keyIDMap.Set(raw, key.ID)
+	forgetMissingAPIKey(raw)
 	return nil
 }
 
@@ -93,6 +97,7 @@ func Update(key *model.APIKey, ctx context.Context) error {
 			}
 		}
 		keyIDMap.Set(newKeyValue, key.ID)
+		forgetMissingAPIKey(newKeyValue)
 		keyCache.Set(key.ID, *key)
 	} else {
 		// Key value unchanged; omit key columns from the save to avoid accidental overwrite.
@@ -128,7 +133,13 @@ func GetByKey(apiKey string, ctx context.Context) (model.APIKey, error) {
 		// 明文映射未命中（如重启后）：按确定性哈希列回查 DB 并解密重建映射。
 		var key model.APIKey
 		hash := HashAPIKey(apiKey)
+		if missingAPIKey(hash) {
+			return model.APIKey{}, fmt.Errorf("API key not found")
+		}
 		if err := db.GetDB().WithContext(ctx).Where("api_key_hash = ?", hash).First(&key).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				rememberMissingAPIKey(hash)
+			}
 			return model.APIKey{}, fmt.Errorf("API key not found")
 		}
 		// 解密恢复明文。存量哈希化 key（明文不可逆）的 api_key 列存的是 64 hex 而非 enc:，
@@ -207,6 +218,9 @@ func RefreshCache(ctx context.Context) error {
 	}
 	keyCache.Clear()
 	keyIDMap.Clear()
+	missingAPIKeys.Lock()
+	clear(missingAPIKeys.entries)
+	missingAPIKeys.Unlock()
 	for i := range apiKeys {
 		raw := apiKeys[i].APIKey
 		hash := apiKeys[i].APIKeyHash

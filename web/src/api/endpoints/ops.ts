@@ -137,7 +137,6 @@ export interface OpsSystemSummary {
     model_info_update_interval_hours: number;
     import_enabled: boolean;
     export_enabled: boolean;
-    ai_route_group_id: number;
     ai_route_timeout_seconds: number;
     ai_route_parallelism: number;
     ai_route_legacy_mode: boolean;

@@ -93,14 +93,6 @@ func PrepareCandidateForRetry(
 		return dbmodel.ChannelKey{}, "no more keys to retry"
 	}
 
-	if hint, ok := globalFailureHintCache.get(channel.ID, usedKey.ID, modelName); ok {
-		return usedKey, failureHintSkipReason(hint)
-	}
-
-	if iter.SkipCircuitBreak(channel.ID, usedKey.ID, channel.Name, modelName) {
-		return usedKey, "circuit breaker tripped on retry key"
-	}
-
 	return usedKey, ""
 }
 

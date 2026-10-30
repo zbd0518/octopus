@@ -8,13 +8,19 @@ Groups aggregate multiple channels into a unified external model name.
 
 - **Group name** is the model name exposed by the program
 - When calling the API, set the `model` parameter to the group name
-- **First Token Timeout**: unit in seconds, only effective for streaming responses, `0` means no limit
+- **First Token Timeout**: seconds, streaming only, `0` disables it; media streams use the first response data byte. Member connectivity probes are not full client-route acceptance tests covering authorization, conditions, caching, and retries.
 - **Session Keep Time**: unit in seconds, keeps using the same channel for the same API key + model within the configured session window, `0` means disabled
-- **Condition (JSON)**: optional AND rules currently evaluated in the main LLM relay path; the built-in request context currently includes `model`, `api_key_id`, and `hour`
+- **Condition (JSON)**: AND rules apply to text and media requests, including stream recovery. Context supports `model`, `api_key_id`, `api_key_name`, `content_type`, UTC `hour`, and `header_*`. Management writes validate fields and operators.
 - **Endpoint Provider**: provider-aware request rewriting that adapts requests for upstream compatibility per endpoint type. Chat providers (`openai`, `deepseek`, `mimo`, `siliconflow`, `newapi`) normalize incompatible reasoning fields; DeepSeek folds the OpenRouter-style `reasoning` alias into `reasoning_content` so thinking mode keeps working when `tools` is present; music providers (`newapi`, `minimax`) rewrite the request body and path; video provider (`agnes`) rewrites the upstream path; audio speech provider (`mimo`) converts the request format and path
 - **Outbound Format**: controls cross-format adapter fallback. `""` (auto), `chat`, and `responses` set the Chat/Responses attempt order; `chat_only` and `responses_only` disable the fallback entirely — useful for upstreams (e.g. public-welfare relays) that reject the other format with 400/404
 - **Thinking Mode**: the advanced group editor setting `thinking_mode` accepts `auto` (default), `off`, or `on`. Forced modes override client reasoning parameters, including when none are provided. DeepSeek/MiMo use `thinking.type`; OpenAI Chat/Responses (including Codex) use reasoning effort; Anthropic, Gemini, and Volcengine use their own controls. For a generic DeepSeek/MiMo proxy URL, select the matching API type or endpoint provider. Model support is required; raw/passthrough formats skip this policy. When a DeepSeek request carries `tools` but the replayed history lost `reasoning_content`, thinking is disabled for that request to avoid the upstream 400. This is not a FIM or `/v1/completions` endpoint.
 - **Key Cooldown**: rate-limit cooldown is tracked per `(keyID, model)` (issue #94), so a single model's 429 no longer blocks the same key's other models. Per-channel retry count can be set to `0` (try once, then move to the next channel); the max-total-attempts quota counts only real upstream forwards (cooldown/circuit-breaker skips do not consume it)
+=======
+- **Condition (JSON)**: AND rules apply to text and media requests, including stream recovery. Context supports `model`, `api_key_id`, `api_key_name`, `content_type`, UTC `hour`, and `header_*`. Management writes validate fields and operators.
+- **Endpoint Provider**: provider-aware request rewriting that adapts requests for upstream compatibility per endpoint type. Chat providers (`openai`, `deepseek`, `mimo`, `siliconflow`, `newapi`) normalize incompatible reasoning fields; DeepSeek folds the OpenRouter-style `reasoning` alias into `reasoning_content` so thinking mode keeps working when `tools` is present; music providers (`newapi`, `minimax`) rewrite the request body and path; video provider (`agnes`) rewrites the upstream path; audio speech provider (`mimo`) converts the request format and path
+- **Outbound Format**: controls cross-format adapter fallback. `""` (auto), `chat`, and `responses` set the Chat/Responses attempt order; `chat_only` and `responses_only` disable the fallback entirely — useful for upstreams (e.g. public-welfare relays) that reject the other format with 400/404
+- **Thinking Mode**: the advanced group editor setting `thinking_mode` accepts `auto` (default), `off`, or `on`. Forced modes override client reasoning parameters, including when none are provided. DeepSeek/MiMo use `thinking.type`; OpenAI Chat/Responses (including Codex) use reasoning effort; Anthropic, Gemini, and Volcengine use their own controls. For a generic DeepSeek/MiMo proxy URL, select the matching API type or endpoint provider. Model support is required; raw/passthrough formats skip this policy. When a DeepSeek request carries `tools` but the replayed history lost `reasoning_content`, thinking is disabled for that request to avoid the upstream 400. This is not a FIM or `/v1/completions` endpoint.
+- **Key Cooldown**: rate-limit cooldown is tracked per `(keyID, model)` (issue #94), so a single model's 429 no longer blocks the same key's other models. Per-channel retry count can be set to `0` (try once, then move to the next channel); the max-total-attempts quota counts only real upstream forwards (cooldown/circuit-breaker skips do not consume it); client input errors (400/422) do not cool down keys
 
 **Load Balancing Modes:**
 
@@ -39,9 +45,10 @@ Groups aggregate multiple channels into a unified external model name.
 **AI Routing Behavior:**
 
 - Clicking **AI Route** on the route page sends all models to AI and generates the full routing table in batch
-- Existing groups with the same name only receive missing route items; existing groups are not cleared or replaced
-- Clicking **AI Fill Current Group** in the edit dialog sends all models to AI and appends only the matched route items to that group
-- The setting previously named AI route target group now acts as the default target group for the single-group compatibility flow only
+- Same-name groups synchronize their route items to the generated result; category conflicts or unreliable tier detection are reported without changing the original group or its items
+- Clicking **AI Fill Current Group** in the edit dialog sends all models to AI and synchronizes the current group's items to the matched route
+- Category strategies can preserve existing categories, classify by model vendor, or split free/paid routes by channel tier. Manual categories are preserved, and conflicting routes cannot write channels across tiers
+- Single-group AI routing starts from the target group and requires its explicit group ID; there is no default target group setting
 - AI route tasks are persistent with heartbeat, progress tracking, batch management, and interruption recovery
 
 **CC Switch Integration:**

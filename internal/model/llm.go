@@ -60,6 +60,10 @@ type ModelMarketChannel struct {
 
 type ModelMarketItem struct {
 	Name             string               `json:"name"`
+	CanonicalName    string               `json:"canonical_name,omitempty"`
+	PrimaryName      string               `json:"primary_name,omitempty"`
+	VariantNames     []string             `json:"variant_names,omitempty"`
+	VariantCount     int                  `json:"variant_count,omitempty"`
 	Input            float64              `json:"input"`
 	Output           float64              `json:"output"`
 	CacheRead        float64              `json:"cache_read"`

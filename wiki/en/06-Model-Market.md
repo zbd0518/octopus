@@ -18,6 +18,7 @@ The `Model` route (Model Market) provides three switchable toolbar views: **Mark
 - Vendor chips inferred from the model name
 - Pricing filter: all / priced / free
 - Normalized-name dedupe: merges naming variants of the same base model (e.g. `kimi-k2.5`, `moonshotai/kimi-k2.5`, `dmxapi-kimi-k2.5-cc`). Rules come from the Settings `Normalize` card (router prefixes, functional suffixes, explicit variant→canonical mappings), and dedupe can be turned on by default via a dedicated setting
+- The catalog is the union of local price rows and channel-declared names, so channel-only models remain visible without a price row. Use `/api/v1/model/market?dedupe=true` for canonical aggregation or `dedupe=false` for exact raw-name cards. Aggregated cards expose `primary_name` and `variant_names`; actions continue to use a real raw model name.
 - The collapsible filter bar shows the live result count (visible / total), the number of active filters, and a one-click reset that clears search, capability, provider, pricing, and dedupe
 
 **Summary metrics:**
@@ -48,6 +49,8 @@ Aggregated from valid route groups and inverted into endpoint → model groups. 
 - Create / edit dialog with validation: name and rule value required, prices must be finite non-negative numbers, sort order must be an integer. Errors appear after the first submit attempt and clear as the input is fixed
 - Peak/Off-peak Billing section (currently for DeepSeek): off-peak multiplier, weekend off-peak switch, and two Beijing-time windows (an empty window is closed; both windows closed means all-day off-peak; overlapping windows are allowed with a hint)
 - Rule changes invalidate the market price cache; this view has no search box
+
+The Normalize settings card provides coverage analysis and an AI workflow. Imports and AI generation load a complete candidate into the editor, show conflicts and high-risk merges, and require the existing Save action before changing runtime rules. The endpoints are `/api/v1/model/normalize/rules`, `/api/v1/model/normalize/generate`, `/api/v1/model/normalize/progress/:id`, `/api/v1/model/normalize/stream/:id`, and `/api/v1/model/normalize/coverage`.
 
 **Query gating:**
 

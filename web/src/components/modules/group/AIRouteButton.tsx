@@ -1,16 +1,16 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Bot, Waves } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
 import {
     isGenerateAIRouteTerminal,
+    type AIRouteCategoryStrategy,
     type AIRouteScope,
     useGenerateAIRoute,
     useGenerateAIRouteProgress,
 } from '@/api/endpoints/group';
-import { SettingKey, useSettingList } from '@/api/endpoints/setting';
 import { toast } from '@/components/common/Toast';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import { AIRouteProgressDialog } from './AIRouteProgressDialog';
+import { AI_ROUTE_CATEGORY_CHOICES, buildAIRouteRequest } from './ai-route-category';
 import { resolveRuntimeI18nMessage } from '@/lib/i18n-runtime';
 
 type AIRouteButtonProps = {
@@ -107,17 +108,11 @@ export function AIRouteButton({
 }: AIRouteButtonProps) {
     const t = useTranslations('group');
     const queryClient = useQueryClient();
-    const { data: settings } = useSettingList();
+    const resolvedGroupID = groupId ?? 0;
     const generateAIRoute = useGenerateAIRoute();
-    const configuredGroupID = useMemo(() => {
-        const raw = settings?.find((item) => item.key === SettingKey.AIRouteGroupID)?.value?.trim() ?? '0';
-        const parsed = Number(raw);
-        return Number.isFinite(parsed) ? parsed : 0;
-    }, [settings]);
-
-    const resolvedGroupID = groupId && groupId > 0 ? groupId : configuredGroupID;
     const isGroupScope = scope === 'group';
     const [confirmOpen, setConfirmOpen] = useState(false);
+    const [categoryStrategy, setCategoryStrategy] = useState<AIRouteCategoryStrategy | ''>('');
     const [progressOpen, setProgressOpen] = useState(false);
     const [currentProgressId, setCurrentProgressId] = useState<string | null>(() => {
         const storedTask = readStoredAIRouteTask();
@@ -242,9 +237,7 @@ export function AIRouteButton({
         );
 
         generateAIRoute.mutate(
-            isGroupScope
-                ? { scope: 'group', group_id: resolvedGroupID }
-                : { scope: 'table' },
+            buildAIRouteRequest(scope, resolvedGroupID, categoryStrategy),
             {
                 onSuccess: (nextProgress) => {
                     const nextProgressId = nextProgress.id;
@@ -325,6 +318,26 @@ export function AIRouteButton({
                             {isGroupScope ? t('aiRoute.group.confirmDescription') : t('aiRoute.table.confirmDescription')}
                         </AlertDialogDescription>
                     </AlertDialogHeader>
+                    <div className="grid gap-1.5 text-left">
+                        <label className="text-xs font-medium text-muted-foreground" htmlFor="ai-route-category-strategy">
+                            {t('aiRoute.categoryStrategy.label')}
+                        </label>
+                        <select
+                            id="ai-route-category-strategy"
+                            value={categoryStrategy}
+                            onChange={(event) => setCategoryStrategy(event.target.value as AIRouteCategoryStrategy | '')}
+                            className="h-9 rounded-lg border border-border/40 bg-card px-3 text-sm outline-none transition-colors focus:border-primary/30"
+                        >
+                            {AI_ROUTE_CATEGORY_CHOICES.map((choice) => (
+                                <option key={choice || 'none'} value={choice}>
+                                    {t(`aiRoute.categoryStrategy.options.${choice || 'none'}`)}
+                                </option>
+                            ))}
+                        </select>
+                        <p className="text-xs leading-5 text-muted-foreground">
+                            {t(`aiRoute.categoryStrategy.descriptions.${categoryStrategy || 'none'}`)}
+                        </p>
+                    </div>
                     <AlertDialogFooter>
                         <AlertDialogCancel disabled={generateAIRoute.isPending}>
                             {t('detail.actions.cancel')}

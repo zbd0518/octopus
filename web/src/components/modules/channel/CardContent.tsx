@@ -71,6 +71,7 @@ import {
     AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { toast } from '@/components/common/Toast';
+import { createChannelConnectionDraft, newChannelKeys, withNodeUpdate } from './node-binding';
 
 export function CardContent({ channel, stats }: { channel: Channel; stats: StatsMetricsFormatted }) {
     const { setIsOpen } = useMorphingDialog();
@@ -150,24 +151,11 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         group_id: channel.group_id,
         type: channel.type,
         enabled: channel.enabled,
-        base_urls: channel.base_urls?.length ? channel.base_urls : [{ url: '', delay: 0, suffix_mode: 'auto' }],
+        ...createChannelConnectionDraft(channel),
         custom_header: channel.custom_header ?? [],
         channel_proxy: channel.channel_proxy ?? '',
         param_override: channel.param_override ?? '',
         request_rewrite: normalizeRequestRewriteFormData(channel.request_rewrite),
-        keys: channel.keys.length > 0
-            ? channel.keys.map((k) => ({
-                id: k.id,
-                enabled: k.enabled,
-                channel_key: k.channel_key,
-                status_code: k.status_code,
-                last_use_time_stamp: k.last_use_time_stamp,
-                total_cost: k.total_cost,
-                priority: k.priority ?? 0,
-                remark: k.remark,
-                supported_models: k.supported_models ?? '',
-            }))
-            : [{ enabled: true, channel_key: '', priority: 0, remark: '' }],
         model: channel.model,
         custom_model: channel.custom_model,
         proxy_mode: deriveChannelProxyMode(channel),
@@ -182,6 +170,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         key_selection_strategy: channel.key_selection_strategy,
         match_regex: channel.match_regex ?? '',
         pool_id: channel.pool_id ?? 0,
+        node_id: channel.node_id ?? 0,
     });
     const t = useTranslations('channel.detail');
     const tProxy = useTranslations('proxyPool');
@@ -286,9 +275,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         const nextIDs = new Set(nextKeys.filter((k) => typeof k.id === 'number').map((k) => k.id as number));
         const keys_to_delete = originalKeys.filter((k) => !nextIDs.has(k.id)).map((k) => k.id);
 
-        const keys_to_add = nextKeys
-            .filter((k) => !k.id)
-            .map((k) => ({ enabled: k.enabled, channel_key: k.channel_key.trim(), priority: Number(k.priority ?? 0), remark: k.remark ?? '', supported_models: k.supported_models ?? '' }));
+        const keys_to_add = newChannelKeys(nextKeys);
 
         const keys_to_update = nextKeys
             .filter((k) => typeof k.id === 'number' && originalByID.has(k.id as number))
@@ -310,7 +297,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         if (keys_to_update.length > 0) req.keys_to_update = keys_to_update;
         if (keys_to_delete.length > 0) req.keys_to_delete = keys_to_delete;
 
-        updateChannel.mutate(req, {
+        updateChannel.mutate(withNodeUpdate(req, formData.node_id, channel.node_id ?? 0), {
             onSuccess: () => {
                 setIsEditing(false);
                 setIsOpen(false);

@@ -293,10 +293,12 @@ func Migrate(conn *gorm.DB) error {
 		&model.User{},
 		&model.ChannelGroup{},
 		&model.Channel{},
+		&model.Node{},
 		&model.ChannelKey{},
 		&model.Group{},
 		&model.GroupItem{},
 		&model.AIRouteTask{},
+		&model.ModelNormalizeTask{},
 		&model.LLMInfo{},
 		&model.ModelPriceCategory{},
 		&model.ModelPriceSchedule{},
@@ -346,6 +348,9 @@ func Migrate(conn *gorm.DB) error {
 		&model.ProxyConfiguration{},
 		&model.WSResponseAffinity{},
 		&model.WebAuthnCredential{},
+		&model.Plugin{},
+		&model.PluginKV{},
+		&model.PluginSecret{},
 		&migrate.MigrationRecord{},
 	)
 	if restoreFK != nil {

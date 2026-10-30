@@ -96,7 +96,7 @@ func APIKeyAuth() gin.HandlerFunc {
 		}
 		statsAPIKey := stats.APIKeyGet(apiKeyObj.ID)
 		if apiKeyObj.MaxCost > 0 && apiKeyObj.MaxCost < statsAPIKey.StatsMetrics.OutputCost+statsAPIKey.StatsMetrics.InputCost {
-			resp.Error(c, http.StatusUnauthorized, "API key has reached the max cost")
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": gin.H{"message": "API key has reached the max cost", "type": "insufficient_quota", "code": "insufficient_quota"}})
 			c.Abort()
 			return
 		}
@@ -104,7 +104,7 @@ func APIKeyAuth() gin.HandlerFunc {
 		if apiKeyObj.MaxTokens > 0 {
 			usedTokens := statsAPIKey.StatsMetrics.InputToken + statsAPIKey.StatsMetrics.OutputToken
 			if usedTokens >= apiKeyObj.MaxTokens {
-				resp.Error(c, http.StatusUnauthorized, "API key has reached the max token limit")
+				c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": gin.H{"message": "API key has reached the max token limit", "type": "insufficient_quota", "code": "insufficient_quota"}})
 				c.Abort()
 				return
 			}
@@ -118,6 +118,7 @@ func APIKeyAuth() gin.HandlerFunc {
 		c.Set("supported_models", apiKeyObj.SupportedModels)
 		c.Set("allowed_group_categories", apiKeyObj.AllowedGroupCategories)
 		c.Set("api_key_id", apiKeyObj.ID)
+		c.Set("api_key_name", apiKeyObj.Name)
 		c.Set("rate_limit_rpm", apiKeyObj.RateLimitRPM)
 		c.Set("rate_limit_tpm", apiKeyObj.RateLimitTPM)
 		c.Set("per_model_quota_json", apiKeyObj.PerModelQuotaJSON)

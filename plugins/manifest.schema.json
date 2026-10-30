@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/lingyuins/octopus/plugins/manifest.schema.json",
+  "title": "Octopus plugin manifest",
+  "type": "object",
+  "required": ["host_api", "id", "name", "version"],
+  "additionalProperties": false,
+  "properties": {
+    "host_api": {"const": 1},
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 128},
+    "version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"},
+    "description": {"type": "string"},
+    "author": {"type": "string"},
+    "min_host_api": {"type": "integer", "minimum": 1},
+    "max_host_api": {"type": "integer", "minimum": 1},
+    "entry": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"},
+    "events": {"type": "array", "uniqueItems": true, "items": {"enum": ["relay.request.before_route", "relay.route.filter", "relay.request.before_upstream", "relay.response.before_send", "relay.completed", "channel.health.changed", "pool.account.changed", "notification.created", "http.rpc", "plugin.migrate"]}},
+    "permissions": {"type": "array", "uniqueItems": true, "items": {"enum": ["kv", "secret", "http", "notify", "log", "relay:read", "relay:write", "rpc:read", "rpc:write"]}},
+    "http_origins": {"type": "array", "items": {"type": "string", "pattern": "^https://[^\\s/]+$"}},
+    "required": {"type": "boolean"},
+    "priority": {"type": "integer", "minimum": -100, "maximum": 100},
+    "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 2000},
+    "memory_mib": {"type": "integer", "minimum": 1, "maximum": 64},
+    "instances": {"type": "integer", "minimum": 1, "maximum": 16},
+    "schema_version": {"type": "integer", "minimum": 0},
+    "config_schema": {"type": "object"},
+    "ui": {"type": "object", "additionalProperties": false, "properties": {"entry": {"type": "string"}, "title": {"type": "string"}}}
+  }
+}

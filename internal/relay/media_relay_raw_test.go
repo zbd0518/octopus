@@ -32,6 +32,13 @@ func TestBuildRawPassthroughUpstreamURL(t *testing.T) {
 			want:     "https://api.example.com/v1/images/generations?foo=1&bar=2",
 		},
 		{
+			name:     "credential query parameters are removed",
+			baseURL:  "https://api.example.com",
+			reqPath:  "/v1/images/generations",
+			reqQuery: "foo=1&api-key=client-secret",
+			want:     "https://api.example.com/v1/images/generations?foo=1",
+		},
+		{
 			name:     "base url ending in v1 does not duplicate version",
 			baseURL:  "https://api.example.com/v1",
 			reqPath:  "/v1/images/edits",
@@ -284,5 +291,23 @@ func TestForwardMediaRequestRoutesJSONBodyOnMultipartEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(gotBody, `"prompt":"雪山"`) || !strings.Contains(gotBody, `"image_url"`) {
 		t.Fatalf("upstream body should be the original JSON, got = %s", gotBody)
+	}
+}
+
+func TestHandleJSONResponseRecordsUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"usage":{"prompt_tokens":4,"completion_tokens":6,"total_tokens":10}}`)),
+	}
+	status, err := handleJSONResponse(ctx, response)
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("handleJSONResponse() = %d, %v", status, err)
+	}
+	if got, ok := ctx.Get(mediaUsageContextKey); !ok || got.(mediaJSONUsage).totalTokens() != 10 {
+		t.Fatalf("media usage = %#v, want 10", got)
 	}
 }

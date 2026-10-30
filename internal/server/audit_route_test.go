@@ -17,6 +17,7 @@ var exemptFromAudit = map[string]string{
 	"POST /api/v1/channel/test":                 "connectivity probe — no state change",
 	"POST /api/v1/channel/test-model":           "single model availability probe — no state change",
 	"POST /api/v1/channel/fetch-models-per-key": "model fetch per key probe — no state change",
+	"POST /api/v1/setting/ai-route/models":      "AI service model list probe — no state change; request contains credentials",
 	"POST /api/v1/alert/notif/test":             "notification channel test send — no state change",
 	"POST /api/v1/user/login":                   "authentication — auditing every login would flood the log",
 	"POST /api/v1/group/test":                   "group routing test — no state change",

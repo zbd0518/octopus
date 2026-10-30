@@ -23,6 +23,10 @@ const (
 	PermSitesWrite         Permission = "sites:write"
 	PermNotificationsRead  Permission = "notifications:read"
 	PermNotificationsWrite Permission = "notifications:write"
+	PermNodesRead          Permission = "nodes:read"
+	PermNodesWrite         Permission = "nodes:write"
+	PermPluginsRead        Permission = "plugins:read"
+	PermPluginsWrite       Permission = "plugins:write"
 )
 
 var adminPermissions = []Permission{
@@ -34,6 +38,8 @@ var adminPermissions = []Permission{
 	PermUsersRead, PermUsersWrite,
 	PermSitesRead, PermSitesWrite,
 	PermNotificationsRead, PermNotificationsWrite,
+	PermPluginsRead, PermPluginsWrite,
+	PermNodesRead, PermNodesWrite,
 }
 
 var editorPermissions = []Permission{
@@ -44,6 +50,8 @@ var editorPermissions = []Permission{
 	PermLogsRead, PermLogsWrite, PermStatsRead,
 	PermSitesRead, PermSitesWrite,
 	PermNotificationsRead, PermNotificationsWrite,
+	PermPluginsRead, PermPluginsWrite,
+	PermNodesRead,
 }
 
 var viewerPermissions = []Permission{
@@ -54,6 +62,8 @@ var viewerPermissions = []Permission{
 	PermLogsRead, PermStatsRead,
 	PermSitesRead,
 	PermNotificationsRead,
+	PermPluginsRead,
+	PermNodesRead,
 }
 
 var rolePermissions = map[string][]Permission{

@@ -11,6 +11,7 @@ import (
 	"github.com/dlclark/regexp2"
 	"github.com/lingyuins/octopus/internal/client"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/nodetransport"
 	ch "github.com/lingyuins/octopus/internal/op/channel"
 	grp "github.com/lingyuins/octopus/internal/op/group"
 	"github.com/lingyuins/octopus/internal/utils/log"
@@ -38,6 +39,13 @@ func ChannelShortTimeoutHttpClient(channel *model.Channel) (*http.Client, error)
 func channelHTTPClient(channel *model.Channel, timeout time.Duration) (*http.Client, error) {
 	if channel == nil {
 		return nil, errors.New("channel is nil")
+	}
+
+	if channel.NodeID != 0 {
+		if channel.NodeID < 0 || channel.PoolID != 0 || channel.Proxy || channel.ProxyConfigID != nil || (channel.ProxyMode != "" && channel.ProxyMode != model.ProxyUsageModeDirect) || (channel.ChannelProxy != nil && strings.TrimSpace(*channel.ChannelProxy) != "") {
+			return nil, errors.New("invalid node channel transport configuration")
+		}
+		return nodetransport.Client(channel.NodeID, timeout), nil
 	}
 
 	mode, proxyConfigID, customProxyURL := resolveChannelProxy(channel)
@@ -144,6 +152,9 @@ func resolveChannelProxy(channel *model.Channel) (model.ProxyUsageMode, *int, st
 func ChannelBaseUrlDelayUpdate(channel *model.Channel, ctx context.Context) error {
 	if channel == nil {
 		return errors.New("channel is nil")
+	}
+	if channel.NodeID != 0 {
+		return nil
 	}
 	newBaseUrls := make([]model.BaseUrl, 0, len(channel.BaseUrls))
 	allFailed := true

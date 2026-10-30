@@ -10,6 +10,12 @@ export interface AIRouteServiceRow {
     enabled: boolean;
 }
 
+export function modelFetchSignature(baseURL: string, apiKey: string): string | null {
+    const normalizedURL = baseURL.trim();
+    const normalizedKey = apiKey.trim();
+    return normalizedURL && normalizedKey ? JSON.stringify([normalizedURL, normalizedKey]) : null;
+}
+
 export function parseServicesJSON(raw: string): { rows: AIRouteServiceRow[] | null; invalid: boolean } {
     const trimmed = raw.trim();
     if (trimmed === '' || trimmed === '[]') {

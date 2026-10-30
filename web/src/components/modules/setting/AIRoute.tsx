@@ -7,14 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Hint } from '@/components/ui/hint';
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from '@/components/ui/select';
-import { useGroupList } from '@/api/endpoints/group';
+import { AIRouteModelInput } from './ai-route-model-input';
+import { createAIRouteModelCommit, type AIRouteModelCommit } from './ai-route-model-commit';
 import { SettingKey, useSetSetting, useSettingList } from '@/api/endpoints/setting';
 import { toast } from '@/components/common/Toast';
 import {
@@ -26,10 +20,8 @@ import {
 export function SettingAIRoute() {
     const t = useTranslations('setting');
     const { data: settings } = useSettingList();
-    const { data: groups = [] } = useGroupList();
     const setSetting = useSetSetting();
 
-    const [groupID, setGroupID] = useState('0');
     const [baseURL, setBaseURL] = useState('');
     const [apiKey, setAPIKey] = useState('');
     const [model, setModel] = useState('');
@@ -40,7 +32,6 @@ export function SettingAIRoute() {
     const [servicesJSONInvalid, setServicesJSONInvalid] = useState(false);
     const [servicesRawFallback, setServicesRawFallback] = useState('');
 
-    const initialGroupID = useRef('0');
     const initialBaseURL = useRef('');
     const initialAPIKey = useRef('');
     const initialModel = useRef('');
@@ -52,7 +43,6 @@ export function SettingAIRoute() {
     useEffect(() => {
         if (!settings) return;
 
-        const groupSetting = settings.find((item) => item.key === SettingKey.AIRouteGroupID);
         const baseURLSetting = settings.find((item) => item.key === SettingKey.AIRouteBaseURL);
         const apiKeySetting = settings.find((item) => item.key === SettingKey.AIRouteAPIKey);
         const modelSetting = settings.find((item) => item.key === SettingKey.AIRouteModel);
@@ -60,10 +50,6 @@ export function SettingAIRoute() {
         const parallelismSetting = settings.find((item) => item.key === SettingKey.AIRouteParallelism);
         const servicesSetting = settings.find((item) => item.key === SettingKey.AIRouteServices);
 
-        if (groupSetting) {
-            queueMicrotask(() => setGroupID(groupSetting.value || '0'));
-            initialGroupID.current = groupSetting.value || '0';
-        }
         if (baseURLSetting) {
             queueMicrotask(() => setBaseURL(baseURLSetting.value));
             initialBaseURL.current = baseURLSetting.value;
@@ -117,6 +103,16 @@ export function SettingAIRoute() {
                 },
             },
         );
+    };
+
+    const modelCommit = useRef<AIRouteModelCommit | null>(null);
+    const getModelCommit = () => {
+        if (!modelCommit.current) {
+            modelCommit.current = createAIRouteModelCommit((value) => {
+                saveSetting(SettingKey.AIRouteModel, value, initialModel);
+            });
+        }
+        return modelCommit.current;
     };
 
     const enabledServiceCount = useMemo(
@@ -187,44 +183,21 @@ export function SettingAIRoute() {
                 <div className="grid gap-4 xl:grid-cols-2">
                     <div className="space-y-3 rounded-lg border-border/30 bg-card p-4 shadow-sm">
                         <div className="flex items-center gap-3">
-                            <Sparkles className="h-5 w-5 text-muted-foreground" />
-                            <span className="text-sm font-medium">
-                                {t('aiRoute.group.label')}
-                                <Hint text={t('aiRoute.group.hint')} />
-                            </span>
-                        </div>
-                        <Select
-                            value={groupID}
-                            onValueChange={(value) => {
-                                setGroupID(value);
-                                saveSetting(SettingKey.AIRouteGroupID, value, initialGroupID);
-                            }}
-                        >
-                            <SelectTrigger className="w-full rounded-lg">
-                                <SelectValue placeholder={t('aiRoute.group.placeholder')} />
-                            </SelectTrigger>
-                            <SelectContent className="rounded-lg">
-                                <SelectItem value="0">{t('aiRoute.group.placeholder')}</SelectItem>
-                                {groups.map((group) => (
-                                    <SelectItem key={group.id} value={String(group.id)}>
-                                        {group.name}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
-
-                    <div className="space-y-3 rounded-lg border-border/30 bg-card p-4 shadow-sm">
-                        <div className="flex items-center gap-3">
                             <Bot className="h-5 w-5 text-muted-foreground" />
                             <span className="text-sm font-medium">{t('aiRoute.model.label')}</span>
                         </div>
-                        <Input
+                        <AIRouteModelInput
+                            id="ai-route-model"
                             value={model}
-                            onChange={(event) => setModel(event.target.value)}
-                            onBlur={() => saveSetting(SettingKey.AIRouteModel, model, initialModel)}
+                            baseURL={baseURL}
+                            apiKey={apiKey}
+                            onChange={(value) => {
+                                setModel(value);
+                                getModelCommit().change();
+                            }}
+                            onSelect={(value) => getModelCommit().select(value)}
+                            onBlur={() => getModelCommit().blur(model)}
                             placeholder={t('aiRoute.model.placeholder')}
-                            className="w-full rounded-lg"
                         />
                     </div>
 
@@ -396,11 +369,13 @@ export function SettingAIRoute() {
                                             placeholder={t('aiRoute.services.namePlaceholder')}
                                             className="w-full rounded-lg"
                                         />
-                                        <Input
+                                        <AIRouteModelInput
+                                            id={`ai-route-service-model-${index}`}
                                             value={row.model}
-                                            onChange={(event) => updateServiceRow(index, { model: event.target.value })}
+                                            baseURL={row.baseUrl}
+                                            apiKey={row.apiKey}
+                                            onChange={(value) => updateServiceRow(index, { model: value })}
                                             placeholder={t('aiRoute.services.modelPlaceholder')}
-                                            className="w-full rounded-lg"
                                         />
                                         <Input
                                             value={row.baseUrl}

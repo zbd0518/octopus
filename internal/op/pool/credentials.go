@@ -2,6 +2,7 @@ package pool
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/lingyuins/octopus/internal/model"
@@ -25,6 +26,27 @@ func EncryptCredentials(raw string) string {
 		return raw
 	}
 	return enc
+}
+
+// CredentialsForRelay decrypts a private account copy without changing stored credentials.
+func CredentialsForRelay(account *model.PoolAccount) (*model.PoolAccount, model.PoolCredential, error) {
+	if account == nil {
+		return nil, model.PoolCredential{}, fmt.Errorf("missing pool account")
+	}
+	copy := *account
+	plain, err := crypto.Decrypt(copy.Credentials)
+	if err != nil {
+		return nil, model.PoolCredential{}, fmt.Errorf("cannot decrypt pool credentials")
+	}
+	if !json.Valid([]byte(plain)) {
+		return nil, model.PoolCredential{}, fmt.Errorf("invalid pool credentials")
+	}
+	copy.Credentials = plain
+	credential := model.ParsePoolCredential(plain)
+	if strings.TrimSpace(credential.EffectiveKeyWithExtra(copy.Platform, copy.GetExtra())) == "" {
+		return nil, model.PoolCredential{}, fmt.Errorf("empty pool credentials")
+	}
+	return &copy, credential, nil
 }
 
 // DecryptAccountCredentials 解密账号凭据，原地填充 acct.Credentials 为明文。

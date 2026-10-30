@@ -6,13 +6,14 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dlclark/regexp2"
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/channel"
-	"github.com/lingyuins/octopus/internal/op/setting"
+	"github.com/lingyuins/octopus/internal/op/modelnormalize"
 	"github.com/lingyuins/octopus/internal/utils/cache"
 	"github.com/lingyuins/octopus/internal/utils/log"
 	"github.com/lingyuins/octopus/internal/utils/xstrings"
@@ -36,6 +37,64 @@ const groupCacheKeySep = "\x00"
 
 var groupRegexMatchersByEndpoint = make(map[string][]compiledGroupMatcher)
 var groupRegexMatchersLock sync.RWMutex
+
+// Cache refreshes take this lock before reading the database, so an older
+// database snapshot cannot replace a newer published index.
+var publishLock sync.Mutex
+var indexGeneration atomic.Uint64
+
+func Generation() uint64 { return indexGeneration.Load() }
+
+func publishGroupCache() {
+	groups := groupCache.GetAll()
+	names := make(map[string]model.Group, len(groups))
+
+	sortedGroups := make([]model.Group, 0, len(groups))
+	for _, group := range groups {
+		sortedGroups = append(sortedGroups, group)
+	}
+	sort.SliceStable(sortedGroups, func(i, j int) bool {
+		if sortedGroups[i].ID != sortedGroups[j].ID {
+			return sortedGroups[i].ID < sortedGroups[j].ID
+		}
+		if sortedGroups[i].Name != sortedGroups[j].Name {
+			return sortedGroups[i].Name < sortedGroups[j].Name
+		}
+		return sortedGroups[i].EndpointType < sortedGroups[j].EndpointType
+	})
+
+	matchersByEndpoint := make(map[string][]compiledGroupMatcher)
+	for _, group := range sortedGroups {
+		group = normalizeGroup(group)
+		names[makeGroupCacheKey(group.EndpointType, group.Name)] = group
+		regex := strings.TrimSpace(group.MatchRegex)
+		if regex == "" {
+			continue
+		}
+		re, err := regexp2.Compile(regex, regexp2.ECMAScript)
+		if err != nil {
+			continue
+		}
+		re.MatchTimeout = groupRegexMatchTimeout
+		endpointType := model.NormalizeEndpointType(group.EndpointType)
+		matchersByEndpoint[endpointType] = append(matchersByEndpoint[endpointType], compiledGroupMatcher{group: group, Re: re})
+	}
+
+	groupRegexMatchersLock.Lock()
+	groupMap.Clear()
+	for key, group := range names {
+		groupMap.Set(key, group)
+	}
+	groupRegexMatchersByEndpoint = matchersByEndpoint
+	indexGeneration.Add(1)
+	groupRegexMatchersLock.Unlock()
+}
+
+func RebuildIndexes() {
+	publishLock.Lock()
+	defer publishLock.Unlock()
+	publishGroupCache()
+}
 
 // GetRegexMatchersLock returns the regex matchers mutex (for backward compatibility).
 func GetRegexMatchersLock() *sync.RWMutex { return &groupRegexMatchersLock }
@@ -284,6 +343,9 @@ func conversationEndpointLookupOrder(endpointType string, requestModel string) [
 	return order
 }
 
+// normalizeGroup 归一化分组字段并按 (priority, channel_id, model_name, id) 稳定排序 items。
+// 始终复制 Items 切片（含 nil → nil 语义），返回值与入参不共享底层数组：
+// 缓存中的值被并发读者持有，调用方对原切片的后续追加/改动不会污染已发布快照。
 func normalizeGroup(group model.Group) model.Group {
 	group.Name = strings.TrimSpace(group.Name)
 	group.Category = strings.TrimSpace(group.Category)
@@ -292,11 +354,16 @@ func normalizeGroup(group model.Group) model.Group {
 	group.OutboundFormat = strings.ToLower(strings.TrimSpace(group.OutboundFormat))
 	group.MatchRegex = strings.TrimSpace(group.MatchRegex)
 	group.ThinkingMode = model.NormalizeThinkingMode(group.ThinkingMode)
-	for i := range group.Items {
-		group.Items[i].ModelName = strings.TrimSpace(group.Items[i].ModelName)
-		if group.Items[i].Weight <= 0 {
-			group.Items[i].Weight = 1
+	if group.Items != nil {
+		items := make([]model.GroupItem, len(group.Items))
+		copy(items, group.Items)
+		for i := range items {
+			items[i].ModelName = strings.TrimSpace(items[i].ModelName)
+			if items[i].Weight <= 0 {
+				items[i].Weight = 1
+			}
 		}
+		group.Items = items
 	}
 	sort.SliceStable(group.Items, func(i, j int) bool {
 		leftPriority := group.Items[i].Priority
@@ -341,63 +408,26 @@ func finalizeMatchedGroup(group model.Group) model.Group {
 }
 
 func findGroupByEndpoint(endpointType, name string) (model.Group, bool) {
+	groupRegexMatchersLock.RLock()
+	defer groupRegexMatchersLock.RUnlock()
+	return findGroupByEndpointLocked(endpointType, name)
+}
+
+func findGroupByEndpointLocked(endpointType, name string) (model.Group, bool) {
 	group, ok := groupMap.Get(makeGroupCacheKey(endpointType, name))
 	if ok {
 		return group, true
 	}
 
-	groupRegexMatchersLock.RLock()
 	matchers := groupRegexMatchersByEndpoint[model.NormalizeEndpointType(endpointType)]
 	for _, matcher := range matchers {
 		isMatched, err := matcher.Re.MatchString(name)
 		if err != nil || !isMatched {
 			continue
 		}
-		groupRegexMatchersLock.RUnlock()
 		return matcher.group, true
 	}
-	groupRegexMatchersLock.RUnlock()
 	return model.Group{}, false
-}
-
-func RebuildIndexes() {
-	groups := groupCache.GetAll()
-	groupMap.Clear()
-
-	sortedGroups := make([]model.Group, 0, len(groups))
-	for _, group := range groups {
-		sortedGroups = append(sortedGroups, group)
-	}
-	sort.SliceStable(sortedGroups, func(i, j int) bool {
-		if sortedGroups[i].ID != sortedGroups[j].ID {
-			return sortedGroups[i].ID < sortedGroups[j].ID
-		}
-		if sortedGroups[i].Name != sortedGroups[j].Name {
-			return sortedGroups[i].Name < sortedGroups[j].Name
-		}
-		return sortedGroups[i].EndpointType < sortedGroups[j].EndpointType
-	})
-
-	matchersByEndpoint := make(map[string][]compiledGroupMatcher)
-	for _, group := range sortedGroups {
-		group = normalizeGroup(group)
-		groupMap.Set(makeGroupCacheKey(group.EndpointType, group.Name), group)
-		regex := strings.TrimSpace(group.MatchRegex)
-		if regex == "" {
-			continue
-		}
-		re, err := regexp2.Compile(regex, regexp2.ECMAScript)
-		if err != nil {
-			continue
-		}
-		re.MatchTimeout = groupRegexMatchTimeout
-		endpointType := model.NormalizeEndpointType(group.EndpointType)
-		matchersByEndpoint[endpointType] = append(matchersByEndpoint[endpointType], compiledGroupMatcher{group: group, Re: re})
-	}
-
-	groupRegexMatchersLock.Lock()
-	groupRegexMatchersByEndpoint = matchersByEndpoint
-	groupRegexMatchersLock.Unlock()
 }
 
 func GroupList(ctx context.Context) ([]model.Group, error) {
@@ -534,8 +564,15 @@ func GroupListModelByEndpoint(endpointType string, ctx context.Context) ([]strin
 // Models with the same name but different endpoint types are merged into
 // a single entry with deduplicated, sorted endpoints.
 func GroupListModelCapabilities(ctx context.Context) ([]model.ModelCapability, error) {
-	// Collect valid groups, grouped by model name
-	byName := make(map[string][]string, groupCache.Len())
+	type capabilityAggregate struct {
+		endpoints map[string]struct{}
+	}
+	byName := make(map[string]*capabilityAggregate, groupCache.Len())
+	aliasesByCanonical := make(map[string]map[string]struct{}, groupCache.Len())
+
+	// Keep one entry per real group name so the endpoint view remains
+	// routable. Canonical aliases are attached as metadata for model-market
+	// filtering and aggregation.
 	for _, group := range groupCache.GetAll() {
 		name := strings.TrimSpace(group.Name)
 		if name == "" {
@@ -544,20 +581,29 @@ func GroupListModelCapabilities(ctx context.Context) ([]model.ModelCapability, e
 		if !groupHasValidItem(group) {
 			continue
 		}
+		canonical := modelnormalize.Normalize(name)
+		if canonical == "" {
+			canonical = strings.ToLower(name)
+		}
+		aggregate := byName[name]
+		if aggregate == nil {
+			aggregate = &capabilityAggregate{
+				endpoints: make(map[string]struct{}),
+			}
+			byName[name] = aggregate
+		}
+		if aliasesByCanonical[canonical] == nil {
+			aliasesByCanonical[canonical] = make(map[string]struct{})
+		}
+		aliasesByCanonical[canonical][name] = struct{}{}
 		ep := model.NormalizeEndpointType(group.EndpointType)
-		byName[name] = append(byName[name], ep)
+		aggregate.endpoints[ep] = struct{}{}
 	}
 
 	caps := make([]model.ModelCapability, 0, len(byName))
-	for name, endpoints := range byName {
-		// Deduplicate and sort
-		seen := make(map[string]struct{}, len(endpoints))
-		uniq := make([]string, 0, len(endpoints))
-		for _, ep := range endpoints {
-			if _, ok := seen[ep]; ok {
-				continue
-			}
-			seen[ep] = struct{}{}
+	for name, aggregate := range byName {
+		uniq := make([]string, 0, len(aggregate.endpoints))
+		for ep := range aggregate.endpoints {
 			uniq = append(uniq, ep)
 		}
 		sort.Strings(uniq)
@@ -571,11 +617,25 @@ func GroupListModelCapabilities(ctx context.Context) ([]model.ModelCapability, e
 			}
 		}
 
+		canonical := modelnormalize.Normalize(name)
+		if canonical == "" {
+			canonical = strings.ToLower(name)
+		}
+		aliases := make([]string, 0, len(aliasesByCanonical[canonical]))
+		for alias := range aliasesByCanonical[canonical] {
+			if alias != name {
+				aliases = append(aliases, alias)
+			}
+		}
+		sort.Strings(aliases)
+
 		caps = append(caps, model.ModelCapability{
-			Name:         name,
-			Endpoints:    uniq,
-			Conversation: conversation,
-			Available:    true,
+			Name:          name,
+			CanonicalName: canonical,
+			Aliases:       aliases,
+			Endpoints:     uniq,
+			Conversation:  conversation,
+			Available:     true,
 		})
 	}
 
@@ -595,6 +655,8 @@ func GroupGet(id int, ctx context.Context) (*model.Group, error) {
 }
 
 func GroupGetEnabledMapByEndpoint(endpointType string, name string, ctx context.Context) (model.Group, error) {
+	groupRegexMatchersLock.RLock()
+	defer groupRegexMatchersLock.RUnlock()
 	endpointType = model.NormalizeEndpointType(endpointType)
 
 	lookupOrder := conversationEndpointLookupOrder(endpointType, name)
@@ -603,12 +665,12 @@ func GroupGetEnabledMapByEndpoint(endpointType string, name string, ctx context.
 	}
 
 	for _, candidateEndpointType := range lookupOrder {
-		if group, ok := findGroupByEndpoint(candidateEndpointType, name); ok {
+		if group, ok := findGroupByEndpointLocked(candidateEndpointType, name); ok {
 			return finalizeMatchedGroup(group), nil
 		}
 	}
 	if endpointType != model.EndpointTypeAll {
-		if group, ok := findGroupByEndpoint(model.EndpointTypeAll, name); ok {
+		if group, ok := findGroupByEndpointLocked(model.EndpointTypeAll, name); ok {
 			return finalizeMatchedGroup(group), nil
 		}
 	}
@@ -637,9 +699,7 @@ func GroupCreate(group *model.Group, ctx context.Context) error {
 	if err := db.GetDB().WithContext(ctx).Create(group).Error; err != nil {
 		return err
 	}
-	groupCache.Set(group.ID, normalizeGroup(*group))
-	RebuildIndexes()
-	return nil
+	return RefreshCacheByID(group.ID, ctx)
 }
 
 func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Group, error) {
@@ -652,20 +712,10 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 		return nil, fmt.Errorf("invalid thinking mode: must be 'auto', 'off', or 'on'")
 	}
 
-	normalizedItemsToUpdate := normalizeGroupItemUpdateRequests(group.Items, req.ItemsToUpdate)
-	normalizedItemsToAdd := normalizeGroupItemAddRequests(group.Items, normalizedItemsToUpdate, req.ItemsToDelete, req.ItemsToAdd)
-
-	tx := db.GetDB().WithContext(ctx).Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-			log.Errorf("panic recovered in transaction: %v", r)
-		}
-	}()
-
 	var selectFields []string
 	updates := model.Group{ID: req.ID}
 
+	// 全部字段校验先于开启事务：非法输入直接返回，不再占用连接。
 	if req.Name != nil {
 		name := strings.TrimSpace(*req.Name)
 		if name == "" {
@@ -719,13 +769,24 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 		updates.ThinkingMode = model.NormalizeThinkingMode(*req.ThinkingMode)
 	}
 	if req.ReasoningBufferStrategy != nil {
-		selectFields = append(selectFields, "reasoning_buffer_strategy")
 		strategy := strings.TrimSpace(*req.ReasoningBufferStrategy)
 		if strategy != "" && strategy != "buffer" && strategy != "immediate" {
 			return nil, fmt.Errorf("invalid reasoning buffer strategy: must be empty, 'buffer', or 'immediate'")
 		}
+		selectFields = append(selectFields, "reasoning_buffer_strategy")
 		updates.ReasoningBufferStrategy = strategy
 	}
+
+	normalizedItemsToUpdate := normalizeGroupItemUpdateRequests(group.Items, req.ItemsToUpdate)
+	normalizedItemsToAdd := normalizeGroupItemAddRequests(group.Items, normalizedItemsToUpdate, req.ItemsToDelete, req.ItemsToAdd)
+
+	tx := db.GetDB().WithContext(ctx).Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			log.Errorf("panic recovered in transaction: %v", r)
+		}
+	}()
 
 	if len(selectFields) > 0 {
 		if err := tx.Model(&model.Group{}).Where("id = ?", req.ID).Select(selectFields).Updates(&updates).Error; err != nil {
@@ -785,6 +846,7 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 	}
 
 	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
@@ -825,8 +887,10 @@ func GroupDel(id int, ctx context.Context) error {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	publishLock.Lock()
 	groupCache.Del(id)
-	RebuildIndexes()
+	publishGroupCache()
+	publishLock.Unlock()
 	return nil
 }
 
@@ -882,36 +946,14 @@ func GroupDelAll(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("failed to delete groups: %w", err)
 	}
 
-	if err := tx.Model(&model.Setting{}).
-		Where("key = ?", model.SettingKeyAIRouteGroupID).
-		Update("value", "0").Error; err != nil {
-		tx.Rollback()
-		return 0, fmt.Errorf("failed to reset ai route group setting: %w", err)
-	}
-	// 确保 ai_route_group_id 设置行存在（可能被外部删除），缺失时补建。
-	var settingCount int64
-	if err := tx.Model(&model.Setting{}).Where("key = ?", model.SettingKeyAIRouteGroupID).Count(&settingCount).Error; err != nil {
-		tx.Rollback()
-		return 0, fmt.Errorf("failed to check ai route group setting: %w", err)
-	}
-	if settingCount == 0 {
-		if err := tx.Create(&model.Setting{Key: model.SettingKeyAIRouteGroupID, Value: "0"}).Error; err != nil {
-			tx.Rollback()
-			return 0, fmt.Errorf("failed to recreate ai route group setting: %w", err)
-		}
-	}
-
 	if err := tx.Commit().Error; err != nil {
 		return 0, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	publishLock.Lock()
 	groupCache.Clear()
-	RebuildIndexes()
-	if err := setting.SetString(model.SettingKeyAIRouteGroupID, "0"); err != nil {
-		// 缓存同步失败不应阻塞删除结果（DB 已提交），记录日志便于排查。
-		log.Errorf("refresh ai route group setting cache after GroupDelAll: %v", err)
-	}
-
+	publishGroupCache()
+	publishLock.Unlock()
 	return deletedCount, nil
 }
 
@@ -1057,6 +1099,7 @@ func GroupItemList(groupID int, ctx context.Context) ([]model.GroupItem, error) 
 }
 
 func RemoveChannelItemsFromCache(channelID int) {
+	publishLock.Lock()
 	changed := false
 	for id, group := range groupCache.GetAll() {
 		items := make([]model.GroupItem, 0, len(group.Items))
@@ -1072,11 +1115,14 @@ func RemoveChannelItemsFromCache(channelID int) {
 		}
 	}
 	if changed {
-		RebuildIndexes()
+		publishGroupCache()
 	}
+	publishLock.Unlock()
 }
 
 func RefreshAllCache(ctx context.Context) error {
+	publishLock.Lock()
+	defer publishLock.Unlock()
 	groups := []model.Group{}
 	if err := db.GetDB().WithContext(ctx).
 		Preload("Items").
@@ -1085,32 +1131,30 @@ func RefreshAllCache(ctx context.Context) error {
 	}
 	groupCache.Clear()
 	for _, group := range groups {
-		group = normalizeGroup(group)
-		groupCache.Set(group.ID, group)
+		groupCache.Set(group.ID, normalizeGroup(group))
 	}
-	RebuildIndexes()
+	publishGroupCache()
 	return nil
 }
 
 func RefreshCacheByID(id int, ctx context.Context) error {
+	publishLock.Lock()
+	defer publishLock.Unlock()
 	var group model.Group
 	if err := db.GetDB().WithContext(ctx).
 		Preload("Items").
 		First(&group, id).Error; err != nil {
 		return err
 	}
-	group = normalizeGroup(group)
-	groupCache.Set(group.ID, group)
-	RebuildIndexes()
+	refreshCacheSnapshot([]model.Group{group})
 	return nil
 }
 
 func RefreshCacheByIDs(ids []int, ctx context.Context) error {
+	publishLock.Lock()
+	defer publishLock.Unlock()
 	if len(ids) == 0 {
 		return nil
-	}
-	for _, id := range ids {
-		groupCache.Del(id)
 	}
 	var groups []model.Group
 	if err := db.GetDB().WithContext(ctx).
@@ -1119,12 +1163,18 @@ func RefreshCacheByIDs(ids []int, ctx context.Context) error {
 		Find(&groups).Error; err != nil {
 		return err
 	}
-	for _, group := range groups {
-		group = normalizeGroup(group)
-		groupCache.Set(group.ID, group)
+	for _, id := range ids {
+		groupCache.Del(id)
 	}
-	RebuildIndexes()
+	refreshCacheSnapshot(groups)
 	return nil
+}
+
+func refreshCacheSnapshot(groups []model.Group) {
+	for _, group := range groups {
+		groupCache.Set(group.ID, normalizeGroup(group))
+	}
+	publishGroupCache()
 }
 
 // PurgeUnavailableReason 标记某个分组项为什么被判定为不可用。

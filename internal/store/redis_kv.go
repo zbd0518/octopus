@@ -183,6 +183,16 @@ func (r *redisRateLimit) CheckAndConsume(ctx context.Context, key string, rate, 
 	return allowed, remaining, time.Unix(0, int64(resetAtF*1e9)), nil
 }
 
+var consumeTokenDebtScript = redis.NewScript(`
+local rate,burst,n,now,ttl=tonumber(ARGV[1]),tonumber(ARGV[2]),tonumber(ARGV[3]),tonumber(ARGV[4]),tonumber(ARGV[5])
+local tokens=tonumber(redis.call('HGET',KEYS[1],'t')) or burst
+local last=tonumber(redis.call('HGET',KEYS[1],'l')) or now
+tokens=math.min(burst,tokens+math.max(0,now-last)*rate)-n
+redis.call('HSET',KEYS[1],'t',tostring(tokens),'l',tostring(now))
+redis.call('EXPIRE',KEYS[1],ttl)
+return 1
+`)
+
 func (r *redisRateLimit) ConsumeTokens(ctx context.Context, key string, rate, burst, n int) error {
 	if rate <= 0 || n <= 0 {
 		return nil
@@ -192,9 +202,7 @@ func (r *redisRateLimit) ConsumeTokens(ctx context.Context, key string, rate, bu
 	}
 	ratePerSec := float64(rate) / 60.0
 	now := float64(time.Now().UnixNano()) / 1e9
-	// 复用同一脚本：n 个 token 直接扣减（脚本内部会 refill，若不足则 allowed=0 但仍扣减）。
-	// TPM 回扣语义：请求已成功，token 数已确定，直接扣减即可（与内存 AllowN 一致）。
-	_, err := tokenBucketScript.Run(ctx, r.c,
+	_, err := consumeTokenDebtScript.Run(ctx, r.c,
 		[]string{withPrefix(key)},
 		ratePerSec, burst, n, now, tokenBucketTTL,
 	).Result()

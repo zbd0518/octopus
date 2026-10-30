@@ -144,7 +144,7 @@ func (m *memoryRateLimit) ConsumeTokens(_ context.Context, key string, rate, bur
 	defer m.mu.Unlock()
 	m.ensureMaps()
 	b := m.getOrCreate(m.tokBuckets, key, rate, burst)
-	b.AllowN(n)
+	b.Consume(n)
 	return nil
 }
 

@@ -72,6 +72,8 @@ _patch2.cjs
 patch_channel_import.cjs
 web/_patch2.mjs
 octopus
+!plugins/sdk/go/octopus/
+!plugins/sdk/go/octopus/octopus.go
 
 # local workflow/agent cache
 .workflow/

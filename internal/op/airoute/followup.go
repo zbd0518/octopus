@@ -68,6 +68,7 @@ func followUpUncoveredInputs(
 	service aiRouteService,
 	bucket aiRoutePromptBucket,
 	targetGroupName string,
+	strategy model.AIRouteCategoryStrategy,
 	batchIndex int,
 	firstRoutes []model.AIRouteEntry,
 ) []model.AIRouteEntry {
@@ -89,7 +90,7 @@ func followUpUncoveredInputs(
 		return firstRoutes
 	}
 
-	systemPrompt := buildAIRouteFollowUpSystemPrompt()
+	systemPrompt := buildAIRouteFollowUpSystemPrompt(strategy)
 	userPrompt := buildAIRouteFollowUpUserPrompt(targetGroupName, payload)
 
 	content, callErr := callAIRouteChatCompletion(ctx, service, systemPrompt, userPrompt)
@@ -104,7 +105,7 @@ func followUpUncoveredInputs(
 		return firstRoutes
 	}
 
-	supplement := normalizeAIRouteEntries(routeResp.Routes)
+	supplement := normalizeAIRouteGeneratedEntries(routeResp.Routes, strategy)
 	if len(supplement) == 0 {
 		log.Warnf("ai route bucket %d follow-up returned no routes (keeping first-pass routes)", batchIndex)
 		return firstRoutes
@@ -114,7 +115,7 @@ func followUpUncoveredInputs(
 		supplement[i].EndpointType = bucket.GroupEndpointType
 	}
 
-	merged := normalizeAIRouteEntries(append(append([]model.AIRouteEntry(nil), firstRoutes...), supplement...))
+	merged := normalizeAIRouteGeneratedEntries(append(append([]model.AIRouteEntry(nil), firstRoutes...), supplement...), strategy)
 
 	stillUncovered := computeUncoveredInputs(bucket, merged)
 	if len(stillUncovered) > 0 {
@@ -142,7 +143,7 @@ func summarizeUncoveredInputs(inputs []aiRoutePromptModelInput) string {
 }
 
 // buildAIRouteFollowUpSystemPrompt 追问轮的 system prompt。
-func buildAIRouteFollowUpSystemPrompt() string {
+func buildAIRouteFollowUpSystemPrompt(strategy ...model.AIRouteCategoryStrategy) string {
 	return "你是一个模型路由分析器。上一轮分析中，以下模型尚未被归类。请补充归类并输出路由 JSON。\n" +
 		"要求：\n" +
 		"1. 只输出 JSON，不要输出任何解释、Markdown、代码块标记。\n" +
@@ -169,7 +170,7 @@ func buildAIRouteFollowUpSystemPrompt() string {
 		"      ]\n" +
 		"    }\n" +
 		"  ]\n" +
-		"}"
+		"}" + buildAIRouteCategoryPrompt(strategy...)
 }
 
 // buildAIRouteFollowUpUserPrompt 追问轮的 user prompt。

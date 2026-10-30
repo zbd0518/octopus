@@ -11,6 +11,7 @@ import (
 
 	appmodel "github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/setting"
+	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 )
 
@@ -99,6 +100,32 @@ func TestBuildGroupProbeRequest_EmbeddingsUseInput(t *testing.T) {
 	}
 	if req.EmbeddingInput == nil || req.EmbeddingInput.Single == nil || *req.EmbeddingInput.Single != "hi" {
 		t.Fatalf("buildGroupProbeRequest() embedding_input = %#v, want single hi", req.EmbeddingInput)
+	}
+}
+
+func TestPrepareGroupProbeRequestReusesChannelAndGroupSettings(t *testing.T) {
+	override := `{"max_tokens":32,"temperature":0.2}`
+	request, err := buildGroupProbeRequest(appmodel.EndpointTypeChat, "gpt-4o-mini")
+	if err != nil {
+		t.Fatal(err)
+	}
+	group := &appmodel.Group{EndpointType: appmodel.EndpointTypeChat, ThinkingMode: appmodel.ThinkingModeOn}
+	channel := &appmodel.Channel{ParamOverride: &override}
+	prepared, err := prepareGroupProbeRequest(channel, group, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.MaxTokens == nil || *prepared.MaxTokens != 32 {
+		t.Fatalf("max_tokens = %#v, want 32", prepared.MaxTokens)
+	}
+	if prepared.Temperature == nil || *prepared.Temperature != 0.2 {
+		t.Fatalf("temperature = %#v, want 0.2", prepared.Temperature)
+	}
+	if prepared.ThinkingMode != appmodel.ThinkingModeOn {
+		t.Fatalf("thinking mode = %q, want on", prepared.ThinkingMode)
+	}
+	if prepared.TransformerMetadata[transmodel.TransformerMetadataGroupEndpointType] != appmodel.EndpointTypeChat {
+		t.Fatalf("probe endpoint metadata = %#v", prepared.TransformerMetadata)
 	}
 }
 

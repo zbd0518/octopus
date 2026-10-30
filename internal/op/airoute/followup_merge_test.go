@@ -2,14 +2,19 @@ package airoute
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/utils/xurl"
 )
 
 func TestFollowUpUncoveredInputs_MergesSupplement(t *testing.T) {
+	xurl.SetSSRFAllowPrivateForTest(true)
+	t.Cleanup(func() { xurl.SetSSRFAllowPrivateForTest(false) })
+
 	// 首轮漏了 (2, claude-3-5)：追问服务返回补充路由，最终 routes 覆盖全部输入。
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -35,7 +40,7 @@ func TestFollowUpUncoveredInputs_MergesSupplement(t *testing.T) {
 	}
 
 	service := aiRouteService{Index: 0, Name: "svc", BaseURL: server.URL, APIKey: "k", Model: "m"}
-	got := followUpUncoveredInputs(context.Background(), service, bucket, "", 1, firstRoutes)
+	got := followUpUncoveredInputs(context.Background(), service, bucket, "", model.AIRouteCategoryNone, 1, firstRoutes)
 
 	if calls != 1 {
 		t.Fatalf("follow-up HTTP calls = %d, want 1", calls)
@@ -60,7 +65,36 @@ func TestFollowUpUncoveredInputs_MergesSupplement(t *testing.T) {
 	}
 }
 
+func TestFollowUpUncoveredInputsPreservesVendorBoundaries(t *testing.T) {
+	xurl.SetSSRFAllowPrivateForTest(true)
+	t.Cleanup(func() { xurl.SetSSRFAllowPrivateForTest(false) })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		content := `{"routes":[{"requested_model":"shared","category":"GPT","items":[{"channel_id":2,"upstream_model":"gpt-4o"}]},{"requested_model":"shared","category":"Anthropic","items":[{"channel_id":3,"upstream_model":"claude-3-5"}]}]}`
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": content}}}})
+	}))
+	defer server.Close()
+	bucket := aiRoutePromptBucket{
+		GroupEndpointType: model.EndpointTypeChat,
+		ModelInputs: []aiRoutePromptModelInput{
+			{ChannelID: 1, Model: "gpt-4o"}, {ChannelID: 2, Model: "gpt-4o"}, {ChannelID: 3, Model: "claude-3-5"},
+		},
+	}
+	first := []model.AIRouteEntry{{RequestedModel: "shared", EndpointType: model.EndpointTypeChat, Category: "OpenAI", Items: []model.AIRouteItemSpec{{ChannelID: 1, UpstreamModel: "gpt-4o"}}}}
+	service := aiRouteService{BaseURL: server.URL, Model: "analyzer"}
+	got := followUpUncoveredInputs(context.Background(), service, bucket, "", model.AIRouteCategoryVendor, 1, first)
+	if len(got) != 2 || got[0].Category != "OpenAI" || len(got[0].Items) != 2 || got[1].Category != "Anthropic" || len(got[1].Items) != 1 {
+		t.Fatalf("follow-up routes = %+v, want vendor aliases merged and different vendors isolated", got)
+	}
+	if missing := computeUncoveredInputs(bucket, got); len(missing) != 0 {
+		t.Fatalf("missing inputs after follow-up: %+v", missing)
+	}
+}
+
 func TestFollowUpUncoveredInputs_EmptySupplementKeepsFirstPass(t *testing.T) {
+	xurl.SetSSRFAllowPrivateForTest(true)
+	t.Cleanup(func() { xurl.SetSSRFAllowPrivateForTest(false) })
+
 	// 追问返回空 routes：保留首轮结果，不追加空路由。
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -84,7 +118,7 @@ func TestFollowUpUncoveredInputs_EmptySupplementKeepsFirstPass(t *testing.T) {
 	}
 
 	service := aiRouteService{Index: 0, Name: "svc", BaseURL: server.URL, APIKey: "k", Model: "m"}
-	got := followUpUncoveredInputs(context.Background(), service, bucket, "", 1, firstRoutes)
+	got := followUpUncoveredInputs(context.Background(), service, bucket, "", model.AIRouteCategoryNone, 1, firstRoutes)
 
 	if len(got) != 1 || got[0].RequestedModel != "gpt-4o" {
 		t.Fatalf("empty supplement should keep first-pass routes, got %+v", got)

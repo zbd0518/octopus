@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { normalizeModelName, setNormalizeRules } from './normalize.ts';
+import { normalizeModelName, normalizeModelNameWithRules, setNormalizeRules } from './normalize.ts';
 
 // 每个测试前重置运行时规则，避免跨测试污染（默认无显式映射，回退内置规则）。
 test.beforeEach(() => {
@@ -24,15 +24,20 @@ test('normalizeModelName strips router prefixes such as dmxapi-/agent-', () => {
     assert.equal(normalizeModelName('agent-kimi-k2.5'), 'kimi-k2.5');
 });
 
-test('normalizeModelName strips functional suffixes such as -cc/-fast/-thinking', () => {
-    assert.equal(normalizeModelName('kimi-k2.5-cc'), 'kimi-k2.5');
-    assert.equal(normalizeModelName('Kimi-K2.5-CC'), 'kimi-k2.5');
-    assert.equal(normalizeModelName('gpt-5.2-fast'), 'gpt-5.2');
-    assert.equal(normalizeModelName('claude-3.5-thinking'), 'claude-3.5');
+test('normalizeModelName does not strip a router prefix from the middle of a word', () => {
+    assert.equal(normalizeModelName('agentic-coder'), 'agentic-coder');
+    assert.equal(normalizeModelName('anthropic.claude-3.5'), 'anthropic.claude-3.5');
 });
 
-test('normalizeModelName strips stacked suffixes', () => {
-    assert.equal(normalizeModelName('kimi-k2.5-cc-fast'), 'kimi-k2.5');
+test('normalizeModelName strips safe channel suffixes but preserves semantic variants', () => {
+    assert.equal(normalizeModelName('kimi-k2.5-cc'), 'kimi-k2.5');
+    assert.equal(normalizeModelName('Kimi-K2.5-CC'), 'kimi-k2.5');
+    assert.equal(normalizeModelName('gpt-5.2-fast'), 'gpt-5.2-fast');
+    assert.equal(normalizeModelName('claude-3.5-thinking'), 'claude-3.5-thinking');
+});
+
+test('normalizeModelName strips safe suffixes around semantic variants', () => {
+    assert.equal(normalizeModelName('kimi-k2.5-cc-fast'), 'kimi-k2.5-cc-fast');
 });
 
 test('normalizeModelName combines path + router prefix + suffix', () => {
@@ -103,4 +108,31 @@ test('normalizeModelName strips bracket prefix written with trailing dash', () =
     setNormalizeRules({ routerPrefixes: ['dmxapi-', '[官B]-'] });
     assert.equal(normalizeModelName('[官B]claude-opus-4-6'), 'claude-opus-4-6');
     assert.equal(normalizeModelName('dmxapi-kimi-k2.5'), 'kimi-k2.5');
+});
+
+test('normalizeModelNameWithRules keeps semantic tiers and modes independent', () => {
+    const rules = {
+        routerPrefixes: null,
+        functionalSuffixes: null,
+        explicitMappings: null,
+    };
+    for (const [input, expected] of [
+        ['gpt-4o', 'gpt-4o'],
+        ['gpt-4o-mini', 'gpt-4o-mini'],
+        ['gemini-2.5-flash', 'gemini-2.5-flash'],
+        ['gemini-2.5-pro', 'gemini-2.5-pro'],
+        ['deepseek-v4-flash', 'deepseek-v4-flash'],
+        ['deepseek-v4-pro', 'deepseek-v4-pro'],
+        ['grok-4-1-fast-reasoning', 'grok-4-1-fast-reasoning'],
+        ['grok-4-1-fast-non-reasoning', 'grok-4-1-fast-non-reasoning'],
+    ] as const) {
+        assert.equal(normalizeModelNameWithRules(input, rules), expected);
+    }
+});
+
+test('normalizeModelNameWithRules applies full semantic mappings before suffix cleanup', () => {
+    assert.equal(normalizeModelNameWithRules('deepseek-v4-pro-thinking', {
+        functionalSuffixes: ['-cc'],
+        explicitMappings: [{ variant: 'deepseek-v4-pro-thinking', canonical: 'deepseek-v4-pro-thinking' }],
+    }), 'deepseek-v4-pro-thinking');
 });

@@ -130,7 +130,7 @@ func TestFollowUpUncoveredInputs_AllCoveredSkipsCall(t *testing.T) {
 	}
 
 	// 全覆盖：不应发生任何 HTTP 调用（无可用服务时也应原样返回）
-	got := followUpUncoveredInputs(context.Background(), aiRouteService{Index: 0, Name: "svc", BaseURL: "http://127.0.0.1:1", APIKey: "k", Model: "m"}, bucket, "", 1, routes)
+	got := followUpUncoveredInputs(context.Background(), aiRouteService{Index: 0, Name: "svc", BaseURL: "http://127.0.0.1:1", APIKey: "k", Model: "m"}, bucket, "", model.AIRouteCategoryNone, 1, routes)
 	if len(got) != 1 || got[0].RequestedModel != "gpt-4o" {
 		t.Fatalf("followUpUncoveredInputs(all covered) = %+v, want original routes", got)
 	}
@@ -156,7 +156,7 @@ func TestFollowUpUncoveredInputs_CallFailureKeepsFirstPass(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	got := followUpUncoveredInputs(ctx, aiRouteService{Index: 0, Name: "svc", BaseURL: "http://127.0.0.1:1", APIKey: "k", Model: "m"}, bucket, "", 1, firstRoutes)
+	got := followUpUncoveredInputs(ctx, aiRouteService{Index: 0, Name: "svc", BaseURL: "http://127.0.0.1:1", APIKey: "k", Model: "m"}, bucket, "", model.AIRouteCategoryNone, 1, firstRoutes)
 	if len(got) != 1 || got[0].RequestedModel != "gpt-4o" {
 		t.Fatalf("followUpUncoveredInputs(call failed) = %+v, want first-pass routes", got)
 	}

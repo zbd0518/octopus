@@ -38,7 +38,7 @@ func loadUserTestData(t *testing.T) (Rules, []string) {
 		FunctionalSuffixes: rules.FunctionalSuffixes,
 		ExplicitMappings:   rules.ExplicitMappings,
 	}
-	rulesObj.explicitByKey = buildExplicitByKey(rulesObj.ExplicitMappings, rulesObj)
+	rulesObj.explicitFullByKey, rulesObj.explicitBaseByKey = buildExplicitByKey(rulesObj.ExplicitMappings, rulesObj)
 	return rulesObj, names
 } // TestRealData_NormalizeAllNames 用真实渠道模型名跑归一化，输出归一名分布。
 // 只打印诊断信息，不断言（数据质量问题由用户侧修复）。

@@ -23,6 +23,7 @@ import { SettingWebDAV } from './WebDAV';
 import { SettingWebAuthn } from './WebAuthn';
 import { SettingNormalize } from './Normalize';
 import { SettingPool } from './Pool';
+import { SettingNodes } from './Nodes';
 import { useProxyPoolDialogStore } from '@/components/modules/proxy-pool/dialog-store';
 import { DEFAULT_SETTING_ORDER } from './SettingOrder';
 
@@ -50,6 +51,7 @@ const SETTING_ITEM_DEFS: SettingItemDef[] = [
     { id: 'normalize',         icon: <Wand2 className="h-5 w-5" />,           titleKey: 'normalize.title',      component: <SettingNormalize /> },
     { id: 'pool',              icon: <Layers className="h-5 w-5" />,           titleKey: 'pool.title',           component: <SettingPool /> },
     { id: 'proxy-pool',        icon: <Network className="h-5 w-5" />,          titleKey: 'proxyPool.title',      component: null },
+    { id: 'nodes',             icon: <Network className="h-5 w-5" />,          titleKey: 'nodes.title',          component: <SettingNodes /> },
 ];
 
 const SETTING_ITEM_MAP = new Map<string, SettingItemDef>(

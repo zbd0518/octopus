@@ -159,9 +159,10 @@ export function VirtualizedGrid<T>({
         // Use layout height (not transformed visual height) to avoid scale-animation
         // shrinking measurements during page enter transitions.
         measureElement: (element) =>
-            element instanceof HTMLElement
+            (element instanceof HTMLElement
                 ? element.offsetHeight
-                : element.getBoundingClientRect().height,
+                : element.getBoundingClientRect().height) ||
+            Math.max(1, estimateItemHeight + gap),
         overscan: effectiveOverscan,
     });
 

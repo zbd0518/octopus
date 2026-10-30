@@ -32,7 +32,7 @@ func TestBuildSemanticCacheText_ChatMessagesOnlyUsesText(t *testing.T) {
 	if !ok {
 		t.Fatal("expected cacheable request")
 	}
-	if namespace != "7:chat:gpt-4.1" {
+	if !strings.HasPrefix(namespace, "7:chat:gpt-4.1:v2:") {
 		t.Fatalf("namespace = %q", namespace)
 	}
 	if text != "user: hello" {
@@ -58,7 +58,7 @@ func TestBuildSemanticCacheLookupInput_AllowsStreamRequests(t *testing.T) {
 	if !ok {
 		t.Fatal("expected stream request with stable text to use semantic cache")
 	}
-	if namespace != "1:chat:gpt-4.1" {
+	if !strings.HasPrefix(namespace, "1:chat:gpt-4.1:v2:") {
 		t.Fatalf("namespace = %q", namespace)
 	}
 	if text != "user: hello" {
@@ -99,15 +99,8 @@ func TestBuildSemanticCacheLookupInput_IgnoresNonTextPartsAndNormalizesWhitespac
 		},
 	}
 
-	namespace, normalized, ok := buildSemanticCacheLookupInput(9, "responses", req)
-	if !ok {
-		t.Fatal("expected cacheable request")
-	}
-	if namespace != "9:responses:gpt-4.1" {
-		t.Fatalf("namespace = %q", namespace)
-	}
-	if normalized != "user: hello world" {
-		t.Fatalf("normalized = %q", normalized)
+	if _, _, ok := buildSemanticCacheLookupInput(9, "responses", req); ok {
+		t.Fatal("multimodal request must bypass semantic cache")
 	}
 }
 

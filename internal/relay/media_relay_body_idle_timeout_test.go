@@ -544,6 +544,7 @@ func TestForwardMediaRequestMultipartStalledBodyTimesOut(t *testing.T) {
 
 	statusCode, fwdErr := forwardMediaRequestMultipart(
 		c, cfg,
+		dbmodel.Group{},
 		&dbmodel.Channel{BaseUrls: []dbmodel.BaseUrl{{URL: upstream.URL}}},
 		"sk-test", "whisper-1", "whisper-1", false, context.Background(),
 	)

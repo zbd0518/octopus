@@ -4,6 +4,10 @@
 
 Channels are the basic configuration units for connecting to LLM providers.
 
+**Local nodes:**
+
+Create a node under [Settings → Local Nodes](10-Settings.md), then select it in the channel connection selector. `node_id: 0` means standard HTTP; a positive ID routes through the outbound connector at `/node/v1/connect`. Only admins can bind/rebind nodes. Node mode hides URL/proxy/API-key inputs, cannot combine with an account pool or proxy, and uses server-owned internal placeholders. Magpie keys remain local. Model discovery and draft connectivity tests also carry `node_id`. Switching the unsaved form back to HTTP preserves its key draft; persisted node channels require HTTP credentials when converted back.
+
 **Channel Templates:**
 
 The UI provides built-in channel templates for quick creation: OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, SiliconFlow, Volcengine, and MiMo (the OpenAI template creates an OpenAI Responses type channel).

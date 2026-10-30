@@ -169,10 +169,6 @@ func OpsSystemSummaryGet(ctx context.Context) (*model.OpsSystemSummary, error) {
 	if err != nil {
 		return nil, err
 	}
-	aiRouteGroupID, err := setting.GetInt(model.SettingKeyAIRouteGroupID)
-	if err != nil {
-		return nil, err
-	}
 	aiRouteTimeoutSeconds, err := setting.GetInt(model.SettingKeyAIRouteTimeoutSeconds)
 	if err != nil {
 		return nil, err
@@ -219,7 +215,6 @@ func OpsSystemSummaryGet(ctx context.Context) (*model.OpsSystemSummary, error) {
 		ModelInfoUpdateIntervalHours: modelInfoUpdateIntervalHours,
 		ImportEnabled:                true,
 		ExportEnabled:                true,
-		AIRouteGroupID:               aiRouteGroupID,
 		AIRouteTimeoutSeconds:        aiRouteTimeoutSeconds,
 		AIRouteParallelism:           aiRouteParallelism,
 		AIRouteLegacyMode:            legacyMode,

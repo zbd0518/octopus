@@ -7,13 +7,10 @@ import (
 
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
-	"github.com/lingyuins/octopus/internal/op/setting"
 )
 
-func TestGroupDelAllResetsAIRouteSettingEvenWhenMissing(t *testing.T) {
+func TestGroupDelAllRemovesGroupsAndItems(t *testing.T) {
 	ctx := initGroupDelTestDB(t)
-
-	// Create a group with items to exercise the full delete path.
 	created := &model.Group{
 		Name:         "delall-target",
 		EndpointType: model.EndpointTypeChat,
@@ -26,24 +23,22 @@ func TestGroupDelAllResetsAIRouteSettingEvenWhenMissing(t *testing.T) {
 		t.Fatalf("GroupCreate: %v", err)
 	}
 
-	// Simulate the ai_route_group_id setting row missing (corrupted/never seeded).
-	if err := db.GetDB().Where("key = ?", model.SettingKeyAIRouteGroupID).Delete(&model.Setting{}).Error; err != nil {
-		t.Fatalf("delete setting: %v", err)
-	}
-	setting.RefreshCache(ctx)
-
 	count, err := GroupDelAll(ctx)
 	if err != nil {
-		t.Fatalf("GroupDelAll should succeed even when setting missing, got: %v", err)
+		t.Fatalf("GroupDelAll: %v", err)
 	}
 	if count != 1 {
 		t.Fatalf("deleted count = %d, want 1", count)
 	}
-
-	// ai_route_group_id should exist and be 0 after reset.
-	val, err := setting.GetString(model.SettingKeyAIRouteGroupID)
-	if err != nil || val != "0" {
-		t.Fatalf("ai_route_group_id after reset = %q err=%v, want \"0\"", val, err)
+	if groups, err := GroupList(ctx); err != nil || len(groups) != 0 {
+		t.Fatalf("groups after delete = %v, err = %v", groups, err)
+	}
+	var items []model.GroupItem
+	if err := db.GetDB().Find(&items).Error; err != nil {
+		t.Fatalf("query items: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected no items, got %d", len(items))
 	}
 }
 

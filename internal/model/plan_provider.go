@@ -264,6 +264,14 @@ type PlanProvider struct {
 	FiveHourTotal   float64    `json:"five_hour_total" gorm:"default:0"`
 	FiveHourUsed    float64    `json:"five_hour_used" gorm:"default:0"`
 	FiveHourResetAt *time.Time `json:"five_hour_reset_at"`
+	// DedicatedPool 档：商汤日日新的专用积分池（例如 Flash-Lite 积分池）
+	DedicatedPoolName        string     `json:"dedicated_pool_name" gorm:"default:''"`
+	DedicatedWeeklyTotal     float64    `json:"dedicated_weekly_total" gorm:"default:0"`
+	DedicatedWeeklyUsed      float64    `json:"dedicated_weekly_used" gorm:"default:0"`
+	DedicatedWeeklyResetAt   *time.Time `json:"dedicated_weekly_reset_at"`
+	DedicatedFiveHourTotal   float64    `json:"dedicated_five_hour_total" gorm:"default:0"`
+	DedicatedFiveHourUsed    float64    `json:"dedicated_five_hour_used" gorm:"default:0"`
+	DedicatedFiveHourResetAt *time.Time `json:"dedicated_five_hour_reset_at"`
 	// RefreshIntervalMin 自动刷新间隔（分钟），0 表示跟随全局默认设置
 	// SettingKeyPlanProviderRefreshInterval。
 	RefreshIntervalMin int `json:"refresh_interval_min" gorm:"not null;default:0"`

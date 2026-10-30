@@ -25,12 +25,13 @@ import (
 	opMain "github.com/lingyuins/octopus/internal/op"
 	ak "github.com/lingyuins/octopus/internal/op/apikey"
 	ch "github.com/lingyuins/octopus/internal/op/channel"
-	grp "github.com/lingyuins/octopus/internal/op/group"
 	"github.com/lingyuins/octopus/internal/op/relaylog"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	st "github.com/lingyuins/octopus/internal/op/stats"
+	"github.com/lingyuins/octopus/internal/price"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
 	"github.com/lingyuins/octopus/internal/relay/condition"
+	"github.com/lingyuins/octopus/internal/relay/poolscheduler"
 	"github.com/lingyuins/octopus/internal/server/resp"
 	"github.com/lingyuins/octopus/internal/utils/log"
 	"github.com/lingyuins/octopus/internal/utils/telemetry"
@@ -81,6 +82,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 	if cfg.MultipartInput && c.Request.MultipartForm != nil {
 		defer c.Request.MultipartForm.RemoveAll()
 	}
+	requestModel = strings.TrimSpace(requestModel)
 	if requestModel == "" {
 		resp.Error(c, http.StatusBadRequest, "model is required")
 		return
@@ -97,7 +99,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 
 	// 2. Resolve channel group
 	groupEndpointType := mediaEndpointTypeToGroupEndpointType(endpointType)
-	group, err := grp.GroupGetEnabledMapByEndpoint(groupEndpointType, requestModel, c.Request.Context())
+	group, identity, err := resolveRelayModel(c.Request.Context(), groupEndpointType, requestModel)
 	if err != nil {
 		log.Infof("model not found in media relay: model=%s endpoint_type=%s reason=%v", requestModel, groupEndpointType, err)
 		resp.Error(c, http.StatusNotFound, "model not found")
@@ -125,11 +127,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 
 	// 检查条件路由：条件不匹配则跳过（与 LLM relay 保持一致）
 	if group.Condition != "" {
-		condCtx := condition.RequestContext{
-			Model:    requestModel,
-			APIKeyID: apiKeyID,
-			Hour:     time.Now().UTC().Hour(),
-		}
+		condCtx := routingConditionContext(c, requestModel)
 		if match, condErr := condition.Evaluate(group.Condition, condCtx); condErr != nil || !match {
 			log.Infof("media relay: condition not met for group %s", group.Name)
 			resp.Error(c, http.StatusNotFound, "model not found")
@@ -137,9 +135,16 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 		}
 	}
 
-	// 3. Create load balancer iterator
-	iter := balancer.NewIterator(group, apiKeyID, requestModel, parseExcludedChannels(c.GetString("excluded_channels")))
-	if iter.Len() == 0 {
+	quota, quotaAllowed := reserveRelayQuota(c, requestModel)
+	if !quotaAllowed {
+		return
+	}
+	var quotaUsage int64
+	defer func() {
+		settleRelayQuota(quota, quotaUsage)
+	}()
+
+	if !balancer.HasCandidates(group, parseExcludedChannels(c.GetString("excluded_channels"))) {
 		resp.Error(c, http.StatusServiceUnavailable, "no available channel")
 		return
 	}
@@ -176,10 +181,10 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 		default:
 		}
 
-		routeIter = balancer.NewIterator(group, apiKeyID, requestModel, parseExcludedChannels(c.GetString("excluded_channels")))
+		routeIter = balancer.NewIterator(group, apiKeyID, stickyRoutingKey(&group, requestModel), parseExcludedChannels(c.GetString("excluded_channels")))
 
 		for routeIter.Next() {
-			if maxTotalAttempts > 0 && len(allAttempts) >= maxTotalAttempts {
+			if maxTotalAttempts > 0 && len(allAttempts)+routeIter.DecisionCount() >= maxTotalAttempts {
 				lastErr = fmt.Errorf("reached relay max total attempts: %d", maxTotalAttempts)
 				goto mediaExhausted
 			}
@@ -201,16 +206,19 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 			channel, err := ch.Get(item.ChannelID, c.Request.Context())
 			if err != nil {
 				log.Warnf("failed to get channel %d: %v", item.ChannelID, err)
+				lastErr = fmt.Errorf("channel unavailable")
 				routeIter.Skip(item.ChannelID, 0, buildChannelName(item.ChannelID), fmt.Sprintf("channel not found: %v", err))
 				continue
 			}
 			if !channel.Enabled {
+				lastErr = fmt.Errorf("channel disabled")
 				routeIter.Skip(channel.ID, 0, channel.Name, "channel disabled")
 				continue
 			}
 
-			resolvedModel := resolveCandidateModelName(requestModel, item)
+			resolvedModel := identity.candidate(item)
 			if resolvedModel == "" {
+				lastErr = fmt.Errorf("upstream model unavailable")
 				routeIter.Skip(channel.ID, 0, channel.Name, "model not found in channel")
 				continue
 			}
@@ -218,8 +226,9 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 			// 渠道内 Key 级重试
 			var failedKeyIDs []int
 			rateLimitHoldWaited := time.Duration(0)
+		keyAttempts:
 			for keyRound := 1; keyRound <= maxKeyRetriesPerRoute; keyRound++ {
-				if maxTotalAttempts > 0 && len(allAttempts) >= maxTotalAttempts {
+				if maxTotalAttempts > 0 && len(allAttempts)+routeIter.DecisionCount() >= maxTotalAttempts {
 					lastErr = fmt.Errorf("reached relay max total attempts: %d", maxTotalAttempts)
 					goto mediaExhausted
 				}
@@ -240,7 +249,17 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				// keyRound == 1 但 failedKeyIDs 非空 = 熔断跳过后的重选（跳过分支
 				// keyRound-- 不消耗配额），必须排除已失败 key，否则确定性选 key
 				// 会选回同一个 key 造成死循环（issue #192，与 relay.go 同因）。
-				if keyRound == 1 && len(failedKeyIDs) == 0 {
+				var poolLease *poolscheduler.AccountLease
+				attemptChannel := channel
+				if channel.PoolID > 0 {
+					var selectionErr error
+					attemptChannel, usedKey, poolLease, selectionErr = mediaPoolAccount(channel, fmt.Sprintf("%d:%s", apiKeyID, requestModel), failedKeyIDs, resolvedModel)
+					if selectionErr != nil {
+						lastErr = selectionErr
+						routeIter.Skip(channel.ID, 0, channel.Name, selectionErr.Error())
+						break
+					}
+				} else if keyRound == 1 && len(failedKeyIDs) == 0 {
 					usedKey = channel.GetChannelKeyWithCooldown(resolvedModel, ratelimitCooldown)
 				} else {
 					usedKey = channel.GetChannelKeyExcludingWithCooldown(failedKeyIDs, resolvedModel, ratelimitCooldown)
@@ -258,7 +277,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				}
 
 				// 熔断跳过不消耗 Key 重试配额
-				if routeIter.SkipCircuitBreak(channel.ID, usedKey.ID, channel.Name, resolvedModel) {
+				if channel.PoolID == 0 && routeIter.SkipCircuitBreak(channel.ID, usedKey.ID, channel.Name, resolvedModel) {
 					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
 					keyRound--
 					continue
@@ -269,7 +288,10 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					routeRound, keyRound, maxKeyRetriesPerRoute)
 
 				span := routeIter.StartAttempt(channel.ID, usedKey.ID, channel.Name, resolvedModel)
-				statusCode, fwdErr := forwardMediaRequest(c, cfg, group, channel, usedKey.ChannelKey, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx)
+				statusCode, fwdErr := forwardMediaWithPoolHeaders(c, cfg, group, attemptChannel, usedKey, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx, poolLease)
+				if usage := mediaUsageFromContext(c); usage != nil {
+					quotaUsage = usage.totalTokens()
+				}
 
 				// 记录最后一次实际转发的通道信息
 				lastChannelID = channel.ID
@@ -298,24 +320,25 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				balancer.RecordKeyAvailability(channel.ID, usedKey.ID, resolvedModel, statusCode, false)
 
 				if decision.Scope == ScopeNone && !decision.IsError {
-					ch.KeyUpdate(usedKey)
+					usageStats := mediaUsageStats(mediaUsageFromContext(c), resolvedModel, startTime)
+					_ = ch.RecordKeyUsage(channel.ID, usedKey.ID, usageStats.InputCost+usageStats.OutputCost, 0, time.Now().Unix())
 					span.End(dbmodel.AttemptSuccess, statusCode, "")
-					st.ChannelUpdate(channel.ID, dbmodel.StatsMetrics{
-						WaitTime:       span.Duration().Milliseconds(),
-						RequestSuccess: 1,
-					})
+					usageStats.WaitTime = span.Duration().Milliseconds()
+					updateChannelSuccessStats(channel.ID, usageStats.WaitTime, usageStats)
+					usageStats.RequestSuccess = 1
+					st.ModelRecord(channel.ID, resolvedModel, usageStats)
 					balancer.RecordSuccess(channel.ID, usedKey.ID, resolvedModel)
 					balancer.RecordKeyAvailability(channel.ID, usedKey.ID, resolvedModel, statusCode, true)
 					balancer.RecordAutoSuccess(channel.ID, resolvedModel)
 					balancer.RecordAutoLatency(channel.ID, resolvedModel, span.Duration().Milliseconds())
-					balancer.SetSticky(apiKeyID, requestModel, channel.ID, usedKey.ID)
+					balancer.SetStickyModel(apiKeyID, stickyRoutingKey(&group, requestModel), resolvedModel, channel.ID, usedKey.ID)
 
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
-					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, nil, clientIP)
+					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, nil, clientIP, mediaUsageFromContext(c))
 					return
 				}
 
-				ch.KeyUpdate(usedKey)
+				_ = ch.RecordKeyUsage(channel.ID, usedKey.ID, 0, 0, time.Now().Unix())
 				// 决策摘要 + 上游原始错误，使 relay log 能区分 429 等错误的真实成因（issue #93）。
 				mediaFailMsg := decision.String()
 				if upstreamErr := extractUpstreamErrorDetail(fwdErr); upstreamErr != "" {
@@ -326,13 +349,13 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					WaitTime:      span.Duration().Milliseconds(),
 					RequestFailed: 1,
 				})
+				st.ModelRecord(channel.ID, resolvedModel, dbmodel.StatsMetrics{
+					WaitTime:      span.Duration().Milliseconds(),
+					RequestFailed: 1,
+				})
 
-				// 熔断守卫与 relay.go 复用同一个纯函数 shouldRecordChannelFailure，避免两文件
-				// 判定逻辑漂移。媒体路径全程不使用 poolscheduler（无号池账号反馈），
-				// 因此 poolID 传 0：即使渠道配了 PoolID，媒体侧也只有渠道级熔断这一个
-				// 健康信号，保持现有行为不变。SkipFailureAccounting（客户端断连）由上方
-				// markClientCancelIfGone 写入，在此生效。
-				if shouldRecordChannelFailure(0, decision) {
+				// SkipFailureAccounting excludes client cancellations; pools own account health.
+				if shouldRecordChannelFailure(channel.PoolID, decision) {
 					balancer.RecordFailure(channel.ID, usedKey.ID, resolvedModel)
 					balancer.RecordAutoFailure(channel.ID, resolvedModel)
 				}
@@ -346,14 +369,14 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				case ScopeNone:
 					lastErr = fwdErr
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
-					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP)
+					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP, mediaUsageFromContext(c))
 					// 与 LLM relay 一致：客户端错误原样回给下游，不吞成 502。
 					writeClientTerminalError(c, decision.Code, fwdErr, nil)
 					return
 				case ScopeAbortAll:
 					lastErr = fwdErr
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
-					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP)
+					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP, mediaUsageFromContext(c))
 					return
 				case ScopeSameChannel:
 					lastErr = fwdErr
@@ -378,17 +401,17 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 						}
 						// 等待预算耗尽：结束本渠道，转下一渠道。
 						failedKeyIDs = append(failedKeyIDs, usedKey.ID)
-						break
+						break keyAttempts
 					}
 					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
 				case ScopeNextChannel:
 					lastErr = fwdErr
 					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
-					break
+					break keyAttempts
 				default:
 					lastErr = fwdErr
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
-					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP)
+					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP, mediaUsageFromContext(c))
 					resp.Error(c, http.StatusBadGateway, lastErr.Error())
 					return
 				}
@@ -397,7 +420,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 		allAttempts = append(allAttempts, routeIter.Attempts()...)
 	}
 	// All route rounds exhausted
-	recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, lastChannelID, lastChannelName, lastResolvedModel, time.Since(startTime), allAttempts, lastErr, clientIP)
+	recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, lastChannelID, lastChannelName, lastResolvedModel, time.Since(startTime), allAttempts, lastErr, clientIP, mediaUsageFromContext(c))
 	// 对外返回通用文案，上游错误细节仅入日志（同 chat 路径）。
 	resp.Error(c, http.StatusBadGateway, "all channels failed")
 	return
@@ -407,21 +430,22 @@ mediaExhausted:
 	if routeIter != nil {
 		allAttempts = append(allAttempts, routeIter.Attempts()...)
 	}
-	recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, lastChannelID, lastChannelName, lastResolvedModel, time.Since(startTime), allAttempts, lastErr, clientIP)
+	recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, lastChannelID, lastChannelName, lastResolvedModel, time.Since(startTime), allAttempts, lastErr, clientIP, mediaUsageFromContext(c))
 	resp.Error(c, http.StatusBadGateway, "all channels failed")
 }
 
 // recordMediaRelayLog creates a RelayLog entry and updates global stats for media endpoints.
-func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string, bodyBytes []byte, channelID int, channelName string, resolvedModel string, duration time.Duration, attempts []dbmodel.ChannelAttempt, relayErr error, clientIP string) {
+func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string, bodyBytes []byte, channelID int, channelName string, resolvedModel string, duration time.Duration, attempts []dbmodel.ChannelAttempt, relayErr error, clientIP string, usage *mediaJSONUsage) {
 	ctx, cancel := newRelayPersistenceContext()
 	defer cancel()
 
 	// 与 relay_log 一致地截断 attempts（issue #192 兜底），防止 media 路径同样把
 	// 决策纪录无上限写入日志。
 	attempts, totalAttempts := capAttemptsForLog(attempts)
+	requestStart := time.Now().Add(-duration)
 
 	relayLog := dbmodel.RelayLog{
-		Time:             time.Now().Add(-duration).Unix(),
+		Time:             requestStart.Unix(),
 		RequestModelName: requestModel,
 		RequestAPIKeyID:  apiKeyID,
 		ClientIP:         clientIP,
@@ -433,6 +457,11 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 		Attempts:         attempts,
 		TotalAttempts:    totalAttempts,
 	}
+	usageStats := mediaUsageStats(usage, resolvedModel, requestStart)
+	relayLog.InputTokens = int(usageStats.InputToken)
+	relayLog.OutputTokens = int(usageStats.OutputToken)
+	relayLog.Cost = usageStats.InputCost + usageStats.OutputCost
+	relayLog.BillingWindow = price.BillingWindow(resolvedModel, requestStart)
 
 	if apiKey, getErr := ak.Get(apiKeyID, ctx); getErr == nil {
 		relayLog.RequestAPIKeyName = apiKey.Name
@@ -459,9 +488,14 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 		log.Warnf("failed to save media relay log: %v", logErr)
 	}
 
-	// Record global and API-key stats (media endpoints don't have token/cost data)
+	// Record global and API-key stats, including usage when the upstream JSON
+	// response supplied token counts.
 	stats := dbmodel.StatsMetrics{
-		WaitTime: int64(duration.Milliseconds()),
+		WaitTime:    int64(duration.Milliseconds()),
+		InputToken:  usageStats.InputToken,
+		OutputToken: usageStats.OutputToken,
+		InputCost:   usageStats.InputCost,
+		OutputCost:  usageStats.OutputCost,
 	}
 	if relayErr == nil {
 		stats.RequestSuccess = 1
@@ -568,10 +602,38 @@ func forwardMediaRequest(
 	streamRequested bool,
 	operationCtx context.Context,
 ) (int, error) {
-	if cfg.MultipartInput && len(bodyBytes) == 0 {
-		return forwardMediaRequestMultipart(c, cfg, channel, key, requestModel, resolvedModel, streamRequested, operationCtx)
+	if group.AttemptTimeOut > 0 {
+		var cancel context.CancelFunc
+		operationCtx, cancel = context.WithTimeout(operationCtx, time.Duration(group.AttemptTimeOut)*time.Second)
+		defer cancel()
 	}
-	return forwardMediaRequestJSON(c, cfg, group, channel, key, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx)
+	var firstByte *mediaFirstByteTimeout
+	if streamRequested && group.FirstTokenTimeOut > 0 {
+		ctx, cancel := context.WithCancel(operationCtx)
+		defer cancel()
+		firstByte = &mediaFirstByteTimeout{cancel: cancel}
+		firstByte.mu.Lock()
+		firstByte.timer = time.AfterFunc(time.Duration(group.FirstTokenTimeOut)*time.Second, firstByte.expire)
+		firstByte.mu.Unlock()
+		defer firstByte.stop()
+		operationCtx = context.WithValue(ctx, mediaFirstByteKey{}, firstByte)
+	}
+	var status int
+	var err error
+	if cfg.MultipartInput && len(bodyBytes) == 0 {
+		status, err = forwardMediaRequestMultipart(c, cfg, group, channel, key, requestModel, resolvedModel, streamRequested, operationCtx)
+	} else {
+		status, err = forwardMediaRequestJSON(c, cfg, group, channel, key, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx)
+	}
+	if firstByte != nil {
+		firstByte.mu.Lock()
+		fired := firstByte.fired
+		firstByte.mu.Unlock()
+		if fired {
+			return 0, fmt.Errorf("media first response byte timeout")
+		}
+	}
+	return status, err
 }
 
 // forwardMediaRequestJSON handles JSON-based media endpoint forwarding.
@@ -587,6 +649,9 @@ func forwardMediaRequestJSON(
 	streamRequested bool,
 	operationCtx context.Context,
 ) (int, error) {
+	if channel != nil && channel.NodeID != 0 {
+		return http.StatusBadRequest, fmt.Errorf("media endpoints are not supported by node channels")
+	}
 	ctx := operationCtx
 
 	// Replace model name in the JSON body
@@ -625,6 +690,10 @@ func forwardMediaRequestJSON(
 		}
 	}
 
+	upstreamURL, err = mergeSafeMediaQuery(upstreamURL, c.Request.URL.Query())
+	if err != nil {
+		return 0, err
+	}
 	// Create request
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(modifiedBody))
 	if err != nil {
@@ -665,7 +734,7 @@ func forwardMediaRequestJSON(
 	//
 	// 必须在下面的 defer **之前**替换：Go 在 defer 语句执行时就固定方法接收者，
 	// 先包装才能让 defer 调到 watchdog 的 Close（否则 watchdog 收不到退出信号）。
-	response.Body = wrapMediaResponseBody(response.Body, mediaBodyIdleTimeout)
+	response.Body = wrapMediaResponseBody(watchMediaFirstByte(ctx, response.Body), mediaBodyIdleTimeout)
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -691,6 +760,7 @@ func forwardMediaRequestJSON(
 func forwardMediaRequestMultipart(
 	c *gin.Context,
 	cfg mediaEndpointConfig,
+	group dbmodel.Group,
 	channel *dbmodel.Channel,
 	key string,
 	requestModel string,
@@ -698,12 +768,26 @@ func forwardMediaRequestMultipart(
 	streamRequested bool,
 	operationCtx context.Context,
 ) (int, error) {
+	if channel != nil && channel.NodeID != 0 {
+		return http.StatusBadRequest, fmt.Errorf("media endpoints are not supported by node channels")
+	}
 	ctx := operationCtx
 
 	// Build upstream URL
 	upstreamURL, err := buildMediaUpstreamURL(channel.GetBaseUrl(), cfg.UpstreamPath)
 	if err != nil {
 		return 0, fmt.Errorf("failed to build upstream URL: %w", err)
+	}
+	if strings.EqualFold(strings.TrimSpace(group.EndpointProvider), "raw") {
+		upstreamURL, err = buildRawPassthroughUpstreamURL(channel.GetBaseUrl(), c)
+		if err != nil {
+			return 0, fmt.Errorf("failed to build raw passthrough url: %w", err)
+		}
+	} else {
+		upstreamURL, err = mergeSafeMediaQuery(upstreamURL, c.Request.URL.Query())
+		if err != nil {
+			return 0, fmt.Errorf("failed to merge safe query: %w", err)
+		}
 	}
 
 	bodyReader, contentType := buildMultipartForwardBody(c.Request.MultipartForm, resolvedModel)
@@ -736,7 +820,7 @@ func forwardMediaRequestMultipart(
 	}
 	// 同 forwardMediaRequestJSON：multipart 路径的响应体读取同样必须有空闲上限，
 	// 且同样必须在 defer 之前替换（defer 语句执行时即固定方法接收者）。
-	response.Body = wrapMediaResponseBody(response.Body, mediaBodyIdleTimeout)
+	response.Body = wrapMediaResponseBody(watchMediaFirstByte(ctx, response.Body), mediaBodyIdleTimeout)
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -870,14 +954,23 @@ func buildRawPassthroughUpstreamURL(baseURL string, c *gin.Context) (string, err
 	if err != nil {
 		return "", err
 	}
-	if query != "" {
-		separator := "?"
-		if strings.Contains(upstreamURL, "?") {
-			separator = "&"
-		}
-		upstreamURL += separator + query
+	query, err = filterSafeMediaRawQuery(query)
+	if err != nil {
+		return "", err
 	}
-	return upstreamURL, nil
+	if query == "" {
+		return upstreamURL, nil
+	}
+	parsed, err := url.Parse(upstreamURL)
+	if err != nil {
+		return "", err
+	}
+	if parsed.RawQuery == "" {
+		parsed.RawQuery = query
+	} else {
+		parsed.RawQuery += "&" + query
+	}
+	return parsed.String(), nil
 }
 
 // applyChannelHeaders applies channel custom headers to the request.
@@ -1143,12 +1236,112 @@ func handleJSONResponse(c *gin.Context, response *http.Response) (int, error) {
 		c.Header("Content-Type", ct)
 	}
 
-	_, err := io.Copy(c.Writer, response.Body)
+	const usageCaptureLimit = 2 * 1024 * 1024
+	body, err := io.ReadAll(io.LimitReader(response.Body, usageCaptureLimit+1))
 	if err != nil {
+		return 0, fmt.Errorf("failed to read response: %w", err)
+	}
+	if len(body) <= usageCaptureLimit {
+		recordMediaJSONUsage(c, body)
+		if _, err := c.Writer.Write(body); err != nil {
+			return 0, fmt.Errorf("failed to stream response: %w", err)
+		}
+		return response.StatusCode, nil
+	}
+	if _, err := c.Writer.Write(body); err != nil {
+		return 0, fmt.Errorf("failed to stream response: %w", err)
+	}
+	if _, err := io.Copy(c.Writer, response.Body); err != nil {
 		return 0, fmt.Errorf("failed to stream response: %w", err)
 	}
 
 	return response.StatusCode, nil
+}
+
+const mediaUsageContextKey = "media_usage_tokens"
+
+type mediaJSONUsage struct {
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+}
+
+func (usage mediaJSONUsage) inputTokens() int64 {
+	if usage.PromptTokens > 0 {
+		return usage.PromptTokens
+	}
+	return max(0, usage.InputTokens)
+}
+
+func (usage mediaJSONUsage) outputTokens() int64 {
+	if usage.CompletionTokens > 0 {
+		return usage.CompletionTokens
+	}
+	return max(0, usage.OutputTokens)
+}
+
+func (usage mediaJSONUsage) totalTokens() int64 {
+	if usage.TotalTokens > 0 {
+		return usage.TotalTokens
+	}
+	return usage.inputTokens() + usage.outputTokens()
+}
+
+func recordMediaJSONUsage(c *gin.Context, body []byte) {
+	if c == nil || len(body) == 0 {
+		return
+	}
+	var payload struct {
+		Usage *mediaJSONUsage `json:"usage"`
+	}
+	if err := jsonAPI.Unmarshal(body, &payload); err != nil || payload.Usage == nil {
+		return
+	}
+	usage := payload.Usage
+	tokens := usage.TotalTokens
+	if tokens <= 0 {
+		tokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	if tokens <= 0 {
+		tokens = usage.InputTokens + usage.OutputTokens
+	}
+	if tokens > 0 {
+		c.Set(mediaUsageContextKey, *usage)
+	}
+}
+
+func mediaUsageFromContext(c *gin.Context) *mediaJSONUsage {
+	if c == nil {
+		return nil
+	}
+	value, ok := c.Get(mediaUsageContextKey)
+	if !ok {
+		return nil
+	}
+	usage, ok := value.(mediaJSONUsage)
+	if !ok {
+		return nil
+	}
+	return &usage
+}
+
+func mediaUsageStats(usage *mediaJSONUsage, modelName string, at time.Time) dbmodel.StatsMetrics {
+	if usage == nil {
+		return dbmodel.StatsMetrics{}
+	}
+	stats := dbmodel.StatsMetrics{
+		InputToken:  usage.inputTokens(),
+		OutputToken: usage.outputTokens(),
+	}
+	modelPrice := price.EffectiveLLMPrice(modelName, at)
+	if modelPrice == nil {
+		return stats
+	}
+	stats.InputCost = float64(stats.InputToken) * modelPrice.Input * 1e-6
+	stats.OutputCost = float64(stats.OutputToken) * modelPrice.Output * 1e-6
+	return stats
 }
 
 type musicGenerationChatMessage struct {

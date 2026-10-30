@@ -145,6 +145,99 @@ func TestApply_PreservesMixedMultipartContent(t *testing.T) {
 	}
 }
 
+func TestApply_RewritesSystemAndDeveloperPromptTextOnly(t *testing.T) {
+	cfg, enabled, err := Resolve(outbound.OutboundTypeAnthropic, &appmodel.RequestRewriteConfig{
+		Enabled: true,
+		Profile: appmodel.RequestRewriteProfilePreserve,
+		PromptRules: []appmodel.PromptRewriteRule{
+			{Pattern: `(?i)blocked`, Replacement: ""},
+			{Pattern: `old-(\w+)`, Replacement: `new-$1`},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if !enabled {
+		t.Fatal("Resolve() enabled = false, want true")
+	}
+
+	systemText := "blocked system old-rule"
+	developerText := "developer blocked"
+	userText := "user blocked old-rule"
+	req := &transmodel.InternalLLMRequest{
+		Model: "claude-sonnet",
+		Messages: []transmodel.Message{
+			{Role: "system", Content: transmodel.MessageContent{Content: &systemText}},
+			{Role: "developer", Content: transmodel.MessageContent{Content: &developerText}},
+			{Role: "user", Content: transmodel.MessageContent{Content: &userText}},
+		},
+	}
+
+	got, err := Apply(req, cfg)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if got.Messages[0].Content.Content == nil || *got.Messages[0].Content.Content != " system new-rule" {
+		t.Fatalf("system content = %#v, want %q", got.Messages[0].Content, " system new-rule")
+	}
+	if got.Messages[1].Content.Content == nil || *got.Messages[1].Content.Content != "developer " {
+		t.Fatalf("developer content = %#v, want %q", got.Messages[1].Content, "developer ")
+	}
+	if got.Messages[2].Content.Content == nil || *got.Messages[2].Content.Content != userText {
+		t.Fatalf("user content = %#v, want unchanged %q", got.Messages[2].Content, userText)
+	}
+	if *req.Messages[0].Content.Content != systemText {
+		t.Fatalf("Apply() mutated original system prompt: %q", *req.Messages[0].Content.Content)
+	}
+}
+
+func TestApply_RewritesTextPartsInSystemMultipartContent(t *testing.T) {
+	cfg, _, err := Resolve(outbound.OutboundTypeOpenAIChat, &appmodel.RequestRewriteConfig{
+		Enabled: true,
+		Profile: appmodel.RequestRewriteProfilePreserve,
+		PromptRules: []appmodel.PromptRewriteRule{
+			{Pattern: "secret", Replacement: ""},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	text := "secret instructions"
+	imageURL := "https://example.com/image.png"
+	req := &transmodel.InternalLLMRequest{
+		Model: "gpt-4o",
+		Messages: []transmodel.Message{
+			{
+				Role: "system",
+				Content: transmodel.MessageContent{
+					MultipleContent: []transmodel.MessageContentPart{
+						{Type: "text", Text: &text},
+						{Type: "image_url", ImageURL: &transmodel.ImageURL{URL: imageURL}},
+					},
+				},
+			},
+		},
+	}
+
+	got, err := Apply(req, cfg)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	parts := got.Messages[0].Content.MultipleContent
+	if len(parts) != 2 {
+		t.Fatalf("system content parts len = %d, want 2", len(parts))
+	}
+	if parts[0].Text == nil || *parts[0].Text != " instructions" {
+		t.Fatalf("system text part = %#v, want %q", parts[0].Text, " instructions")
+	}
+	if parts[1].ImageURL == nil || parts[1].ImageURL.URL != imageURL {
+		t.Fatalf("system image part = %#v, want URL %q", parts[1].ImageURL, imageURL)
+	}
+	if *req.Messages[0].Content.MultipleContent[0].Text != text {
+		t.Fatalf("Apply() mutated original multipart text: %q", *req.Messages[0].Content.MultipleContent[0].Text)
+	}
+}
+
 func TestApply_EnsuresAssistantContentWhenToolCallsPresent(t *testing.T) {
 	req := &transmodel.InternalLLMRequest{
 		Model: "gpt-4o-mini",
