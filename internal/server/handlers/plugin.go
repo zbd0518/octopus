@@ -15,6 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lingyuins/octopus/internal/conf"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/op/channel"
+	"github.com/lingyuins/octopus/internal/op/node"
 	"github.com/lingyuins/octopus/internal/plugin"
 	"github.com/lingyuins/octopus/internal/server/auth"
 	"github.com/lingyuins/octopus/internal/server/middleware"
@@ -59,6 +61,32 @@ func pluginManager(c *gin.Context) *plugin.Manager {
 	return plugin.DefaultManager
 }
 
+// builtinMagpieNodePluginID identifies the synthesized built-in record that
+// represents the Magpie nodes feature on the plugin page. It is never persisted
+// to the plugins table and has no WASM artifact; toggling it flips the
+// nodes_feature_enabled setting.
+const builtinMagpieNodePluginID = "octopus.magpie-node"
+
+// builtinMagpieNodeManifestJSON is a minimal manifest used only for display;
+// it intentionally has no permissions and no UI so RPC/UI endpoints reject it.
+const builtinMagpieNodeManifestJSON = `{"id":"octopus.magpie-node","name":"Magpie Nodes","version":"builtin","schema_version":0,"description":"Built-in Magpie node connector. Disabling it disconnects nodes and pauses bound channels. Re-enabling resumes previously enabled channels.","permissions":[],"events":[]}`
+
+func synthesizeBuiltinMagpieNode() model.Plugin {
+	enabled := node.FeatureEnabled()
+	status := model.PluginStatusDisabled
+	if enabled {
+		status = model.PluginStatusEnabled
+	}
+	return model.Plugin{
+		ID:           builtinMagpieNodePluginID,
+		Name:         "Magpie Nodes",
+		Version:      "builtin",
+		ManifestJSON: builtinMagpieNodeManifestJSON,
+		Status:       status,
+		Enabled:      enabled,
+	}
+}
+
 func listPlugins(c *gin.Context) {
 	items, err := plugin.ListRecords(c.Request.Context())
 	if err != nil {
@@ -68,6 +96,7 @@ func listPlugins(c *gin.Context) {
 	for i := range items {
 		items[i].LastError = pluginRedact(items[i].LastError)
 	}
+	items = append([]model.Plugin{synthesizeBuiltinMagpieNode()}, items...)
 	resp.Success(c, gin.H{"plugins": items, "can_write": auth.HasPermission(c.GetString("user_role"), auth.PermPluginsWrite)})
 }
 
@@ -92,6 +121,14 @@ func installPlugin(c *gin.Context) {
 }
 
 func setPluginEnabled(c *gin.Context, enabled bool) {
+	if c.Param("id") == builtinMagpieNodePluginID {
+		if err := channel.SetNodesFeatureEnabled(c.Request.Context(), enabled); err != nil {
+			resp.InternalError(c)
+			return
+		}
+		resp.Success(c, synthesizeBuiltinMagpieNode())
+		return
+	}
 	manager := pluginManager(c)
 	if manager == nil {
 		return
@@ -103,6 +140,10 @@ func enablePlugin(c *gin.Context)  { setPluginEnabled(c, true) }
 func disablePlugin(c *gin.Context) { setPluginEnabled(c, false) }
 
 func configurePlugin(c *gin.Context) {
+	if c.Param("id") == builtinMagpieNodePluginID {
+		resp.Error(c, http.StatusBadRequest, "built-in plugin does not accept configuration")
+		return
+	}
 	var request model.PluginConfigRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		resp.InvalidJSON(c)
@@ -121,6 +162,10 @@ func configurePlugin(c *gin.Context) {
 }
 
 func uninstallPlugin(c *gin.Context) {
+	if c.Param("id") == builtinMagpieNodePluginID {
+		resp.Error(c, http.StatusBadRequest, "built-in plugin cannot be uninstalled")
+		return
+	}
 	manager := pluginManager(c)
 	if manager == nil {
 		return
@@ -153,6 +198,10 @@ func pluginOperationResponse(c *gin.Context, record model.Plugin, err error) {
 }
 
 func pluginRPC(c *gin.Context) {
+	if c.Param("id") == builtinMagpieNodePluginID {
+		resp.Error(c, http.StatusBadRequest, "built-in plugin does not expose RPC")
+		return
+	}
 	manager := pluginManager(c)
 	if manager == nil {
 		return
@@ -229,6 +278,10 @@ type pluginUIBundleResponse struct {
 
 // UI bytes are returned only as authenticated JSON, never as host-origin HTML.
 func pluginUIBundle(c *gin.Context) {
+	if c.Param("id") == builtinMagpieNodePluginID {
+		resp.Error(c, http.StatusNotFound, "plugin UI not found")
+		return
+	}
 	c.Header("Cache-Control", "no-store")
 	c.Header("X-Content-Type-Options", "nosniff")
 	record, err := plugin.Record(c.Request.Context(), c.Param("id"))

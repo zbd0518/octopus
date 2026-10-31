@@ -13,20 +13,26 @@ import (
 
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/op/setting"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
 var (
-	ErrInvalidName  = errors.New("invalid node name")
-	ErrUnauthorized = errors.New("invalid node credentials")
-	ErrReferenced   = errors.New("node is referenced by channels")
-	lifecycleMu     sync.Mutex
+	ErrInvalidName     = errors.New("invalid node name")
+	ErrUnauthorized    = errors.New("invalid node credentials")
+	ErrReferenced      = errors.New("node is referenced by channels")
+	ErrFeatureDisabled = errors.New("magpie nodes feature is disabled")
+	lifecycleMu        sync.Mutex
 )
 
 // NodeRevokedFunc is wired at startup. It must synchronously remove the current
 // session, must not call back into this package, and must not block on peer I/O.
 var NodeRevokedFunc func(int)
+
+// DisconnectAllFunc removes every session without permanently closing the manager.
+// Like NodeRevokedFunc, it must not call back into node lifecycle operations.
+var DisconnectAllFunc func()
 
 type RuntimeState struct {
 	Online           bool       `json:"online"`
@@ -58,6 +64,17 @@ func record(n model.Node) Record {
 	return r
 }
 
+// FeatureEnabled reports whether the Magpie nodes feature is globally enabled.
+// Errors reading the setting default to enabled so a cold cache never silently
+// breaks existing deployments.
+func FeatureEnabled() bool {
+	enabled, err := setting.GetBool(model.SettingKeyNodesFeatureEnabled)
+	if err != nil {
+		return true
+	}
+	return enabled
+}
+
 func secretDB(ctx context.Context) *gorm.DB {
 	// Even debug SQL must never log credential digests or token lookup arguments.
 	return db.GetDB().WithContext(ctx).Session(&gorm.Session{Logger: logger.Discard})
@@ -69,6 +86,15 @@ func WithBindingLock(fn func() error) error {
 	lifecycleMu.Lock()
 	defer lifecycleMu.Unlock()
 	return fn()
+}
+
+func Get(ctx context.Context, id int) (*Record, error) {
+	var n model.Node
+	if err := secretDB(ctx).First(&n, id).Error; err != nil {
+		return nil, err
+	}
+	r := record(n)
+	return &r, nil
 }
 
 func List(ctx context.Context) ([]Record, error) {
@@ -215,6 +241,9 @@ func Delete(ctx context.Context, id int) error {
 // acquiring that lock to disconnect, so no revoked credential can be published
 // after revocation returns. Never call it from a DB transaction holding a writer.
 func Authenticate(ctx context.Context, token string) (int, error) {
+	if !FeatureEnabled() {
+		return 0, ErrFeatureDisabled
+	}
 	if !strings.HasPrefix(token, "oct_node_") || len(token) != 52 {
 		return 0, ErrUnauthorized
 	}

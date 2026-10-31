@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Defer channel and key failure accounting for intermediate outbound-format attempts so a successful adapter fallback does not cool down or downgrade a healthy channel.
+
+### Changed
+
+- Make automatic outbound format selection sniff Anthropic Messages inbound requests and try Anthropic before Chat → Responses; explicit `chat` and `responses` keep their configured order without inbound sniffing.
+
+## [v2.7.2] - 2026-10-31
+
+### Added
+
+- Expose Magpie nodes as a built-in plugin with a global feature toggle and a separately copyable cloud connection URL.
+
+### Fixed
+
+- Atomically disable bound node channels and disconnect existing tunnels when the feature is disabled; restore only previously enabled channels when re-enabled, preserving resume state across restarts and backups.
+- Enforce administrator-only access through both feature-toggle endpoints, reject pending handshakes and new requests while disabled, and prevent channel activation and diagnostics from bypassing the toggle.
+- Refresh frontend channel, node, setting, and model state after feature changes and synchronize node-channel editing state.
+
+### Changed
+
+- Update Magpie node labels and feature-state guidance in all supported locales.
+- Align application, frontend package, and Docker Compose versions to v2.7.2.
+
+## [v2.7.1] - 2026-10-31
+
+### Added
+
+- Add bounded models-only connectivity probes for nodes, with deadline and response-size guards.
+- Show node connectivity diagnostics and test outcomes in channel forms and node settings.
+
+### Changed
+
+- Document node connection testing and plugin startup.
+- Align application, frontend package, and Docker Compose versions to v2.7.1.
+
 ## [v2.7.0] - 2026-10-30
 
 ### Added

@@ -7,6 +7,7 @@ import {
 import { Check, CheckCircle2, DollarSign, Globe, GripVertical, Key, Layers, MessageSquare, XCircle } from 'lucide-react';
 import { type StatsMetricsFormatted } from '@/api/endpoints/stats';
 import { type Channel, useEnableChannel } from '@/api/endpoints/channel';
+import { usePlugins } from '@/api/endpoints/plugin';
 import { CardContent } from './CardContent';
 import { useTranslations } from 'next-intl';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/animate-ui/components/animate/tooltip';
@@ -36,6 +37,9 @@ export function Card({
     const tSections = useTranslations('channel.detail.sections');
     const tMetrics = useTranslations('channel.detail.metrics');
     const enableChannel = useEnableChannel();
+    const { data: pluginData } = usePlugins();
+    const nodeFeatureDisabled = channel.node_id > 0 && (channel.node_feature_paused === true ||
+        pluginData?.plugins.find((plugin) => plugin.id === 'octopus.magpie-node')?.enabled === false);
     const isListLayout = layout === 'list';
     const isCompactLayout = layout === 'compact';
 
@@ -161,7 +165,8 @@ export function Card({
                         <Switch
                             checked={channel.enabled}
                             onCheckedChange={handleEnableChange}
-                            disabled={enableChannel.isPending}
+                            disabled={enableChannel.isPending || nodeFeatureDisabled}
+                            title={nodeFeatureDisabled ? tForm('nodeFeatureDisabled') : undefined}
                             onClick={(e) => e.stopPropagation()}
                             onKeyDown={(e) => e.stopPropagation()}
                             className="shrink-0 self-center"
@@ -226,7 +231,8 @@ export function Card({
                             <Switch
                                 checked={channel.enabled}
                                 onCheckedChange={handleEnableChange}
-                                disabled={enableChannel.isPending}
+                                disabled={enableChannel.isPending || nodeFeatureDisabled}
+                                title={nodeFeatureDisabled ? tForm('nodeFeatureDisabled') : undefined}
                                 onClick={(e) => e.stopPropagation()}
                                 onKeyDown={(e) => e.stopPropagation()}
                             />

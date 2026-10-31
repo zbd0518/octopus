@@ -1331,7 +1331,31 @@
     }
   },
   "node": {
-    "title": "本地节点",
+    "title": "Magpie 节点",
+    "restartHint": "插件配置完成后，请完全退出并重启 Magpie，再到此处测试连接。仅刷新插件页面不够。",
+    "test": {
+      "button": "测试连接",
+      "running": "正在测试…",
+      "success": "节点连接测试通过",
+      "failed": "节点连接测试失败",
+      "latency": "{milliseconds} 毫秒",
+      "models": "{count} 个允许的模型可用",
+      "hint": "检查隧道、本机 Magpie 网关及模型允许列表，不发送推理请求。",
+      "codes": {
+        "ok": "隧道与本机 Magpie 网关可达，密钥和模型列表正常；尚未测试模型推理。",
+        "disabled": "此节点已禁用，请先启用后再测试。",
+        "offline": "节点离线。请在插件中请求连接并保存，完全退出并重启 Magpie，核对云端地址和节点令牌。插件宿主仍可能需要一次正常的插件调用才会启动。",
+        "busy": "节点已达到并发上限，请等待在途请求完成后重试。",
+        "timeout": "连接测试超时，请检查 Magpie 和隧道网络后重试。",
+        "cancelled": "连接测试已取消，可重新测试。",
+        "local_unavailable": "无法连接本机 Magpie 网关。请确认 Magpie 正在运行，插件端口与网关一致；修改后保存并重启 Magpie。",
+        "local_authentication": "本机 Magpie API 密钥被拒绝（401/403）。请更新插件中的 Magpie API 密钥，保存并重启 Magpie。",
+        "local_http": "本机 Magpie 返回了非预期 HTTP 状态。请检查端口与网关服务；连接器不会跟随重定向。",
+        "invalid_models": "Magpie 返回的模型列表格式异常或过大。请核对网关端口及 /v1/models 响应。",
+        "no_models": "网关可达，但模型列表与插件允许列表没有交集。请核对精确模型 ID，保存并重启 Magpie。",
+        "upstream_failed": "连接器未能完成本机请求。请检查端口、密钥与 Magpie 日志；更新连接器插件可获得更详细的诊断。"
+      }
+    },
     "description": "通过 Magpie 插件建立反向连接。Magpie 凭据仅保留在你的电脑上。",
     "readOnly": "当前为只读权限。仅管理员可管理节点或更改渠道绑定。",
     "loading": "正在加载节点…",
@@ -1343,11 +1367,14 @@
     "tokenTitle": "{name} 的连接令牌",
     "tokenWarning": "令牌仅显示一次，请立即复制并妥善保管。关闭此面板后即丢弃；需要时请轮换生成新令牌。",
     "copyToken": "复制令牌",
+    "cloudURLTitle": "云端地址",
+    "cloudURLHint": "Magpie 插件连接 Octopus 云端使用的 WebSocket 地址，独立可复制。",
+    "copyCloudURL": "复制云端地址",
     "configTitle": "Magpie 插件配置参考",
-    "configHint": "安装独立目录中的 octopus-to-magpie-connect Magpie 插件。plugin_options 在插件页面填写；仅将 private_config 保存到本地私有文件，或在启动 Magpie 前设置环境变量。禁止将 private_config 或令牌写入插件选项。下方为分区参考，不可整体作为配置文件加载。无需独立 Connector，须等 Magpie 加载插件宿主后才连接。",
+    "configHint": "安装 octopus-to-magpie-connect 后，在插件页填写云端地址、模型、节点令牌、Magpie API 密钥和本机端口（默认 3425）。页面凭据以明文保存在本机，也可改用环境变量或外部 private_config 文件。下方仅为分区参考，不可整体加载。确认“请求连接”后，完全退出并重启 Magpie，再到此处“测试连接”。无需独立 Connector，须先加载插件宿主。",
     "copyConfig": "复制配置",
     "dismissToken": "已保存，隐藏令牌",
-    "empty": "暂无本地节点",
+    "empty": "暂无 Magpie 节点",
     "enabled": "已启用",
     "disabled": "已禁用",
     "online": "在线",
@@ -1362,22 +1389,23 @@
     "rotate": "轮换令牌",
     "delete": "删除",
     "confirmTitle": "确认节点操作",
-    "confirmCreate": "确定创建此本地节点？连接令牌仅显示一次，请在关闭面板前安全保存。",
+    "confirmCreate": "确定创建此 Magpie 节点？连接令牌仅显示一次，请在关闭面板前安全保存。",
     "confirmDelete": "确定删除此节点？请先解除渠道绑定。此操作不可撤销。",
-    "confirmRotate": "确定轮换连接令牌？旧令牌将失效。请更新插件的本地私有配置，必要时重新加载插件宿主。",
+    "confirmRotate": "确定轮换连接令牌？旧令牌将失效。请更新插件的本地凭据并保存，然后完全退出并重启 Magpie。",
     "confirmToggle": "确定更改可用状态？禁用后渠道将无法使用此节点。",
     "cancel": "取消",
     "confirm": "确认",
     "errors": {
       "operationFailed": "节点操作失败，请检查权限及渠道绑定后重试。",
-      "loadFailed": "无法加载本地节点。",
+      "loadFailed": "无法加载 Magpie 节点。",
       "copyFailed": "复制失败，请手动选中文本并复制。",
       "referenced": "此节点仍被渠道引用，请先解除绑定再删除。",
-      "notFound": "本地节点不存在。"
+      "notFound": "Magpie 节点不存在。",
+      "featureDisabled": "Magpie 节点功能已关闭，请在插件页启用后再试。"
     }
   },
   "setting": {
-    "nodes": { "title": "本地节点" },
+    "nodes": { "title": "Magpie 节点" },
     "appearance": "外观",
     "system": "系统",
     "theme": {
@@ -2770,7 +2798,7 @@
       },
       "outboundFormat": {
         "label": "出站请求格式",
-        "hint": "选择首选的出站 API 格式。自动模式优先尝试 Chat Completions，失败后回退到 Responses；Messages 优先使用 Anthropic Messages；原始透传会直接把客户端原始请求体发给上游，不做格式转换或回退；原始穿透（信息体）在此基础上保留客户端原始请求路径，仅改写模型名；「仅」模式不会回退到其他格式，适合只支持单一格式（如公益站）的上游。",
+        "hint": "选择首选的出站 API 格式。自动模式会识别入站协议：Anthropic Messages 入站优先尝试 Anthropic，其余入站优先尝试 Chat Completions，失败后按 Chat → Responses 回退；Chat 和 Responses 仅调整 Chat/Responses 顺序，不识别入站格式；Messages 按 Anthropic → Chat → Responses 尝试，「仅」模式会禁用回退。跨格式回退只针对 404/5xx、网络错误等路由级失败，400 等客户端 / Key 级错误不会触发回退。原始透传会直接把客户端原始请求体发给上游，不做格式转换或回退；原始穿透（信息体）在此基础上保留客户端原始请求路径，仅改写模型名。",
         "options": {
           "auto": "自动",
           "chat": "Chat Completions",
@@ -3346,10 +3374,11 @@
       "group": "渠道分组",
       "groupLoading": "正在加载分组...",
       "type": "渠道类型",
-      "nodeBinding": "连接方式 / 本地节点",
+      "nodeBinding": "连接方式 / Magpie 节点",
       "httpTransport": "普通 HTTP",
-      "nodeHint": "选择本地节点后将隐藏地址、代理及密钥输入，凭据仅保留在连接器上。节点不能同时绑定号池或代理。",
-      "nodeAdminOnly": "仅管理员可更改本地节点绑定。",
+      "nodeHint": "选择 Magpie 节点后将隐藏地址、代理及密钥输入，凭据仅保留在连接器上。节点不能同时绑定号池或代理。",
+      "nodeAdminOnly": "仅管理员可更改 Magpie 节点绑定。",
+      "nodeFeatureDisabled": "Magpie 节点功能已关闭，绑定渠道已自动禁用；重新开启功能时恢复此前启用的渠道。",
       "nodeOnline": "在线",
       "nodeOffline": "离线",
       "nodeDisabled": "已禁用",
@@ -3524,7 +3553,8 @@
       "test": {
         "button": "测试",
         "success": "渠道测试通过",
-        "partialSuccess": "渠道测试已完成",
+        "partialSuccess": "渠道测试部分通过",
+        "running": "正在测试…",
         "failed": "渠道测试失败",
         "results": "条结果",
         "pass": "通过",
@@ -4260,6 +4290,14 @@
       "error": "错误",
       "needs_reinstall": "需要重新安装",
       "uninstalling": "等待重启后移除"
+    },
+    "builtinMagpieNode": {
+      "name": "Magpie 节点",
+      "badge": "内置",
+      "description": "通过 Magpie 插件建立反向连接，将本机 Magpie 暴露为可路由的模型渠道。",
+      "hint": "在「设置 → Magpie 节点」中创建节点、生成令牌并测试连通性。",
+      "disabledHint": "已关闭：节点连接已断开，绑定渠道已禁用。重新开启时恢复此前启用的渠道，原本禁用的渠道保持禁用。",
+      "openSettings": "打开节点设置"
     }
   }
 }

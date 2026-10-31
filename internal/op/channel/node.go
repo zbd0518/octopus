@@ -10,6 +10,7 @@ import (
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/nodetransport"
+	nodeop "github.com/lingyuins/octopus/internal/op/node"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 )
 
@@ -66,6 +67,10 @@ func prepareNodeUpdate(req *model.ChannelUpdateRequest, current model.Channel, c
 	}
 	if effective.NodeID < 0 {
 		return fmt.Errorf("%w: invalid node id", ErrInvalidNodeChannel)
+	}
+	if effective.NodeID != 0 && !nodeop.FeatureEnabled() &&
+		(effective.NodeID != current.NodeID || req.Enabled != nil && *req.Enabled) {
+		return nodeop.ErrFeatureDisabled
 	}
 	if effective.NodeID == 0 {
 		if req.BaseUrls == nil || len(*req.BaseUrls) == 0 || len(req.KeysToAdd) == 0 {

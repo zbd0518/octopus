@@ -86,6 +86,10 @@ func Create(ch *model.Channel, ctx context.Context) error {
 
 func create(ch *model.Channel, ctx context.Context) error {
 	if ch != nil {
+		if ch.NodeID != 0 && !nodeop.FeatureEnabled() {
+			return nodeop.ErrFeatureDisabled
+		}
+		ch.NodeFeaturePaused = false
 		if err := normalizeNodeChannel(ch, ctx); err != nil {
 			return err
 		}
@@ -343,6 +347,10 @@ func update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 		selectFields = append(selectFields, "enabled")
 		updates.Enabled = *req.Enabled
 	}
+	if req.Enabled != nil || req.NodeID != nil && *req.NodeID == 0 {
+		selectFields = append(selectFields, "node_feature_paused")
+		updates.NodeFeaturePaused = false
+	}
 	if req.BaseUrls != nil {
 		selectFields = append(selectFields, "base_urls")
 		updates.BaseUrls = *req.BaseUrls
@@ -569,6 +577,10 @@ func BatchUpdateGroup(ids []int, groupID int, ctx context.Context) (*model.Chann
 }
 
 func Enabled(id int, enabled bool, ctx context.Context) error {
+	return nodeop.WithBindingLock(func() error { return setEnabled(id, enabled, ctx) })
+}
+
+func setEnabled(id int, enabled bool, ctx context.Context) error {
 	runtimeUpdateLock.Lock()
 	defer runtimeUpdateLock.Unlock()
 
@@ -576,10 +588,15 @@ func Enabled(id int, enabled bool, ctx context.Context) error {
 	if !ok {
 		return fmt.Errorf("channel not found")
 	}
-	if err := db.GetDB().WithContext(ctx).Model(&model.Channel{}).Where("id = ?", id).Update("enabled", enabled).Error; err != nil {
+	if enabled && oldCh.NodeID != 0 && !nodeop.FeatureEnabled() {
+		return nodeop.ErrFeatureDisabled
+	}
+	if err := db.GetDB().WithContext(ctx).Model(&model.Channel{}).Where("id = ?", id).
+		Updates(map[string]any{"enabled": enabled, "node_feature_paused": false}).Error; err != nil {
 		return err
 	}
 	oldCh.Enabled = enabled
+	oldCh.NodeFeaturePaused = false
 	chCache.Set(id, oldCh)
 	pluginevent.Publish("channel.health.changed", map[string]any{"channel_id": id, "channel_name": oldCh.Name, "enabled": enabled, "passed": enabled})
 	return nil

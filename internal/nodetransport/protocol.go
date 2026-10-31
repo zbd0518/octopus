@@ -18,6 +18,10 @@ import (
 )
 
 const BaseURL = "https://node.octopus.invalid/v1"
+
+// MaxModelsResponseBytes bounds the complete, non-streaming model list.
+const MaxModelsResponseBytes = 4 << 20
+
 const (
 	protocol     = "octopus-node-v1"
 	maxChunk     = 32 << 10
@@ -41,10 +45,14 @@ const (
 )
 
 var (
-	ErrNodeOffline   = errors.New("node offline: request not dispatched")
-	ErrNodeBusy      = errors.New("node concurrency limit: request not dispatched")
-	ErrInvalidTarget = errors.New("invalid node model target")
-	ErrSlowConsumer  = errors.New("node response consumer too slow")
+	ErrNodeOffline         = errors.New("node offline: request not dispatched")
+	ErrNodeBusy            = errors.New("node concurrency limit: request not dispatched")
+	ErrInvalidTarget       = errors.New("invalid node model target")
+	ErrSlowConsumer        = errors.New("node response consumer too slow")
+	ErrLocalUnavailable    = errors.New("local Magpie gateway unavailable")
+	ErrLocalAuthentication = errors.New("local Magpie authentication failed")
+	ErrLocalHTTP           = errors.New("local Magpie returned an unexpected HTTP status")
+	ErrInvalidModels       = errors.New("local Magpie returned an invalid model list")
 )
 
 type ExecutionUncertainError struct{ Err error }

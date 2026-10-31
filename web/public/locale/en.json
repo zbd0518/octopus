@@ -1375,7 +1375,31 @@
     }
   },
   "node": {
-    "title": "Local Nodes",
+    "title": "Magpie Nodes",
+    "restartHint": "After configuring the plugin, fully quit and restart Magpie, then test the connection here. Refreshing the plugin page is not enough.",
+    "test": {
+      "button": "Test connection",
+      "running": "Testing…",
+      "success": "Node connection test passed",
+      "failed": "Node connection test failed",
+      "latency": "{milliseconds} ms",
+      "models": "{count} allowed models available",
+      "hint": "Checks the tunnel, local Magpie gateway and model allowlist. No inference request is sent.",
+      "codes": {
+        "ok": "The tunnel and local Magpie gateway are reachable; the API key and model list work. Inference was not tested.",
+        "disabled": "This node is disabled. Enable it before testing.",
+        "offline": "The node is offline. Save Request connection in the plugin, fully quit and restart Magpie, and verify the cloud URL and node token. The plugin host may need a normal plugin-using operation to start.",
+        "busy": "The node has reached its concurrency limit. Wait for active requests to finish and retry.",
+        "timeout": "The connection test timed out. Check Magpie and the tunnel network, then retry.",
+        "cancelled": "The connection test was cancelled. Retry when ready.",
+        "local_unavailable": "The local Magpie gateway is unreachable. Check that Magpie is running and the plugin port is correct; save and restart Magpie after changing it.",
+        "local_authentication": "The local Magpie API key was rejected (401/403). Update the plugin's Magpie API key, save and restart Magpie.",
+        "local_http": "The local Magpie gateway returned an unexpected HTTP status. Check the port and gateway service. Redirects are not followed.",
+        "invalid_models": "Magpie returned an invalid or oversized model list. Verify the gateway port and its /v1/models response.",
+        "no_models": "The gateway is reachable, but none of its models match the plugin allowlist. Check exact model IDs, save and restart Magpie.",
+        "upstream_failed": "The connector could not complete the local request. Check the port, API key and Magpie logs; update the connector plugin for detailed diagnostics."
+      }
+    },
     "description": "Connect local Magpie through its reverse-channel plugin. Magpie credentials stay on your computer.",
     "readOnly": "Read-only access. Only administrators can manage nodes or change channel bindings.",
     "loading": "Loading nodes…",
@@ -1387,11 +1411,14 @@
     "tokenTitle": "Connection token for {name}",
     "tokenWarning": "Shown only once. Copy it now and keep it private. Closing this panel discards it; rotate to issue a new token.",
     "copyToken": "Copy token",
+    "cloudURLTitle": "Cloud URL",
+    "cloudURLHint": "WebSocket URL the Magpie plugin uses to reach this Octopus cloud. Copied independently.",
+    "copyCloudURL": "Copy cloud URL",
     "configTitle": "Magpie plugin setup reference",
-    "configHint": "Install the separate octopus-to-magpie-connect Magpie plugin. Enter plugin_options in its page; save only private_config to a local private file or use environment variables before starting Magpie. Never put private_config or tokens in plugin options. This reference is not a directly loadable config file. No standalone Connector is required. The plugin connects only after Magpie loads its host.",
+    "configHint": "Install octopus-to-magpie-connect, then fill in its cloud URL, models, node token, Magpie API key and local port (default 3425). Page credentials are stored locally in plain text; environment variables or an external private_config file are optional alternatives. This reference is not a directly loadable config. Confirm Request connection, fully quit and restart Magpie, then Test connection here. No separate Connector is needed; the plugin host must load first.",
     "copyConfig": "Copy configuration",
     "dismissToken": "I saved it; hide token",
-    "empty": "No local nodes yet",
+    "empty": "No Magpie nodes yet",
     "enabled": "Enabled",
     "disabled": "Disabled",
     "online": "Online",
@@ -1406,22 +1433,23 @@
     "rotate": "Rotate token",
     "delete": "Delete",
     "confirmTitle": "Confirm node operation",
-    "confirmCreate": "Create this local node? A connection token will be shown only once; save it securely before closing the panel.",
+    "confirmCreate": "Create this Magpie node? A connection token will be shown only once; save it securely before closing the panel.",
     "confirmDelete": "Delete this node? Remove channel bindings first. This operation cannot be undone.",
-    "confirmRotate": "Rotate the connection token? The old token stops working. Update the plugin's local private configuration and reload its host if needed.",
+    "confirmRotate": "Rotate the connection token? The old token stops working. Update the plugin's local credentials, save, then fully quit and restart Magpie.",
     "confirmToggle": "Change availability? Disabling a node prevents channels from using it.",
     "cancel": "Cancel",
     "confirm": "Confirm",
     "errors": {
       "operationFailed": "Node operation failed. Check permissions and channel bindings, then retry.",
-      "loadFailed": "Unable to load local nodes.",
+      "loadFailed": "Unable to load Magpie nodes.",
       "copyFailed": "Copy failed. Select and copy the text manually.",
       "referenced": "This node is referenced by channels. Remove their bindings before deleting it.",
-      "notFound": "Local node not found."
+      "notFound": "Magpie node not found.",
+      "featureDisabled": "The Magpie nodes feature is disabled. Enable it from the Plugins page first."
     }
   },
   "setting": {
-    "nodes": { "title": "Local Nodes" },
+    "nodes": { "title": "Magpie Nodes" },
     "appearance": "Appearance",
     "system": "System",
     "theme": {
@@ -2814,7 +2842,7 @@
       },
       "outboundFormat": {
         "label": "Outbound Format",
-        "hint": "Select the preferred outbound API format. Auto tries Chat Completions first then falls back to Responses. Messages prefers Anthropic Messages. Raw passthrough sends the original client request body upstream without format conversion or fallback. Raw passthrough (body) additionally preserves the client's original request path and only rewrites the model name. The only-variants disable fallback for upstreams that reject the other format.",
+        "hint": "Select the preferred outbound API format. Auto sniffs the inbound protocol: Anthropic Messages inbound tries Anthropic first, other inbound formats try Chat Completions first, then falls back along Chat → Responses. Chat and Responses set their Chat/Responses order without inbound sniffing; Messages tries Anthropic → Chat → Responses, and only-variants disable fallback. Cross-format fallback applies to route-level failures such as 404/5xx or network errors, not client/key-scoped errors. Raw passthrough sends the original client request body upstream without format conversion or fallback. Raw passthrough (body) additionally preserves the client's original request path and only rewrites the model name.",
         "options": {
           "auto": "Auto",
           "chat": "Chat Completions",
@@ -3390,10 +3418,11 @@
       "group": "Channel Group",
       "groupLoading": "Loading groups...",
       "type": "Channel Type",
-      "nodeBinding": "Connection / local node",
+      "nodeBinding": "Connection / Magpie node",
       "httpTransport": "Standard HTTP",
-      "nodeHint": "Choose a local node to hide URL, proxy and key inputs. Credentials stay on the connector. Account pools and proxies cannot be combined with nodes.",
-      "nodeAdminOnly": "Only administrators can change local node bindings.",
+      "nodeHint": "Choose a Magpie node to hide URL, proxy and key inputs. Credentials stay on the connector. Account pools and proxies cannot be combined with nodes.",
+      "nodeAdminOnly": "Only administrators can change Magpie node bindings.",
+      "nodeFeatureDisabled": "Magpie nodes are disabled. Bound channels are disabled automatically; previously enabled channels resume when the feature is enabled again.",
       "nodeOnline": "Online",
       "nodeOffline": "Offline",
       "nodeDisabled": "Disabled",
@@ -3568,7 +3597,8 @@
       "test": {
         "button": "Test",
         "success": "Channel test passed",
-        "partialSuccess": "Channel test completed",
+        "partialSuccess": "Channel test partially passed",
+        "running": "Testing…",
         "failed": "Channel test failed",
         "results": "results",
         "pass": "Pass",
@@ -4260,6 +4290,14 @@
       "error": "Error",
       "needs_reinstall": "Reinstall required",
       "uninstalling": "Removal pending restart"
+    },
+    "builtinMagpieNode": {
+      "name": "Magpie Nodes",
+      "badge": "Built-in",
+      "description": "Expose local Magpie as routable model channels through the Magpie plugin's reverse tunnel.",
+      "hint": "Create nodes, issue tokens and test connectivity in Settings → Magpie Nodes.",
+      "disabledHint": "Disabled: node connections are closed and bound channels are disabled. Enabling this feature restores previously enabled channels; originally disabled channels stay disabled.",
+      "openSettings": "Open node settings"
     }
   }
 }

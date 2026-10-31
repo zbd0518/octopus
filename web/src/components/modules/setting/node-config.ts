@@ -1,14 +1,18 @@
-export function buildNodeConfig(token: string, serverURL: string): string {
+export function buildNodeCloudURL(serverURL: string): string {
     const url = new URL(serverURL);
     url.protocol = 'wss:';
     url.pathname = `${url.pathname.replace(/\/$/, '')}/node/v1/connect`;
     url.search = '';
     url.hash = '';
+    return url.toString();
+}
+
+export function buildNodeConfig(token: string, serverURL: string): string {
     return JSON.stringify({
         plugin_options: {
             version: 1,
             connect: false,
-            cloud_url: url.toString(),
+            cloud_url: buildNodeCloudURL(serverURL),
             models: ['<MODEL_ID>'],
             max_concurrency: 4,
             request_timeout_seconds: 300,

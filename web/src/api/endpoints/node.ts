@@ -1,5 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../client';
+import type { NodeProbeResult } from './node-probe';
+
+export function useTestNode() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        gcTime: 0,
+        mutationFn: (id: number) => apiClient.post<NodeProbeResult>(`/api/v1/nodes/${id}/test`),
+        onSettled: () => queryClient.invalidateQueries({ queryKey: ['nodes'] }),
+        meta: { skipGlobalErrorHandler: true },
+    });
+}
 
 export type LocalNode = {
     id: number;

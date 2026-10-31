@@ -13,6 +13,7 @@ import (
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op"
 	ch "github.com/lingyuins/octopus/internal/op/channel"
+	"github.com/lingyuins/octopus/internal/op/node"
 	st "github.com/lingyuins/octopus/internal/op/stats"
 	"github.com/lingyuins/octopus/internal/server/auth"
 	"github.com/lingyuins/octopus/internal/server/middleware"
@@ -144,11 +145,19 @@ func createChannel(c *gin.Context) {
 		return
 	}
 	channel := req.toChannel()
+	if channel.NodeID != 0 && !node.FeatureEnabled() {
+		resp.ErrorWithKey(c, http.StatusForbidden, "magpie nodes feature is disabled", "node.errors.featureDisabled", nil)
+		return
+	}
 	if channel.NodeID != 0 && c.GetString("user_role") != model.UserRoleAdmin {
 		resp.Error(c, http.StatusForbidden, "permission denied")
 		return
 	}
 	if err := ch.Create(&channel, c.Request.Context()); err != nil {
+		if errors.Is(err, node.ErrFeatureDisabled) {
+			nodeError(c, err)
+			return
+		}
 		if errors.Is(err, ch.ErrInvalidNodeChannel) {
 			resp.ErrorWithKey(c, http.StatusBadRequest, err.Error(), "node.errors.operationFailed", nil)
 			return
@@ -197,6 +206,10 @@ func updateChannel(c *gin.Context) {
 	}
 	channel, err := ch.Update(&req, c.Request.Context())
 	if err != nil {
+		if errors.Is(err, node.ErrFeatureDisabled) {
+			nodeError(c, err)
+			return
+		}
 		if errors.Is(err, ch.ErrInvalidNodeChannel) {
 			resp.ErrorWithKey(c, http.StatusBadRequest, err.Error(), "node.errors.operationFailed", nil)
 			return
@@ -239,6 +252,10 @@ func enableChannel(c *gin.Context) {
 		return
 	}
 	if err := ch.Enabled(request.ID, request.Enabled, c.Request.Context()); err != nil {
+		if errors.Is(err, node.ErrFeatureDisabled) {
+			nodeError(c, err)
+			return
+		}
 		resp.InternalError(c)
 		return
 	}
@@ -363,6 +380,9 @@ func checkChannelKeys(c *gin.Context) {
 		resp.Error(c, http.StatusNotFound, err.Error())
 		return
 	}
+	if !prepareNodeChannelDiagnostic(c, channel) {
+		return
+	}
 	summary, err := helper.TestChannel(c.Request.Context(), *channel)
 	if err != nil {
 		resp.Error(c, http.StatusBadRequest, err.Error())
@@ -387,6 +407,11 @@ func testChannelModel(c *gin.Context) {
 		return
 	}
 
+	if channel.NodeID != 0 && !node.FeatureEnabled() {
+		nodeError(c, node.ErrFeatureDisabled)
+		return
+	}
+
 	// issue #98：部分上游渠道会因低字节请求扣额度/封禁，允许按渠道排除模型可用性测试。
 	if channel.SkipModelTest {
 		resp.ErrorWithKey(c, http.StatusBadRequest, "该渠道已设置跳过模型可用性测试，可在渠道编辑中关闭该开关后重试", "errors.channelSkipModelTest", nil)
@@ -402,6 +427,10 @@ func testChannelModel(c *gin.Context) {
 }
 
 func prepareNodeChannelDiagnostic(c *gin.Context, channel *model.Channel) bool {
+	if channel.NodeID != 0 && !node.FeatureEnabled() {
+		resp.ErrorWithKey(c, http.StatusForbidden, "magpie nodes feature is disabled", "node.errors.featureDisabled", nil)
+		return false
+	}
 	if channel.NodeID != 0 && c.GetString("user_role") != model.UserRoleAdmin {
 		resp.Error(c, http.StatusForbidden, "permission denied")
 		return false

@@ -8,6 +8,7 @@ import {
     Info, Bot, Sparkles, Cloud, Fingerprint, Wand2, Layers, Network,
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { usePlugins } from '@/api/endpoints/plugin';
 import { SettingAppearance } from './Appearance';
 import { SettingAccount } from './Account';
 import { SettingBackup } from './Backup';
@@ -97,13 +98,16 @@ export function Setting() {
     const t = useTranslations('setting');
     const [openId, setOpenId] = useState<string | null>(null);
     const items = getOrderedItems(loadOrder());
-    const activeItem = items.find((item) => item.id === openId);
+    const { data: pluginData } = usePlugins();
+    const magpieNodeEnabled = pluginData?.plugins.find((p) => p.id === 'octopus.magpie-node')?.enabled ?? true;
+    const visibleItems = magpieNodeEnabled ? items : items.filter((item) => item.id !== 'nodes');
+    const activeItem = visibleItems.find((item) => item.id === openId);
 
     return (
         <div className="h-full min-h-0 overflow-y-auto overscroll-contain rounded-t-xl">
             <div className="pb-3 md:pb-6 px-4 md:px-6 pt-4">
                 <div className="space-y-2 max-w-2xl mx-auto">
-                    {items.map((item) => (
+                    {visibleItems.map((item) => (
                         <button
                             key={item.id}
                             type="button"

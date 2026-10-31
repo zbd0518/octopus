@@ -18,6 +18,7 @@ import (
 	"github.com/lingyuins/octopus/internal/op"
 	"github.com/lingyuins/octopus/internal/op/airoute"
 	"github.com/lingyuins/octopus/internal/op/backup"
+	"github.com/lingyuins/octopus/internal/op/channel"
 	"github.com/lingyuins/octopus/internal/op/dbmigration"
 	"github.com/lingyuins/octopus/internal/op/modelnormalize"
 	notifop "github.com/lingyuins/octopus/internal/op/notification"
@@ -137,7 +138,16 @@ func setSetting(c *gin.Context) {
 		resp.ErrorWithKey(c, http.StatusBadRequest, err.Error(), "errors.inputValidationFailed", nil)
 		return
 	}
-	if isModelNormalizeSettingKey(setting.Key) {
+	if setting.Key == model.SettingKeyNodesFeatureEnabled {
+		if c.GetString("user_role") != model.UserRoleAdmin {
+			resp.Error(c, http.StatusForbidden, "permission denied")
+			return
+		}
+		if err := channel.SetNodesFeatureEnabled(c.Request.Context(), setting.Value == "true"); err != nil {
+			resp.InternalError(c)
+			return
+		}
+	} else if isModelNormalizeSettingKey(setting.Key) {
 		if err := saveModelNormalizeSetting(c.Request.Context(), setting); err != nil {
 			resp.ErrorWithKey(c, http.StatusBadRequest, err.Error(), "errors.inputValidationFailed", nil)
 			return

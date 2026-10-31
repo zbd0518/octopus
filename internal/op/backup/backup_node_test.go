@@ -25,7 +25,7 @@ func TestNodeBackupCrossDatabaseAndLiveRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	channel := model.Channel{Name: "bound", NodeID: created.Node.ID}
+	channel := model.Channel{Name: "bound", NodeID: created.Node.ID, NodeFeaturePaused: true}
 	if err := db.GetDB().Create(&channel).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +76,9 @@ func TestNodeBackupCrossDatabaseAndLiveRestore(t *testing.T) {
 			}
 			if ch.NodeID != n.ID {
 				t.Fatal("channel node pairing lost")
+			}
+			if ch.Enabled || !ch.NodeFeaturePaused {
+				t.Fatal("backup lost the persistent node feature pause marker")
 			}
 			if _, err := ImportWithModeToDB(ctx, target, &restored, model.ImportModeIncremental); err == nil || !strings.Contains(err.Error(), "conflicts") {
 				t.Fatalf("node ID collision accepted: %v", err)

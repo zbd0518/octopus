@@ -109,7 +109,7 @@ func TestDeploymentPrefixRealWebSocket(t *testing.T) {
 }
 
 func TestPeerErrorsAreSanitizedAndPreserveDeadline(t *testing.T) {
-	for _, payload := range []string{"http://127.0.0.1/private?key=secret", "deadline"} {
+	for _, payload := range []string{"http://127.0.0.1/private?key=secret", "deadline", "local_unavailable", "local_authentication", "local_http", "invalid_models"} {
 		t.Run(payload, func(t *testing.T) {
 			m := NewManager()
 			defer m.Close()
@@ -137,6 +137,10 @@ func TestPeerErrorsAreSanitizedAndPreserveDeadline(t *testing.T) {
 			case err := <-done:
 				if !IsExecutionUncertain(err) {
 					t.Fatalf("lost execution uncertainty: %v", err)
+				}
+				known := map[string]error{"local_unavailable": ErrLocalUnavailable, "local_authentication": ErrLocalAuthentication, "local_http": ErrLocalHTTP, "invalid_models": ErrInvalidModels}
+				if expected := known[payload]; expected != nil && !errors.Is(err, expected) {
+					t.Fatalf("lost safe diagnostic %s: %v", payload, err)
 				}
 				if payload == "deadline" {
 					if !errors.Is(err, context.DeadlineExceeded) {

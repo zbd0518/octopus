@@ -181,6 +181,11 @@ export function useSetSetting() {
         onSuccess: (data) => {
             logger.log('Setting 设置成功:', data);
             queryClient.invalidateQueries({ queryKey: ['settings', 'list'] });
+            if (data.key === 'nodes_feature_enabled') {
+                for (const queryKey of [['plugins'], ['channels', 'list'], ['nodes'], ['models']]) {
+                    queryClient.invalidateQueries({ queryKey });
+                }
+            }
         },
         onError: (error) => {
             logger.error('Setting 设置失败:', error);

@@ -54,6 +54,12 @@ func SetString(key model.SettingKey, value string) error {
 // SetStringBatch persists a group of settings in one transaction and publishes
 // the new cache values only after the transaction commits.
 func SetStringBatch(ctx context.Context, values map[model.SettingKey]string) error {
+	return SetStringBatchWithUpdate(ctx, values, nil)
+}
+
+// SetStringBatchWithUpdate commits related DB changes with the settings before
+// publishing the cache. update must not call another setting write operation.
+func SetStringBatchWithUpdate(ctx context.Context, values map[model.SettingKey]string, update func(*gorm.DB) error) error {
 	if len(values) == 0 {
 		return nil
 	}
@@ -80,6 +86,9 @@ func SetStringBatch(ctx context.Context, values map[model.SettingKey]string) err
 					return fmt.Errorf("failed to set setting, key not found")
 				}
 			}
+		}
+		if update != nil {
+			return update(tx)
 		}
 		return nil
 	}); err != nil {

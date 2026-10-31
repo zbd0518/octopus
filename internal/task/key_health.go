@@ -291,6 +291,16 @@ func buildKeyHealthFailureDetail(summary *helper.ChannelTestSummary) string {
 	var parts []string
 	for _, r := range summary.Results {
 		if !r.Passed {
+			if r.DiagnosticCode != "" {
+				code := r.DiagnosticCode
+				switch code {
+				case "disabled", "offline", "busy", "timeout", "cancelled", "local_unavailable", "local_authentication", "local_http", "invalid_models", "no_models", "upstream_failed":
+				default:
+					code = "upstream_failed"
+				}
+				parts = append(parts, "node: "+code)
+				continue
+			}
 			keyLabel := r.KeyRemark
 			if keyLabel == "" {
 				keyLabel = r.KeyMasked

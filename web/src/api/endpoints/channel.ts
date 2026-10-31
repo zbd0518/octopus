@@ -141,6 +141,7 @@ export type Channel = {
     key_health_at?: number;
     pool_id: number;
     node_id: number;
+    node_feature_paused?: boolean;
     stats?: StatsChannel;
 };
 
@@ -243,6 +244,8 @@ export type TestChannelResult = {
     latency_ms: number;
     message?: string;
     response_body?: string;
+    diagnostic_code?: string;
+    model_count?: number;
 };
 
 export type TestChannelSummary = {
@@ -585,7 +588,7 @@ export function useTestChannel() {
             return apiClient.post<TestChannelSummary>('/api/v1/channel/test', data);
         },
         onSuccess: (data) => {
-            logger.log('渠道测试成功:', data);
+            logger.log('渠道测试完成:', data);
         },
         onError: (error) => {
             logger.error('渠道测试失败:', error);

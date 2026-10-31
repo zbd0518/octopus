@@ -14,6 +14,7 @@ import (
 // logging because they are read-only in practice (tests, probes), authentication
 // endpoints (would flood the audit log), or one-time bootstrap operations.
 var exemptFromAudit = map[string]string{
+	"POST /api/v1/nodes/:id/test":               "fixed models-only node connectivity probe — no state change or inference",
 	"POST /api/v1/channel/test":                 "connectivity probe — no state change",
 	"POST /api/v1/channel/test-model":           "single model availability probe — no state change",
 	"POST /api/v1/channel/fetch-models-per-key": "model fetch per key probe — no state change",

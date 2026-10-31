@@ -95,6 +95,8 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
     const [showUnavailableDelete, setShowUnavailableDelete] = useState(false);
 
     const testChannelModel = useTestChannelModel();
+    const nodeFeatureDisabled = channel.node_id > 0 &&
+        (channel.node_feature_paused === true || settings?.find((item) => item.key === 'nodes_feature_enabled')?.value === 'false');
 
     // 可测试的模型列表：来自渠道自动同步的 model 与手动添加的 custom_model，去重。
     const availableModels = useMemo(() => {
@@ -172,6 +174,11 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         pool_id: channel.pool_id ?? 0,
         node_id: channel.node_id ?? 0,
     });
+    useEffect(() => {
+        if (channel.node_id > 0) {
+            setFormData((current) => ({ ...current, enabled: channel.enabled }));
+        }
+    }, [channel.node_id, channel.enabled, channel.node_feature_paused]);
     const t = useTranslations('channel.detail');
     const tProxy = useTranslations('proxyPool');
 
@@ -200,7 +207,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         if (formData.name !== channel.name) req.name = formData.name;
         if (formData.group_id !== channel.group_id) req.group_id = formData.group_id;
         if (formData.type !== channel.type) req.type = formData.type;
-        if (formData.enabled !== channel.enabled) req.enabled = formData.enabled;
+        if (!nodeFeatureDisabled && formData.enabled !== channel.enabled) req.enabled = formData.enabled;
         if (!baseUrlsEqual(formData.base_urls, channel.base_urls)) {
             req.base_urls = (formData.base_urls ?? []).filter((u) => u.url.trim()).map((u) => ({
                 url: u.url.trim(),
@@ -698,7 +705,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                                 </Select>
                                                 <Button
                                                     onClick={handleTestModel}
-                                                    disabled={isTestingModel || !selectedModel}
+                                                    disabled={isTestingModel || !selectedModel || nodeFeatureDisabled}
                                                     variant="outline"
                                                     className="h-10 sm:w-auto"
                                                 >
@@ -785,7 +792,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                             <div className="mt-4 shrink-0 space-y-3">
                                 <Button
                                     onClick={handleCheckKeys}
-                                    disabled={checkChannelKeys.isPending || channel.keys.length === 0}
+                                    disabled={checkChannelKeys.isPending || channel.keys.length === 0 || nodeFeatureDisabled}
                                     variant="outline"
                                     className="h-11 w-full rounded-lg"
                                 >

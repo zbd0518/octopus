@@ -99,6 +99,7 @@ func TestNodeManagementRBACOneTimeTokenAndAudit(t *testing.T) {
 			{http.MethodPost, "/api/v1/nodes", `{"name":"forbidden"}`},
 			{http.MethodPut, fmt.Sprintf("/api/v1/nodes/%d", id), `{"enabled":false}`},
 			{http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/rotate-token", id), ""},
+			{http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/test", id), ""},
 			{http.MethodDelete, fmt.Sprintf("/api/v1/nodes/%d", id), ""},
 		} {
 			if got := request(op.method, op.path, op.body, tokens[role]); got.Code != 403 {
@@ -107,12 +108,22 @@ func TestNodeManagementRBACOneTimeTokenAndAudit(t *testing.T) {
 		}
 	}
 	path := fmt.Sprintf("/api/v1/nodes/%d", id)
+	probe := request(http.MethodPost, path+"/test", `{"url":"http://169.254.169.254/"}`, tokens[model.UserRoleAdmin])
+	if probe.Code != http.StatusOK || !strings.Contains(probe.Body.String(), `"code":"offline"`) || probe.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("offline probe: %d %s", probe.Code, probe.Body.String())
+	}
+	if got := request(http.MethodPost, "/api/v1/nodes/999999/test", "", tokens[model.UserRoleAdmin]); got.Code != http.StatusNotFound {
+		t.Fatalf("missing node probe: %d %s", got.Code, got.Body.String())
+	}
 	rotated := request(http.MethodPost, path+"/rotate-token", "", tokens[model.UserRoleAdmin])
 	if rotated.Code != 200 || strings.Contains(rotated.Body.String(), envelope.Data.Token) {
 		t.Fatal("rotation did not return a new token")
 	}
 	if got := request(http.MethodPut, path, `{"name":"renamed","enabled":false}`, tokens[model.UserRoleAdmin]); got.Code != 200 || strings.Contains(got.Body.String(), "token") {
 		t.Fatalf("update: %s", got.Body.String())
+	}
+	if got := request(http.MethodPost, path+"/test", "", tokens[model.UserRoleAdmin]); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"code":"disabled"`) {
+		t.Fatalf("disabled probe: %d %s", got.Code, got.Body.String())
 	}
 	if got := request(http.MethodDelete, path, "", tokens[model.UserRoleAdmin]); got.Code != 200 {
 		t.Fatalf("delete: %s", got.Body.String())

@@ -2,7 +2,9 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { useNodeAction, useNodeList, type LocalNode, type NodeAction } from '@/api/endpoints/node';
+import { useNodeAction, useNodeList, useTestNode, type LocalNode, type NodeAction } from '@/api/endpoints/node';
+import type { NodeProbeResult } from '@/api/endpoints/node-probe';
+import { NodeProbeFeedback } from '@/components/common/NodeProbeFeedback';
 import { API_BASE_URL } from '@/api/client';
 import { useAuthStore } from '@/api/endpoints/user';
 import { useNavStore } from '@/components/modules/navbar/nav-store';
@@ -12,13 +14,26 @@ import { Input } from '@/components/ui/input';
 import { toast } from '@/components/common/Toast';
 import { formatDateTime } from '@/lib/time';
 import { writeClipboardText } from '@/lib/clipboard';
-import { buildNodeConfig } from './node-config';
+import { buildNodeCloudURL, buildNodeConfig } from './node-config';
+
+function NodeTestResult({ result }: { result: NodeProbeResult | { error: string } }) {
+    const t = useTranslations('node.test');
+    return <div role={'error' in result ? 'alert' : 'status'} className="space-y-2 rounded-lg border p-3">
+        {'error' in result ? <p className="break-words text-sm text-destructive">{t('failed')}: {result.error}</p> : <>
+            <p className={result.passed ? 'text-sm font-medium' : 'text-sm font-medium text-destructive'}>{t(result.passed ? 'success' : 'failed')}</p>
+            <NodeProbeFeedback code={result.code} latencyMS={result.latency_ms} modelCount={result.model_count} />
+        </>}
+    </div>;
+}
 
 export function SettingNodes() {
     const t = useTranslations('node');
     const active = useNavStore((state) => state.activeItem === 'setting');
     const authenticated = useAuthStore((state) => state.isAuthenticated);
-    const { data, isLoading, isError, refetch } = useNodeList(active && authenticated);
+    const { data, isLoading, isError, isFetching, refetch } = useNodeList(active && authenticated);
+    const test = useTestNode();
+    const [testResults, setTestResults] = useState<Record<number, NodeProbeResult | { error: string }>>({});
+    const testGeneration = useRef(0);
     const canWrite = data?.can_write === true;
     const [name, setName] = useState('');
     const [secret, setSecret] = useState<{ node: LocalNode; token: string } | null>(null);
@@ -35,16 +50,38 @@ export function SettingNodes() {
         if (useNavStore.getState().activeItem === 'setting' && useAuthStore.getState().isAuthenticated) setSecret({ node, token });
     });
     useEffect(() => {
-        if (!active || !authenticated || !canWrite) setSecret(null);
+        const generation = testGeneration;
+        if (!active || !authenticated || !canWrite) { setSecret(null); setTestResults({}); }
+        return () => { generation.current++; };
     }, [active, authenticated, canWrite]);
     const run = (input: NodeAction) => {
         if (!canWrite) return;
         setSecret(null);
+        testGeneration.current++;
+        setTestResults({});
         action.mutate(input, {
             onSuccess: () => { setName(''); toast.success(t('saved')); },
             onError: (error) => {
                 const key = (error as ApiError).message_key;
                 toast.error(key === 'node.errors.referenced' ? t('errors.referenced') : key === 'node.errors.notFound' ? t('errors.notFound') : t('errors.operationFailed'));
+            },
+        });
+    };
+    const runTest = (id: number) => {
+        if (!canWrite || test.isPending) return;
+        const generation = ++testGeneration.current;
+        setTestResults((current) => { const next = { ...current }; delete next[id]; return next; });
+        test.mutate(id, {
+            onSuccess: (result) => {
+                if (testGeneration.current !== generation || useNavStore.getState().activeItem !== 'setting' || !useAuthStore.getState().isAuthenticated) return;
+                setTestResults((current) => ({ ...current, [id]: result }));
+                if (result.passed) toast.success(t('test.success'));
+                else toast.error(t('test.failed'));
+            },
+            onError: (error) => {
+                if (testGeneration.current === generation && useNavStore.getState().activeItem === 'setting' && useAuthStore.getState().isAuthenticated) {
+                    setTestResults((current) => ({ ...current, [id]: { error: error.message } }));
+                }
             },
         });
     };
@@ -59,10 +96,17 @@ export function SettingNodes() {
     const config = secret && canWrite
         ? buildNodeConfig(secret.token, new URL(API_BASE_URL.replace(/\/?$/, '/'), window.location.href).href.replace(/\/$/, ''))
         : '';
+    const cloudURL = secret && canWrite
+        ? buildNodeCloudURL(new URL(API_BASE_URL.replace(/\/?$/, '/'), window.location.href).href.replace(/\/$/, ''))
+        : '';
 
     return <section className="space-y-4 p-4 sm:p-6">
-        <h2 className="text-lg font-semibold">{t('title')}</h2>
+        <div className="flex items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold">{t('title')}</h2>
+            <Button type="button" variant="outline" disabled={isFetching} onClick={() => void refetch()}>{t('refresh')}</Button>
+        </div>
         <p className="text-sm text-muted-foreground">{t('description')}</p>
+        <p className="text-sm text-muted-foreground">{t('restartHint')}</p>
         {!canWrite && <p className="text-sm text-muted-foreground">{t('readOnly')}</p>}
         {isLoading && <p role="status">{t('loading')}</p>}
         {isError && <div role="alert"><p>{t('errors.loadFailed')}</p><Button variant="outline" onClick={() => void refetch()}>{t('refresh')}</Button></div>}
@@ -75,6 +119,10 @@ export function SettingNodes() {
             <p className="text-sm">{t('tokenWarning')}</p>
             <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-muted p-3 select-all">{secret.token}</pre>
             <Button variant="outline" onClick={() => void copy(secret.token)}>{t('copyToken')}</Button>
+            <h4 className="font-medium">{t('cloudURLTitle')}</h4>
+            <p className="text-sm text-muted-foreground">{t('cloudURLHint')}</p>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-muted p-3 select-all">{cloudURL}</pre>
+            <Button variant="outline" onClick={() => void copy(cloudURL)}>{t('copyCloudURL')}</Button>
             <h4 className="font-medium">{t('configTitle')}</h4>
             <p className="text-sm text-muted-foreground">{t('configHint')}</p>
             <pre className="max-h-80 overflow-auto rounded bg-muted p-3 text-xs">{config}</pre>
@@ -96,7 +144,9 @@ export function SettingNodes() {
                 <div><dt className="text-muted-foreground">{t('updatedAt')}</dt><dd>{formatDateTime(node.updated_at)}</dd></div>
             </dl>
             {node.last_error && <p className="break-all text-sm text-destructive">{t('lastError')}: {node.last_error}</p>}
+            {testResults[node.id] && <NodeTestResult result={testResults[node.id]} />}
             {canWrite && <div className="flex flex-wrap gap-2">
+                <Button variant="outline" type="button" disabled={test.isPending || action.isPending || confirmation !== null} onClick={() => runTest(node.id)}>{t(test.isPending && test.variables === node.id ? 'test.running' : 'test.button')}</Button>
                 <Button variant="outline" type="button" disabled={action.isPending || confirmation !== null} onClick={() => setConfirmation({ action: 'update', id: node.id, enabled: !node.enabled })}>{t(node.enabled ? 'disable' : 'enable')}</Button>
                 <Button variant="outline" type="button" disabled={action.isPending || confirmation !== null} onClick={() => setConfirmation({ action: 'rotate', id: node.id })}>{t('rotate')}</Button>
                 <Button variant="destructive" type="button" disabled={action.isPending || confirmation !== null} onClick={() => setConfirmation({ action: 'delete', id: node.id })}>{t('delete')}</Button>

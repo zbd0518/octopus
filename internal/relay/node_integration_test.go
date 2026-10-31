@@ -18,12 +18,18 @@ import (
 	"github.com/lingyuins/octopus/internal/nodetransport/testpeer"
 	"github.com/lingyuins/octopus/internal/op/channel"
 	"github.com/lingyuins/octopus/internal/op/group"
+	nodeop "github.com/lingyuins/octopus/internal/op/node"
 	"github.com/lingyuins/octopus/internal/transformer/inbound"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 )
 
 func TestNodeChannelRelayModelsAndSSE(t *testing.T) {
 	setupDiagnosticsRelay(t, false)
+	created, err := nodeop.Create(context.Background(), "local-test-node", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeID := created.Node.ID
 	old := nodetransport.DefaultManager
 	manager := nodetransport.NewManager()
 	nodetransport.DefaultManager = manager
@@ -55,20 +61,20 @@ func TestNodeChannelRelayModelsAndSSE(t *testing.T) {
 			w.WriteHeader(401)
 			return
 		}
-		manager.Accept(r.Context(), 7, w, r, nodetransport.AcceptOptions{MaxConcurrency: 4, Validate: func() bool { return true }})
+		manager.Accept(r.Context(), nodeID, w, r, nodetransport.AcceptOptions{MaxConcurrency: 4, Validate: func() bool { return true }})
 	}))
 	t.Cleanup(cloud.Close)
 	ctx := context.Background()
 	testpeer.Start(t, "ws"+strings.TrimPrefix(cloud.URL, "http")+"/node/v1/connect", http.Header{"Authorization": []string{"Bearer test-node-token"}}, 4, peerHandler)
 	deadline := time.Now().Add(3 * time.Second)
-	for !manager.Status(7).Online {
+	for !manager.Status(nodeID).Online {
 		if time.Now().After(deadline) {
 			t.Fatal("connector offline")
 		}
 		time.Sleep(time.Millisecond)
 	}
 	id := 939010
-	item := dm.Channel{ID: id, Name: "local-magpie", Enabled: true, NodeID: 7, Type: outbound.OutboundTypeOpenAIChat, BaseUrls: []dm.BaseUrl{{URL: nodetransport.BaseURL}}, Keys: []dm.ChannelKey{{ID: id * 10, Enabled: true, ChannelKey: "cloud-placeholder"}}}
+	item := dm.Channel{ID: id, Name: "local-magpie", Enabled: true, NodeID: nodeID, Type: outbound.OutboundTypeOpenAIChat, BaseUrls: []dm.BaseUrl{{URL: nodetransport.BaseURL}}, Keys: []dm.ChannelKey{{ID: id * 10, Enabled: true, ChannelKey: "cloud-placeholder"}}}
 	channel.GetCache().Set(id, item)
 	defer channel.GetCache().Del(id)
 	models, err := helper.FetchModels(ctx, item)

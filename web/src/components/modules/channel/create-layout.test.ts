@@ -70,7 +70,7 @@ test('pool binding and key strategy stay inside advanced settings alongside prox
   assert.match(advanced, /!isNode && <ProxySelector/);
   assert.match(advanced, /t\('poolBinding'\)/);
   assert.match(advanced, /t\('keySelectionStrategy'\)/);
-  assert.match(form, /checked=\{formData\.enabled\}/);
+  assert.match(form, /checked=\{formData\.enabled && \(!isNode \|\| magpieNodeFeatureEnabled\)\}/);
   assert.match(form, /layout="stacked"/);
   assert.equal(form.split('<ProxySelector').length - 1, 1);
   assert.equal(form.split("t('poolBinding')").length - 1, 1);

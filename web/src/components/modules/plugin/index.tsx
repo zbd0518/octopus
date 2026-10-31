@@ -2,15 +2,18 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Blocks, FileUp, LoaderCircle, Settings2, SquareArrowOutUpRight, Trash2 } from 'lucide-react';
+import { Blocks, FileUp, LoaderCircle, Network, Settings2, SquareArrowOutUpRight, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getPluginUIBundle, pluginRPC, useConfigurePlugin, useEnablePlugin, useInstallPlugin, usePlugins, useUninstallPlugin, type PluginRecord } from '@/api/endpoints/plugin';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import { useNavStore } from '@/components/modules/navbar/nav-store';
 import { dispatchPluginRPC, PLUGIN_MESSAGE_TYPE } from './rpc';
 import { createPluginDocument } from './ui-bundle';
+
+const BUILTIN_MAGPIE_NODE_PLUGIN_ID = 'octopus.magpie-node';
 
 function parseJSON(value: string): Record<string, unknown> {
     if (!value.trim()) return {};
@@ -52,6 +55,7 @@ function PluginPage({ plugin }: { plugin: PluginRecord }) {
 
 function PluginCard({ plugin, canWrite }: { plugin: PluginRecord; canWrite: boolean }) {
     const t = useTranslations('plugin');
+    const setActiveItem = useNavStore((state) => state.setActiveItem);
     const enable = useEnablePlugin();
     const configure = useConfigurePlugin();
     const uninstall = useUninstallPlugin();
@@ -60,6 +64,35 @@ function PluginCard({ plugin, canWrite }: { plugin: PluginRecord; canWrite: bool
     const [config, setConfig] = useState(plugin.config || '{}');
     const manifest = JSON.parse(plugin.manifest) as { description?: string; permissions?: string[]; ui?: unknown };
     const busy = enable.isPending || configure.isPending || uninstall.isPending;
+    const isBuiltinMagpieNode = plugin.id === BUILTIN_MAGPIE_NODE_PLUGIN_ID;
+
+    if (isBuiltinMagpieNode) {
+        return (
+            <section className="rounded-xl border bg-card p-4 shadow-xs space-y-4">
+                <div className="flex items-start gap-3">
+                    <div className="rounded-lg bg-primary/10 p-2 text-primary"><Network className="size-5" /></div>
+                    <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <h2 className="font-semibold">{t('builtinMagpieNode.name')}</h2>
+                            <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">{t('builtinMagpieNode.badge')}</span>
+                        </div>
+                        <p className="mt-1 break-all text-xs text-muted-foreground">{plugin.id}</p>
+                    </div>
+                    <Switch checked={plugin.enabled} disabled={!canWrite || busy} onCheckedChange={(enabled) => enable.mutate({ id: plugin.id, enabled })} aria-label={t('enabled')} />
+                </div>
+                <p className="text-sm text-muted-foreground">{t('builtinMagpieNode.description')}</p>
+                {plugin.enabled ? (
+                    <p className="text-xs text-muted-foreground">{t('builtinMagpieNode.hint')}</p>
+                ) : (
+                    <p className="text-xs text-destructive">{t('builtinMagpieNode.disabledHint')}</p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setActiveItem('setting')}><Settings2 />{t('builtinMagpieNode.openSettings')}</Button>
+                </div>
+            </section>
+        );
+    }
+
     return (
         <section className="rounded-xl border bg-card p-4 shadow-xs space-y-4">
             <div className="flex items-start gap-3">

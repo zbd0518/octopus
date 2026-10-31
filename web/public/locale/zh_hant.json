@@ -1328,7 +1328,31 @@
     }
   },
   "node": {
-    "title": "本機節點",
+    "title": "Magpie 節點",
+    "restartHint": "外掛設定完成後，請完全結束並重新啟動 Magpie，再到此處測試連線。僅重新整理外掛頁面不夠。",
+    "test": {
+      "button": "測試連線",
+      "running": "正在測試…",
+      "success": "節點連線測試通過",
+      "failed": "節點連線測試失敗",
+      "latency": "{milliseconds} 毫秒",
+      "models": "{count} 個允許的模型可用",
+      "hint": "檢查通道、本機 Magpie 閘道及模型允許清單，不傳送推論請求。",
+      "codes": {
+        "ok": "通道與本機 Magpie 閘道可達，金鑰和模型清單正常；尚未測試模型推論。",
+        "disabled": "此節點已停用，請先啟用後再測試。",
+        "offline": "節點離線。請在外掛中請求連線並儲存，完全結束並重新啟動 Magpie，核對雲端位址和節點權杖。外掛宿主仍可能需要一次正常的外掛呼叫才會啟動。",
+        "busy": "節點已達並行上限，請等待進行中的請求完成後重試。",
+        "timeout": "連線測試逾時，請檢查 Magpie 和通道網路後重試。",
+        "cancelled": "連線測試已取消，可重新測試。",
+        "local_unavailable": "無法連線本機 Magpie 閘道。請確認 Magpie 正在執行，外掛連接埠與閘道一致；修改後儲存並重新啟動 Magpie。",
+        "local_authentication": "本機 Magpie API 金鑰被拒絕（401/403）。請更新外掛中的 Magpie API 金鑰，儲存並重新啟動 Magpie。",
+        "local_http": "本機 Magpie 回傳非預期 HTTP 狀態。請檢查連接埠與閘道服務；連接器不會跟隨重新導向。",
+        "invalid_models": "Magpie 回傳的模型清單格式異常或過大。請核對閘道連接埠及 /v1/models 回應。",
+        "no_models": "閘道可達，但模型清單與外掛允許清單沒有交集。請核對精確模型 ID，儲存並重新啟動 Magpie。",
+        "upstream_failed": "連接器未能完成本機請求。請檢查連接埠、金鑰與 Magpie 日誌；更新連接器外掛可取得更詳細的診斷。"
+      }
+    },
     "description": "透過 Magpie 外掛建立反向連線。Magpie 憑證僅保留在你的電腦上。",
     "readOnly": "目前為唯讀權限。僅管理員可管理節點或變更渠道綁定。",
     "loading": "正在載入節點…",
@@ -1340,11 +1364,14 @@
     "tokenTitle": "{name} 的連線權杖",
     "tokenWarning": "權杖僅顯示一次，請立即複製並妥善保管。關閉此面板後即捨棄；需要時請輪替產生新權杖。",
     "copyToken": "複製權杖",
+    "cloudURLTitle": "雲端位址",
+    "cloudURLHint": "Magpie 外掛連線 Octopus 雲端使用的 WebSocket 位址，獨立可複製。",
+    "copyCloudURL": "複製雲端位址",
     "configTitle": "Magpie 外掛設定參考",
-    "configHint": "安裝獨立目錄中的 octopus-to-magpie-connect Magpie 外掛。plugin_options 在外掛頁面填寫；僅將 private_config 儲存至本機私有檔案，或在啟動 Magpie 前設定環境變數。禁止將 private_config 或權杖寫入外掛選項。下方為分區參考，不可整份作為設定檔載入。無需獨立 Connector，須等 Magpie 載入外掛宿主後才連線。",
+    "configHint": "安裝 octopus-to-magpie-connect 後，在外掛頁面填寫雲端位址、模型、節點權杖、Magpie API 金鑰和本機連接埠（預設 3425）。頁面憑證以明文儲存在本機，也可改用環境變數或外部 private_config 檔案。下方僅為分區參考，不可整份載入。確認「請求連線」後，完全結束並重新啟動 Magpie，再到此處「測試連線」。無需獨立 Connector，須先載入外掛宿主。",
     "copyConfig": "複製設定",
     "dismissToken": "已儲存，隱藏權杖",
-    "empty": "尚無本機節點",
+    "empty": "尚無 Magpie 節點",
     "enabled": "已啟用",
     "disabled": "已停用",
     "online": "上線",
@@ -1359,22 +1386,23 @@
     "rotate": "輪替權杖",
     "delete": "刪除",
     "confirmTitle": "確認節點操作",
-    "confirmCreate": "確定建立此本機節點？連線權杖僅顯示一次，請在關閉面板前安全儲存。",
+    "confirmCreate": "確定建立此 Magpie 節點？連線權杖僅顯示一次，請在關閉面板前安全儲存。",
     "confirmDelete": "確定刪除此節點？請先解除渠道綁定。此操作無法復原。",
-    "confirmRotate": "確定輪替連線權杖？舊權杖將失效。請更新外掛的本機私有設定，必要時重新載入外掛宿主。",
+    "confirmRotate": "確定輪替連線權杖？舊權杖將失效。請更新外掛的本機憑證並儲存，然後完全結束並重新啟動 Magpie。",
     "confirmToggle": "確定變更可用狀態？停用後渠道將無法使用此節點。",
     "cancel": "取消",
     "confirm": "確認",
     "errors": {
       "operationFailed": "節點操作失敗，請檢查權限及渠道綁定後重試。",
-      "loadFailed": "無法載入本機節點。",
+      "loadFailed": "無法載入 Magpie 節點。",
       "copyFailed": "複製失敗，請手動選取文字並複製。",
       "referenced": "此節點仍被渠道參照，請先解除綁定再刪除。",
-      "notFound": "本機節點不存在。"
+      "notFound": "Magpie 節點不存在。",
+      "featureDisabled": "Magpie 節點功能已關閉，請在外掛頁啟用後再試。"
     }
   },
   "setting": {
-    "nodes": { "title": "本機節點" },
+    "nodes": { "title": "Magpie 節點" },
     "appearance": "外觀",
     "system": "系統",
     "theme": {
@@ -2760,7 +2788,7 @@
       },
       "outboundFormat": {
         "label": "出站請求格式",
-        "hint": "選擇首選的出站 API 格式。「自動/Chat/Responses」會在主格式失敗後回退到另一種；Messages 優先使用 Anthropic Messages；原始透傳會直接把客戶端原始請求體發給上游，不做格式轉換或回退；原始穿透（資訊體）在此基礎上保留客戶端原始請求路徑，僅改寫模型名；「僅」模式則不回退，適合只支援單一格式（如公益站）的上游。",
+        "hint": "選擇首選的出站 API 格式。「自動」會識別入站協議：Anthropic Messages 入站優先嘗試 Anthropic，其餘入站優先嘗試 Chat Completions，失敗後按 Chat → Responses 回退；Chat 和 Responses 僅調整 Chat/Responses 順序，不識別入站格式；Messages 按 Anthropic → Chat → Responses 嘗試，「僅」模式會停用回退。跨格式回退只針對 404/5xx、網路錯誤等路由級失敗，400 等客戶端 / Key 級錯誤不會觸發回退。原始透傳會直接把客戶端原始請求體發給上游，不做格式轉換或回退；原始穿透（資訊體）在此基礎上保留客戶端原始請求路徑，僅改寫模型名。",
         "options": {
           "auto": "自動",
           "chat": "Chat Completions",
@@ -3343,10 +3371,11 @@
       "group": "渠道分組",
       "groupLoading": "正在載入分組...",
       "type": "供應源類型",
-      "nodeBinding": "連線方式 / 本機節點",
+      "nodeBinding": "連線方式 / Magpie 節點",
       "httpTransport": "一般 HTTP",
-      "nodeHint": "選擇本機節點後將隱藏位址、代理及金鑰輸入，憑證僅保留在連接器上。節點不能同時綁定號池或代理。",
-      "nodeAdminOnly": "僅管理員可變更本機節點綁定。",
+      "nodeHint": "選擇 Magpie 節點後將隱藏位址、代理及金鑰輸入，憑證僅保留在連接器上。節點不能同時綁定號池或代理。",
+      "nodeAdminOnly": "僅管理員可變更 Magpie 節點綁定。",
+      "nodeFeatureDisabled": "Magpie 節點功能已關閉，綁定渠道已自動停用；重新啟用功能時恢復先前啟用的渠道。",
       "nodeOnline": "上線",
       "nodeOffline": "離線",
       "nodeDisabled": "已停用",
@@ -3521,7 +3550,8 @@
       "test": {
         "button": "測試",
         "success": "供應源測試通過",
-        "partialSuccess": "供應源測試已完成",
+        "partialSuccess": "供應源測試部分通過",
+        "running": "正在測試…",
         "failed": "供應源測試失敗",
         "results": "筆結果",
         "pass": "通過",
@@ -4257,6 +4287,14 @@
       "error": "錯誤",
       "needs_reinstall": "需要重新安裝",
       "uninstalling": "等待重新啟動後移除"
+    },
+    "builtinMagpieNode": {
+      "name": "Magpie 節點",
+      "badge": "內建",
+      "description": "透過 Magpie 外掛建立反向連線，將本機 Magpie 暴露為可路由的模型渠道。",
+      "hint": "在「設定 → Magpie 節點」中建立節點、產生權杖並測試連線。",
+      "disabledHint": "已關閉：節點連線已中斷，綁定渠道已停用。重新啟用時恢復先前啟用的渠道，原本停用的渠道維持停用。",
+      "openSettings": "開啟節點設定"
     }
   }
 }

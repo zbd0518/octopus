@@ -14,6 +14,7 @@ import (
 	"github.com/lingyuins/octopus/internal/nodetransport"
 	ch "github.com/lingyuins/octopus/internal/op/channel"
 	grp "github.com/lingyuins/octopus/internal/op/group"
+	nodeop "github.com/lingyuins/octopus/internal/op/node"
 	"github.com/lingyuins/octopus/internal/utils/log"
 	"github.com/lingyuins/octopus/internal/utils/xstrings"
 )
@@ -42,6 +43,9 @@ func channelHTTPClient(channel *model.Channel, timeout time.Duration) (*http.Cli
 	}
 
 	if channel.NodeID != 0 {
+		if !nodeop.FeatureEnabled() {
+			return nil, nodeop.ErrFeatureDisabled
+		}
 		if channel.NodeID < 0 || channel.PoolID != 0 || channel.Proxy || channel.ProxyConfigID != nil || (channel.ProxyMode != "" && channel.ProxyMode != model.ProxyUsageModeDirect) || (channel.ChannelProxy != nil && strings.TrimSpace(*channel.ChannelProxy) != "") {
 			return nil, errors.New("invalid node channel transport configuration")
 		}

@@ -33,8 +33,19 @@ export const useInstallPlugin = () => usePluginMutation((file: File) => {
     form.append('file', file, file.name);
     return apiClient.upload<PluginRecord>('/api/v1/plugins/install', form);
 });
-export const useEnablePlugin = () => usePluginMutation(({ id, enabled }: { id: string; enabled: boolean }) =>
-    apiClient.post<PluginRecord>(`/api/v1/plugins/${encodeURIComponent(id)}/${enabled ? 'enable' : 'disable'}`));
+export function useEnablePlugin() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+            apiClient.post<PluginRecord>(`/api/v1/plugins/${encodeURIComponent(id)}/${enabled ? 'enable' : 'disable'}`),
+        onSuccess: async (plugin) => {
+            const keys = plugin.id === 'octopus.magpie-node'
+                ? [['plugins'], ['channels', 'list'], ['settings', 'list'], ['nodes'], ['models']]
+                : [['plugins']];
+            await Promise.all(keys.map(queryKey => queryClient.invalidateQueries({ queryKey })));
+        },
+    });
+}
 export const useConfigurePlugin = () => usePluginMutation(({ id, config }: { id: string; config: Record<string, unknown> }) =>
     apiClient.put<PluginRecord>(`/api/v1/plugins/${encodeURIComponent(id)}/config`, { config }));
 export const useUninstallPlugin = () => usePluginMutation(({ id, deleteData }: { id: string; deleteData: boolean }) =>

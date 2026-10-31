@@ -84,6 +84,35 @@ test('persisted HTTP channel draft retains real keys and IDs instead of creating
     assert.deepEqual(newChannelKeys(draft.keys), []);
 });
 
+test('disabled node feature prevents channel activation and diagnostics in the UI', () => {
+    const form = readFileSync(new URL('./Form.tsx', import.meta.url), 'utf8');
+    const card = readFileSync(new URL('./Card.tsx', import.meta.url), 'utf8');
+    const detail = readFileSync(new URL('./CardContent.tsx', import.meta.url), 'utf8');
+    assert.match(detail, /setFormData\(\(current\) => \(\{ \.\.\.current, enabled: channel.enabled \}\)\)/);
+    assert.match(detail, /\[channel.node_id, channel.enabled, channel.node_feature_paused\]/);
+    assert.match(detail, /disabled=\{isTestingModel \|\| !selectedModel \|\| nodeFeatureDisabled\}/);
+    assert.match(form, /disabled=\{isNode && !magpieNodeFeatureEnabled\}/);
+    assert.match(form, /disabled=\{testChannel.isPending \|\| !magpieNodeFeatureEnabled\}/);
+    assert.match(form, /disabled=\{\(isNode && !magpieNodeFeatureEnabled\) \|\|/);
+    assert.equal((card.match(/disabled=\{enableChannel.isPending \|\| nodeFeatureDisabled\}/g) ?? []).length, 2);
+    assert.match(card, /channel.node_feature_paused === true/);
+    assert.match(form, /'nodeFeatureDisabled'/);
+});
+
+test('node feature toggles invalidate channels, settings and nodes alongside plugin status', () => {
+    const plugins = readFileSync(new URL('../../../api/endpoints/plugin.ts', import.meta.url), 'utf8');
+    const settings = readFileSync(new URL('../../../api/endpoints/setting.ts', import.meta.url), 'utf8');
+    const toggle = plugins.slice(plugins.indexOf('export function useEnablePlugin()'), plugins.indexOf('export const useConfigurePlugin'));
+    assert.match(toggle, /onSuccess: async \(plugin\)/);
+    assert.match(toggle, /await Promise.all/);
+    for (const source of [toggle, settings.slice(settings.indexOf("data.key === 'nodes_feature_enabled'"))]) {
+        for (const key of ["['plugins']", "['channels', 'list']", "['nodes']", "['models']"]) {
+            assert.ok(source.includes(key), `missing invalidation: ${key}`);
+        }
+    }
+    assert.ok(toggle.includes("['settings', 'list']"));
+});
+
 test('real create/edit/discovery/test call sites apply transport guards and server write capability', () => {
     const form = readFileSync(new URL('./Form.tsx', import.meta.url), 'utf8');
     const create = readFileSync(new URL('./Create.tsx', import.meta.url), 'utf8');

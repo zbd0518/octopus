@@ -16,14 +16,16 @@ import (
 )
 
 type ChannelTestResult struct {
-	BaseURL      string `json:"base_url"`
-	KeyRemark    string `json:"key_remark,omitempty"`
-	KeyMasked    string `json:"key_masked,omitempty"`
-	StatusCode   int    `json:"status_code"`
-	Passed       bool   `json:"passed"`
-	LatencyMS    int64  `json:"latency_ms"`
-	Message      string `json:"message,omitempty"`
-	ResponseBody string `json:"response_body,omitempty"`
+	BaseURL        string `json:"base_url"`
+	KeyRemark      string `json:"key_remark,omitempty"`
+	KeyMasked      string `json:"key_masked,omitempty"`
+	StatusCode     int    `json:"status_code"`
+	Passed         bool   `json:"passed"`
+	LatencyMS      int64  `json:"latency_ms"`
+	Message        string `json:"message,omitempty"`
+	ResponseBody   string `json:"response_body,omitempty"`
+	DiagnosticCode string `json:"diagnostic_code,omitempty"`
+	ModelCount     int    `json:"model_count,omitempty"`
 }
 
 type ChannelTestSummary struct {
@@ -32,6 +34,19 @@ type ChannelTestSummary struct {
 }
 
 func TestChannel(ctx context.Context, request appmodel.Channel) (*ChannelTestSummary, error) {
+	if request.NodeID != 0 {
+		if err := PrepareNodeChannelProbe(&request); err != nil {
+			return nil, err
+		}
+		probe, err := TestNode(ctx, request.NodeID)
+		if err != nil {
+			return nil, err
+		}
+		return &ChannelTestSummary{Passed: probe.Passed, Results: []ChannelTestResult{{
+			Passed: probe.Passed, StatusCode: probe.StatusCode, LatencyMS: probe.LatencyMS,
+			DiagnosticCode: probe.Code, ModelCount: probe.ModelCount,
+		}}}, nil
+	}
 	if conf.IsDevMockSuccess() {
 		baseURL := "dev-mock://local"
 		if len(request.BaseUrls) > 0 && strings.TrimSpace(request.BaseUrls[0].URL) != "" {
@@ -244,8 +259,8 @@ func performChannelModelFallback(ctx context.Context, channel *appmodel.Channel,
 	cloned.BaseUrls = []appmodel.BaseUrl{{URL: base.url, SuffixMode: base.suffixMode}}
 	cloned.Keys = []appmodel.ChannelKey{{ChannelKey: apiKey}}
 
-	// 与 group probe 一致，对 OpenAI 类型渠道走 adapter 回退（issue #187）：
-	// 先尝试 Chat Completions，失败再回退 Responses API。
+	// 渠道探测请求固定按 OpenAI Chat 入站格式构造，因此 auto 下对 OpenAI
+	// 类型渠道仍走 Chat → Responses adapter 回退（issue #187）。
 	probeReqForResolve, _ := buildGroupProbeRequest(appmodel.EndpointTypeAll, modelName)
 	adapterTypes := outbound.ResolveAttemptTypes(channel.Type, probeReqForResolve, "")
 	var lastErr error
