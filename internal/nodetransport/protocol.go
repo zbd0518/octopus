@@ -9,12 +9,17 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/lingyuins/octopus/internal/conf"
+	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/op/setting"
 )
 
 const BaseURL = "https://node.octopus.invalid/v1"
@@ -29,7 +34,10 @@ const (
 	maxRequest   = 4 << 20
 	maxStreams   = 32
 	queueSize    = 64
-	streamQueue  = 8
+	// defaultStreamQueue 是每条流在内存里缓冲的响应帧数默认上限（8 × 32KiB = 256KiB）。
+	// 推理模型"长思考后瞬时爆发输出"的模式很容易打满它，可由
+	// node_transport.stream_queue_frames / OCTOPUS_NODE_TRANSPORT_STREAM_QUEUE_FRAMES 覆盖。
+	defaultStreamQueue = 8
 	writeTimeout = 10 * time.Second
 )
 const (
@@ -60,6 +68,31 @@ type ExecutionUncertainError struct{ Err error }
 func (e *ExecutionUncertainError) Error() string { return "node execution uncertain: " + e.Err.Error() }
 func (e *ExecutionUncertainError) Unwrap() error { return e.Err }
 func IsExecutionUncertain(err error) bool        { var e *ExecutionUncertainError; return errors.As(err, &e) }
+
+// streamQueueFrames 返回当前生效的每流缓冲帧数（默认 8）。
+// 优先级：DB setting（设置页可改，重启生效）> config.json/env。
+func streamQueueFrames() int {
+	if v, err := setting.GetString(model.SettingKeyNodeTransportStreamQueueFrames); err == nil {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			return n
+		}
+	}
+	if n := conf.AppConfig.NodeTransport.StreamQueueFrames; n > 0 {
+		return n
+	}
+	return defaultStreamQueue
+}
+
+// consumerWaitTimeout 返回消费队列满时等待消费端追上的宽限。
+// 0 表示立即判慢消费（旧行为）。优先级：DB setting > config.json/env。
+func consumerWaitTimeout() time.Duration {
+	if v, err := setting.GetString(model.SettingKeyNodeTransportConsumerWaitTimeout); err == nil {
+		if secs, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && secs >= 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return conf.AppConfig.NodeTransport.ConsumerWaitTimeout
+}
 
 // ValidateChannelTarget validates a channel base URL, not an arbitrary upstream URL.
 func ValidateChannelTarget(rawURL string) error {

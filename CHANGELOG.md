@@ -5,7 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v2.7.3] - 2026-11-02
+
+### Added
+
+- Add TokenRhythm (基元律动) balance monitoring, supporting both a pasted console session cookie and automatic console account/password login with session reuse, 401 re-login, and login cooldown. Because the provider has no API key, it reports balance/usage without creating a forwarding channel.
+- Add a read-only `GET /api/v1/plan-provider/wallet/transactions/:id` endpoint that mirrors the TokenRhythm console wallet ledger (per-credit grants and recharge principal, including exhausted and expired entries).
 
 ### Fixed
 
@@ -14,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Make automatic outbound format selection sniff Anthropic Messages inbound requests and try Anthropic before Chat → Responses; explicit `chat` and `responses` keep their configured order without inbound sniffing.
+- Expose node transport tuning (slow-consumer buffer and grace period) in the settings page.
+- Align application, frontend package, and Docker Compose versions to v2.7.3.
 
 ## [v2.7.2] - 2026-10-31
 
