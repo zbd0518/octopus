@@ -486,11 +486,90 @@ func ClassifyRelayError(statusCode int, err error, written bool) RetryDecision {
 	return classifyNonHTTPError(err)
 }
 
+// isUpstreamRateLimitOrQuotaError 判断上游在 400 响应中是否返回了限流或额度超额相关错误。
+// 某些聚合中继或代理平台在 TPM/RPM 限流或额度用尽时会返回 HTTP 400 而非 429，
+// 此类错误应归类为 Key 级故障（ScopeSameChannel），允许尝试同渠道其他 Key 或故障转移至后续渠道。
+//
+// 注意：调用方仅在 400 时使用本判定，因此这里的额度类关键词不会影响 401/403/429 等
+// 已有分支；真正的客户端输入错误（context_length_exceeded、参数非法等）不命中。
+func isUpstreamRateLimitOrQuotaError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+
+	// 中文文案
+	scopeMarkers := []string{
+		"超出了时间段限制",
+		"超出时间段限制",
+		"时间段限制",
+	}
+	for _, marker := range scopeMarkers {
+		if strings.Contains(s, marker) {
+			return true
+		}
+	}
+
+	// 英文关键词：限流 / 配额 / 余额不足
+	markers := []string{
+		// 配额与余额
+		"insufficient_quota",
+		"quota_exceeded",
+		"quota exhausted",
+		"quota has been exhausted",
+		"exceeded your current quota",
+		"quota reached",
+		"quota limit",
+		"billing_hard_limit_reached",
+		"insufficient balance",
+		"insufficient_balance",
+		"insufficient credit",
+		"balance is insufficient",
+		// 速率限制
+		"rate_limit",
+		"rate limit",
+		"requests per minute",
+		"tokens per minute",
+		"requests per day",
+		"tokens per day",
+		// 时间窗口限流（英文表述）
+		"time window",
+		"time-window",
+		"exceeded the limit",
+		"limit exceeded",
+		"limit has been exceeded",
+	}
+	for _, marker := range markers {
+		if strings.Contains(s, marker) {
+			return true
+		}
+	}
+
+	// 组合判定：“insufficient” + 资金类名词，覆盖 "Insufficient account balance"
+	// "insufficient balance of xxx" 等词序不定的表述。
+	if strings.Contains(s, "insufficient") {
+		for _, noun := range []string{"balance", "credit", "fund", "quota", "token", "budget"} {
+			if strings.Contains(s, noun) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // classifyHTTPError 根据 HTTP 状态码返回重试决策
 func classifyHTTPError(statusCode int, err error) RetryDecision {
 	switch {
-	// 400 Bad Request: 客户端错误，换 channel 也无效
+	// 400 Bad Request: 默认为客户端错误（换 channel 也无效），但需识别假 400 限流/额度超额
 	case statusCode == 400:
+		if isUpstreamRateLimitOrQuotaError(err) {
+			return RetryDecision{
+				Scope:   ScopeSameChannel,
+				Reason:  "rate limited or quota exceeded, try another key",
+				Code:    statusCode,
+				IsError: true,
+			}
+		}
 		return RetryDecision{
 			Scope:   ScopeNone,
 			Reason:  "bad request, client error",
