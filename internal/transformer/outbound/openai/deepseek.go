@@ -175,17 +175,33 @@ func mergeDeepSeekThinkingExtraBody(raw transformer.RawMessage, thinkingType str
 	return merged
 }
 
+// reasoningPlaceholder is written into replayed assistant tool-call turns that
+// the client forwarded without their original chain of thought.
+const reasoningPlaceholder = "(reasoning content omitted by client)"
+
 // applyDeepSeekThinkingFallback downgrades DeepSeek thinking mode when the
 // replayed history cannot satisfy its passback rule. DeepSeek requires the
 // reasoning_content of every previous assistant turn when the request carries
 // `tools`; a client that stored only the final answer (or dropped reasoning)
-// would otherwise get a hard 400 on every follow-up turn. Disabling thinking
-// keeps tool calling usable at the cost of that turn's chain of thought.
+// would otherwise get a hard 400 on every follow-up turn.
+//
+// When the request can carry a placeholder back (OpenAI Chat messages),
+// fillMissingReasoningPlaceholder keeps the turn's chain of thought instead of
+// disabling it. Protocols that cannot express reasoning_content (OpenAI
+// Responses) still degrade to disabled thinking, since a phantom placeholder
+// there would be dropped on the wire and the upstream would reject the turn.
 //
 // It must run after message cleanup (`attachStandaloneDeepSeekReasoningMessages`
 // / `sanitizeToolPairingForOpenAICompat`) so merged or dropped messages are not
 // counted.
 func applyDeepSeekThinkingFallback(request *model.InternalLLMRequest, baseURL string, isMimoChannel bool) {
+	applyDeepSeekThinkingFallbackWithPlaceholder(request, baseURL, isMimoChannel, reasoningPlaceholder)
+}
+
+// applyDeepSeekThinkingFallbackWithPlaceholder is the shared implementation.
+// An empty placeholder means the caller's protocol cannot replay reasoned
+// text, so a missing reasoning_content must disable thinking.
+func applyDeepSeekThinkingFallbackWithPlaceholder(request *model.InternalLLMRequest, baseURL string, isMimoChannel bool, placeholder string) {
 	if request == nil || len(request.Tools) == 0 {
 		return
 	}
@@ -193,8 +209,11 @@ func applyDeepSeekThinkingFallback(request *model.InternalLLMRequest, baseURL st
 		return
 	}
 
-	index, missing := deepSeekMissingReasoningTurn(request.Messages)
-	if !missing || !deepSeekThinkingEnabled(request) {
+	if _, missing := deepSeekMissingReasoningTurnSafely(request); !missing {
+		return
+	}
+
+	if placeholder != "" && fillMissingReasoningPlaceholder(request.Messages, placeholder) {
 		return
 	}
 
@@ -204,7 +223,40 @@ func applyDeepSeekThinkingFallback(request *model.InternalLLMRequest, baseURL st
 	// reasoning_effort in extra_body is flattened to the top level on the wire and
 	// would contradict thinking.type=disabled.
 	request.ExtraBody = removeExtraBodyKey(request.ExtraBody, "reasoning_effort")
-	log.Warnf("deepseek thinking disabled: assistant message #%d lacks reasoning_content while tools are present (model=%s)", index, request.Model)
+	log.Warnf("deepseek thinking disabled: replayed assistant turn lacks reasoning_content while tools are present (model=%s)", request.Model)
+}
+
+// deepSeekMissingReasoningTurnSafely applies the shared preconditions (tools on
+// the wire, DeepSeek-compatible upstream, thinking currently enabled) before
+// looking for a replayed assistant turn without reasoning_content.
+func deepSeekMissingReasoningTurnSafely(request *model.InternalLLMRequest) (int, bool) {
+	if request == nil || len(request.Tools) == 0 {
+		return 0, false
+	}
+	if !deepSeekThinkingEnabled(request) {
+		return 0, false
+	}
+	return deepSeekMissingReasoningTurn(request.Messages)
+}
+
+// fillMissingReasoningPlaceholder gives every assistant turn that DeepSeek
+// expects to carry reasoning_content a non-empty placeholder, satisfying the
+// passback rule without disabling thinking. Reports whether anything changed.
+func fillMissingReasoningPlaceholder(messages []model.Message, placeholder string) bool {
+	filled := false
+	for i := range messages {
+		msg := &messages[i]
+		if msg.Role != "assistant" || msg.GetReasoningContent() != "" {
+			continue
+		}
+		if !assistantTurnNeedsReasoning(*msg) {
+			continue
+		}
+		value := placeholder
+		msg.ReasoningContent = &value
+		filled = true
+	}
+	return filled
 }
 
 func deepSeekMissingReasoningTurn(messages []model.Message) (int, bool) {

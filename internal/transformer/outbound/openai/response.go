@@ -45,7 +45,9 @@ func (o *ResponseOutbound) TransformRequest(ctx context.Context, request *model.
 	// DeepSeek rejects follow-up tool calls whose history lost reasoning_content.
 	// Degrade to non-thinking instead of propagating a guaranteed 400.
 	isMimoChannel := strings.Contains(strings.ToLower(strings.TrimSpace(baseUrl)), "xiaomimimo")
-	applyDeepSeekThinkingFallback(cloned, baseUrl, isMimoChannel)
+	// The Responses protocol has no field to replay reasoning_content, so a
+	// missing turn must degrade to disabled thinking there.
+	applyDeepSeekThinkingFallbackWithPlaceholder(cloned, baseUrl, isMimoChannel, "")
 
 	// Convert to Responses API request format
 	responsesReq := ConvertToResponsesRequest(cloned)

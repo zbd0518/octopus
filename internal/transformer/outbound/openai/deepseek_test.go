@@ -205,6 +205,84 @@ func TestDeepSeekReasoningContentPreserved(t *testing.T) {
 	}
 }
 
+func TestDeepSeekToolCallWithoutReasoningPreservesThinkingWithPlaceholder(t *testing.T) {
+	toolCallID := "call_00_test"
+	request := &model.InternalLLMRequest{
+		Model: "deepseek-v4-pro-max",
+		Messages: []model.Message{
+			{
+				Role: "user",
+				Content: model.MessageContent{
+					Content: strPtr("hello"),
+				},
+			},
+			{
+				Role: "assistant",
+				ToolCalls: []model.ToolCall{
+					{
+						ID:   toolCallID,
+						Type: "function",
+						Function: model.FunctionCall{
+							Name:      "test",
+							Arguments: `{}`,
+						},
+					},
+				},
+			},
+			{
+				Role:       "tool",
+				ToolCallID: &toolCallID,
+				Content: model.MessageContent{
+					Content: strPtr("result"),
+				},
+			},
+		},
+		Tools: []model.Tool{
+			{
+				Type:     "function",
+				Function: model.Function{Name: "test"},
+			},
+		},
+		ReasoningEffort: "high",
+		TransformerMetadata: map[string]string{
+			model.TransformerMetadataGroupEndpointType: "deepseek",
+		},
+	}
+
+	compatRequest := cloneRequestForOpenAICompat(request)
+	sanitizeRequestForOpenAICompat(compatRequest, "https://api.deepseek.com/v1", false)
+
+	body, err := marshalOpenAICompatRequest(compatRequest)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := transformer.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	thinking, ok := parsed["thinking"].(map[string]interface{})
+	if !ok {
+		t.Fatal("thinking must stay enabled when only reasoning_content is missing")
+	}
+	if thinking["type"] != "enabled" {
+		t.Fatalf("thinking.type = %v, want enabled", thinking["type"])
+	}
+
+	messages, ok := parsed["messages"].([]interface{})
+	if !ok || len(messages) < 2 {
+		t.Fatalf("invalid messages: %v", parsed["messages"])
+	}
+	assistantMsg, ok := messages[1].(map[string]interface{})
+	if !ok {
+		t.Fatalf("invalid assistant message: %v", messages[1])
+	}
+	if rc, exists := assistantMsg["reasoning_content"]; !exists || rc == nil || rc == "" {
+		t.Fatalf("assistant message must carry a placeholder reasoning_content, got %v", assistantMsg)
+	}
+}
+
 func TestDeepSeekReasoningEffortEnablesThinking(t *testing.T) {
 	toolCallID := "call_00_test"
 	request := &model.InternalLLMRequest{

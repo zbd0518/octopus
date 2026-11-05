@@ -66,15 +66,40 @@ func deepSeekThinkingType(parsed map[string]any) string {
 	return value
 }
 
+// A client that replays a tool-call turn without its chain of thought used to
+// force thinking off. The placeholder keeps the request valid instead, so the
+// follow-up turn can still think.
 func TestDeepSeekThinkingFallbackDisablesWhenHistoryLacksReasoning(t *testing.T) {
 	parsed := deepSeekFallbackBody(t, deepSeekFallbackRequest("", true))
 
-	if got := deepSeekThinkingType(parsed); got != "disabled" {
-		t.Fatalf("thinking.type = %q, want disabled; body=%v", got, parsed)
+	if got := deepSeekThinkingType(parsed); got != "enabled" {
+		t.Fatalf("thinking.type = %q, want enabled (placeholder satisfies passback); body=%v", got, parsed)
 	}
-	if _, ok := parsed["reasoning_effort"]; ok {
-		t.Fatalf("reasoning_effort must be removed when thinking is disabled: %v", parsed)
+	if got, _ := parsed["reasoning_effort"].(string); got != "high" {
+		t.Fatalf("reasoning_effort = %q, want high", got)
 	}
+	if !bodyCarriesPlaceholderReasoning(parsed) {
+		t.Fatalf("assistant tool-call turn must carry placeholder reasoning_content; body=%v", parsed)
+	}
+}
+
+// bodyCarriesPlaceholderReasoning reports whether any replayed assistant turn
+// carries the synthesized placeholder instead of a real chain of thought.
+func bodyCarriesPlaceholderReasoning(parsed map[string]any) bool {
+	messages, ok := parsed["messages"].([]any)
+	if !ok {
+		return false
+	}
+	for _, raw := range messages {
+		msg, ok := raw.(map[string]any)
+		if !ok || msg["role"] != "assistant" {
+			continue
+		}
+		if reasoning, ok := msg["reasoning_content"].(string); ok && reasoning == reasoningPlaceholder {
+			return true
+		}
+	}
+	return false
 }
 
 func TestDeepSeekThinkingFallbackKeepsThinkingWhenHistoryHasReasoning(t *testing.T) {
@@ -102,14 +127,14 @@ func TestDeepSeekThinkingFallbackRemovesExtraBodyReasoningEffort(t *testing.T) {
 
 	parsed := deepSeekFallbackBody(t, req)
 
-	if got := deepSeekThinkingType(parsed); got != "disabled" {
-		t.Fatalf("thinking.type = %q, want disabled", got)
-	}
-	if _, ok := parsed["reasoning_effort"]; ok {
-		t.Fatalf("nested extra_body reasoning_effort must be removed: %v", parsed)
+	if got := deepSeekThinkingType(parsed); got != "enabled" {
+		t.Fatalf("thinking.type = %q, want enabled", got)
 	}
 	if parsed["foo"] != "bar" {
 		t.Fatalf("unrelated extra_body keys must be preserved: %v", parsed)
+	}
+	if !bodyCarriesPlaceholderReasoning(parsed) {
+		t.Fatalf("assistant tool-call turn must carry placeholder reasoning_content; body=%v", parsed)
 	}
 }
 
@@ -125,8 +150,8 @@ func TestDeepSeekThinkingFallbackKeepsExplicitlyDisabledThinking(t *testing.T) {
 	}
 }
 
-// The Responses adapter must degrade the same way: reasoning effort "none"
-// disables thinking on DeepSeek's Responses endpoint.
+// The Responses adapter must stay consistent with the Chat adapter: the same
+// placeholder keeps the follow-up turn's reasoning effort intact.
 func TestResponseOutboundDeepSeekThinkingFallback(t *testing.T) {
 	req := deepSeekFallbackRequest("", true)
 
@@ -147,6 +172,8 @@ func TestResponseOutboundDeepSeekThinkingFallback(t *testing.T) {
 	if err := transformer.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("unmarshal body: %v", err)
 	}
+	// Responses cannot express reasoning_content, so thinking must stay disabled
+	// there while the Chat adapter keeps it enabled with a placeholder.
 	if parsed.Reasoning == nil || parsed.Reasoning.Effort != "none" {
 		t.Fatalf("reasoning effort should be none, body=%s", body)
 	}
