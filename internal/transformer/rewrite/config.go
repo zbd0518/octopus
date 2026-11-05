@@ -70,8 +70,10 @@ func Resolve(channelType outbound.OutboundType, cfg *appmodel.RequestRewriteConf
 func resolveHeaderProfile(profile string) map[string]string {
 	switch profile {
 	case string(appmodel.RequestRewriteProfileCodexHeaders):
+		// Versions verified in the official Windows desktop package on 2026-11-06.
+		// Keep the bundled engine version paired with the desktop app version.
 		return map[string]string{
-			"User-Agent": "Codex Desktop/0.131.0 (Windows 10.0.19045; x86_64) unknown (Codex Desktop; 26.519.21041)",
+			"User-Agent": "Codex Desktop/0.166.0-alpha.6 (Windows 10.0.19045; x86_64) unknown (Codex Desktop; 26.1029.61003)",
 			"Origin":     "https://chat.openai.com",
 			"Referer":    "https://chat.openai.com/",
 			"Accept":     "application/json",
