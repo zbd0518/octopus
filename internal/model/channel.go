@@ -49,6 +49,8 @@ const (
 	RequestRewriteProfilePreserve         RequestRewriteProfile = "preserve"
 	RequestRewriteProfileOpenAIChatCompat RequestRewriteProfile = "openai_chat_compat"
 	RequestRewriteProfileCodexHeaders     RequestRewriteProfile = "codex"
+
+	RequestRewriteHeaderProfileClaudeCode = "claude_code"
 )
 
 type ToolRoleStrategy string
@@ -273,6 +275,9 @@ func (ChannelKeyUpdateRequest) TableName() string  { return "-" }
 func (ChannelFetchModelRequest) TableName() string { return "-" }
 
 func (c *RequestRewriteConfig) Validate(channelType outbound.OutboundType) error {
+	if c != nil && c.HeaderProfile == RequestRewriteHeaderProfileClaudeCode && channelType != outbound.OutboundTypeAnthropic {
+		return fmt.Errorf("header profile %s is not supported for channel type %d", c.HeaderProfile, channelType)
+	}
 	if c == nil || !c.Enabled {
 		return nil
 	}

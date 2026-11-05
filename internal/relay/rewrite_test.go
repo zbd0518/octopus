@@ -1,12 +1,81 @@
 package relay
 
 import (
+	"net/http"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	appmodel "github.com/lingyuins/octopus/internal/model"
 	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
+	"github.com/lingyuins/octopus/internal/transformer/rewrite"
 )
+
+func TestCopyHeaders_ClaudeCodeProfilePreservesAnthropicHeadersAndCustomOverride(t *testing.T) {
+	channel := &appmodel.Channel{
+		Type: outbound.OutboundTypeAnthropic,
+		RequestRewrite: &appmodel.RequestRewriteConfig{
+			Enabled:       true,
+			Profile:       appmodel.RequestRewriteProfilePreserve,
+			HeaderProfile: appmodel.RequestRewriteHeaderProfileClaudeCode,
+		},
+	}
+	effectiveRewrite, enabled, err := rewrite.Resolve(channel.Type, channel.RequestRewrite)
+	if err != nil {
+		t.Fatalf("rewrite.Resolve() error = %v", err)
+	}
+	if !enabled {
+		t.Fatal("rewrite.Resolve() enabled = false, want true")
+	}
+
+	attempt := &relayAttempt{
+		relayRequest: &relayRequest{
+			c: &gin.Context{Request: &http.Request{Header: make(http.Header)}},
+		},
+		channel: channel,
+	}
+	newAnthropicRequest := func() *http.Request {
+		request, err := http.NewRequest(http.MethodPost, "https://api.anthropic.example/v1/messages", nil)
+		if err != nil {
+			t.Fatalf("http.NewRequest() error = %v", err)
+		}
+		request.Header.Set("Accept", "text/event-stream")
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Anthropic-Version", "2023-06-01")
+		request.Header.Set("X-API-Key", "sk-anthropic-key")
+		return request
+	}
+
+	profileRequest := newAnthropicRequest()
+	attempt.copyHeaders(profileRequest, effectiveRewrite)
+	if got := profileRequest.Header.Get("User-Agent"); got != "claude-cli" {
+		t.Errorf("profile User-Agent = %q, want %q", got, "claude-cli")
+	}
+	if got := profileRequest.Header.Get("X-App"); got != "cli" {
+		t.Errorf("profile X-App = %q, want %q", got, "cli")
+	}
+
+	channel.CustomHeader = []appmodel.CustomHeader{
+		{HeaderKey: "X-App", HeaderValue: "custom-cli"},
+		{HeaderKey: "User-Agent", HeaderValue: "explicit-agent"},
+	}
+	customRequest := newAnthropicRequest()
+	attempt.copyHeaders(customRequest, effectiveRewrite)
+
+	wantHeaders := map[string]string{
+		"User-Agent":        "explicit-agent",
+		"X-App":             "custom-cli",
+		"Accept":            "text/event-stream",
+		"Content-Type":      "application/json",
+		"Anthropic-Version": "2023-06-01",
+		"X-API-Key":         "sk-anthropic-key",
+	}
+	for key, want := range wantHeaders {
+		if got := customRequest.Header.Get(key); got != want {
+			t.Errorf("outbound header %s = %q, want %q", key, got, want)
+		}
+	}
+}
 
 func TestPrepareInternalRequestForOutbound_IsScopedPerChannelAttempt(t *testing.T) {
 	first := "first"

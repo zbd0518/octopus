@@ -3,6 +3,8 @@ import {
     ChannelType,
     RequestRewriteProfile,
     RequestRewriteHeaderProfile,
+    isClaudeCodeHeaderProfileSupportedChannelType,
+    normalizeRequestRewriteHeaderProfile,
     SystemMessageStrategy,
     ToolRoleStrategy,
     type Channel,
@@ -173,6 +175,7 @@ export function isOpenAIChatCompatRewriteSupportedChannelType(channelType: Chann
 
 export function getEffectiveRequestRewriteFormData(channelType: ChannelType, config?: RequestRewriteConfig | null): RequestRewriteConfig {
     const normalized = normalizeRequestRewriteFormData(config);
+    normalized.header_profile = normalizeRequestRewriteHeaderProfile(channelType, normalized.header_profile);
     if (isRequestRewriteSupportedChannelType(channelType)) {
         return {
             ...normalized,
@@ -2045,7 +2048,7 @@ export function ChannelForm({
                                         Headers 请求重写
                                     </label>
                                     <Select
-                                        value={formData.request_rewrite.header_profile || '__none__'}
+                                        value={normalizeRequestRewriteHeaderProfile(formData.type, formData.request_rewrite.header_profile) || '__none__'}
                                         onValueChange={(value) => onFormDataChange({
                                             ...formData,
                                             request_rewrite: {
@@ -2061,6 +2064,11 @@ export function ChannelForm({
                                         <SelectContent className="rounded-lg">
                                             <SelectItem className="rounded-xl" value="__none__">无</SelectItem>
                                             <SelectItem className="rounded-xl" value={RequestRewriteHeaderProfile.Codex}>Codex</SelectItem>
+                                            {isClaudeCodeHeaderProfileSupportedChannelType(formData.type) && (
+                                                <SelectItem className="rounded-xl" value={RequestRewriteHeaderProfile.ClaudeCode}>
+                                                    {t('requestRewriteHeaderProfileClaudeCode')}
+                                                </SelectItem>
+                                            )}
                                         </SelectContent>
                                     </Select>
                                 </div>

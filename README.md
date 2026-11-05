@@ -473,7 +473,7 @@ Header and message strategies:
 
 | Strategy | Options | Description |
 |----------|---------|-------------|
-| Header Profile | `none`, `codex` | Codex-specific header shaping |
+| Header Profile | `none`, `codex`, `claude_code` | Codex-specific header shaping; Claude Code identification headers are Anthropic-only and best-effort, not authentication or protocol conversion |
 | Tool Role | `keep`, `stringify_to_user` | How to handle tool role messages |
 | System Message | `keep`, `merge` | How to handle system messages |
 

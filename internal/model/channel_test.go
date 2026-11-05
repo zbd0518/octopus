@@ -297,3 +297,50 @@ func TestRequestRewriteConfigValidate_AllowsCodexProfile(t *testing.T) {
 		t.Fatalf("Validate() error = %v", err)
 	}
 }
+
+func TestRequestRewriteConfigValidate_ClaudeCodeHeaderProfile(t *testing.T) {
+	tests := []struct {
+		name        string
+		enabled     bool
+		channelType outbound.OutboundType
+		wantErr     string
+	}{
+		{
+			name:        "enabled Anthropic config accepts Claude Code profile",
+			enabled:     true,
+			channelType: outbound.OutboundTypeAnthropic,
+		},
+		{
+			name:        "enabled OpenAI config rejects Claude Code profile",
+			enabled:     true,
+			channelType: outbound.OutboundTypeOpenAIChat,
+			wantErr:     "header profile claude_code is not supported for channel type 0",
+		},
+		{
+			name:        "disabled OpenAI config rejects Claude Code profile",
+			enabled:     false,
+			channelType: outbound.OutboundTypeOpenAIChat,
+			wantErr:     "header profile claude_code is not supported for channel type 0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &RequestRewriteConfig{
+				Enabled:       tt.enabled,
+				Profile:       RequestRewriteProfilePreserve,
+				HeaderProfile: "claude_code",
+			}
+			err := cfg.Validate(tt.channelType)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate() error = %v", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}

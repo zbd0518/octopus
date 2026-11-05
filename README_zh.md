@@ -461,7 +461,7 @@ Header 和消息策略：
 
 | 策略 | 选项 | 说明 |
 |------|------|------|
-| Header 配置 | `none`、`codex` | Codex 专用 Header 整形 |
+| Header 配置 | `none`、`codex`、`claude_code` | Claude Code 仅适用于 Anthropic 渠道，是尽力而为的 Header 识别标记，不提供身份验证或协议转换；Codex 专用 Header 整形仍可选 |
 | Tool 角色 | `keep`、`stringify_to_user` | 如何处理 tool 角色消息 |
 | System 消息 | `keep`、`merge` | 如何处理系统消息 |
 

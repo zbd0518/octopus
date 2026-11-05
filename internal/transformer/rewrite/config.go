@@ -51,27 +51,10 @@ func Resolve(channelType outbound.OutboundType, cfg *appmodel.RequestRewriteConf
 		})
 	}
 
-	codexProfile := string(appmodel.RequestRewriteProfileCodexHeaders)
+	effective.ExtraHeaders = resolveHeaderProfile(cfg.HeaderProfile)
 
 	if cfg.Profile == appmodel.RequestRewriteProfilePreserve {
-		if cfg.HeaderProfile == codexProfile {
-			effective.ExtraHeaders = map[string]string{
-				"User-Agent": "Codex Desktop/0.131.0 (Windows 10.0.19045; x86_64) unknown (Codex Desktop; 26.519.21041)",
-				"Origin":     "https://chat.openai.com",
-				"Referer":    "https://chat.openai.com/",
-				"Accept":     "application/json",
-			}
-		}
 		return effective, true, nil
-	}
-
-	if cfg.HeaderProfile == codexProfile {
-		effective.ExtraHeaders = map[string]string{
-			"User-Agent": "Codex Desktop/0.131.0 (Windows 10.0.19045; x86_64) unknown (Codex Desktop; 26.519.21041)",
-			"Origin":     "https://chat.openai.com",
-			"Referer":    "https://chat.openai.com/",
-			"Accept":     "application/json",
-		}
 	}
 
 	if cfg.ToolRoleStrategy != "" {
@@ -82,4 +65,23 @@ func Resolve(channelType outbound.OutboundType, cfg *appmodel.RequestRewriteConf
 	}
 
 	return effective, true, nil
+}
+
+func resolveHeaderProfile(profile string) map[string]string {
+	switch profile {
+	case string(appmodel.RequestRewriteProfileCodexHeaders):
+		return map[string]string{
+			"User-Agent": "Codex Desktop/0.131.0 (Windows 10.0.19045; x86_64) unknown (Codex Desktop; 26.519.21041)",
+			"Origin":     "https://chat.openai.com",
+			"Referer":    "https://chat.openai.com/",
+			"Accept":     "application/json",
+		}
+	case appmodel.RequestRewriteHeaderProfileClaudeCode:
+		return map[string]string{
+			"User-Agent": "claude-cli",
+			"X-App":      "cli",
+		}
+	default:
+		return nil
+	}
 }

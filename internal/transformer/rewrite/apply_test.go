@@ -8,6 +8,31 @@ import (
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 )
 
+func TestResolve_ClaudeCodeHeaderProfile(t *testing.T) {
+	got, enabled, err := Resolve(outbound.OutboundTypeAnthropic, &appmodel.RequestRewriteConfig{
+		Enabled:       true,
+		Profile:       appmodel.RequestRewriteProfilePreserve,
+		HeaderProfile: appmodel.RequestRewriteHeaderProfileClaudeCode,
+	})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if !enabled {
+		t.Fatal("Resolve() enabled = false, want true")
+	}
+	if got.ExtraHeaders["User-Agent"] != "claude-cli" {
+		t.Errorf("ExtraHeaders[User-Agent] = %q, want %q", got.ExtraHeaders["User-Agent"], "claude-cli")
+	}
+	if got.ExtraHeaders["X-App"] != "cli" {
+		t.Errorf("ExtraHeaders[X-App] = %q, want %q", got.ExtraHeaders["X-App"], "cli")
+	}
+	for _, key := range []string{"Accept", "Content-Type", "Anthropic-Version", "X-API-Key", "Authorization"} {
+		if _, ok := got.ExtraHeaders[key]; ok {
+			t.Errorf("ExtraHeaders unexpectedly overrides %s", key)
+		}
+	}
+}
+
 func TestResolve_DisabledConfigReturnsNotEnabled(t *testing.T) {
 	got, enabled, err := Resolve(outbound.OutboundTypeOpenAIChat, nil)
 	if err != nil {

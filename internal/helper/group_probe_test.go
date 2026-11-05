@@ -152,6 +152,85 @@ func TestValidateGroupProbeChannelType_AllAcceptsChatChannel(t *testing.T) {
 	}
 }
 
+func TestSendGroupProbeRequest_ClaudeCodeHeaderProfile(t *testing.T) {
+	tests := []struct {
+		name          string
+		enabled       bool
+		customHeaders []appmodel.CustomHeader
+		wantUserAgent string
+		wantXApp      string
+	}{
+		{
+			name:          "profile adds identity headers",
+			enabled:       true,
+			wantUserAgent: "claude-cli",
+			wantXApp:      "cli",
+		},
+		{
+			name:    "custom headers override profile",
+			enabled: true,
+			customHeaders: []appmodel.CustomHeader{
+				{HeaderKey: "user-agent", HeaderValue: "custom-agent"},
+				{HeaderKey: "x-app", HeaderValue: "custom-app"},
+			},
+			wantUserAgent: "custom-agent",
+			wantXApp:      "custom-app",
+		},
+		{
+			name:    "disabled rewrite does not apply profile",
+			enabled: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requests := make(chan http.Header, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests <- r.Header.Clone()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"msg-1","type":"message","role":"assistant","model":"claude-test","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`))
+			}))
+			defer server.Close()
+
+			channel := &appmodel.Channel{
+				Type:     outbound.OutboundTypeAnthropic,
+				BaseUrls: []appmodel.BaseUrl{{URL: server.URL}},
+				RequestRewrite: &appmodel.RequestRewriteConfig{
+					Enabled:       tt.enabled,
+					Profile:       appmodel.RequestRewriteProfilePreserve,
+					HeaderProfile: appmodel.RequestRewriteHeaderProfileClaudeCode,
+				},
+				CustomHeader: tt.customHeaders,
+			}
+			status, _, _, err := sendGroupProbeRequest(
+				context.Background(), outbound.Get(outbound.OutboundTypeAnthropic), channel,
+				"sk-test", appmodel.EndpointTypeMessages, "claude-test",
+			)
+			if err != nil || status != http.StatusOK {
+				t.Fatalf("sendGroupProbeRequest() status = %d, error = %v", status, err)
+			}
+			got := <-requests
+			if tt.wantUserAgent != "" && got.Get("User-Agent") != tt.wantUserAgent {
+				t.Errorf("User-Agent = %q, want %q", got.Get("User-Agent"), tt.wantUserAgent)
+			}
+			if !tt.enabled && got.Get("User-Agent") == "claude-cli" {
+				t.Errorf("disabled rewrite unexpectedly applied User-Agent %q", got.Get("User-Agent"))
+			}
+			for key, want := range map[string]string{
+				"X-App":             tt.wantXApp,
+				"Accept":            "application/json",
+				"Content-Type":      "application/json",
+				"Anthropic-Version": "2023-06-01",
+				"X-API-Key":         "sk-test",
+			} {
+				if value := got.Get(key); value != want {
+					t.Errorf("%s = %q, want %q", key, value, want)
+				}
+			}
+		})
+	}
+}
+
 func TestSendGroupProbeRequest_EmbeddingsUseEmbeddingPayload(t *testing.T) {
 	type outboundRequest struct {
 		Model string `json:"model"`

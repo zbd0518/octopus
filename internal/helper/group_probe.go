@@ -731,6 +731,15 @@ func sendGroupProbeRequestWithRequest(ctx context.Context, outAdapter transmodel
 		return 0, "", nil, err
 	}
 
+	effectiveRewrite, _, err := rewrite.Resolve(channel.Type, channel.RequestRewrite)
+	if err != nil {
+		return 0, "", nil, err
+	}
+	if effectiveRewrite != nil {
+		for headerKey, headerValue := range effectiveRewrite.ExtraHeaders {
+			req.Header.Set(headerKey, headerValue)
+		}
+	}
 	for _, header := range channel.CustomHeader {
 		if strings.TrimSpace(header.HeaderKey) != "" {
 			req.Header.Set(header.HeaderKey, header.HeaderValue)

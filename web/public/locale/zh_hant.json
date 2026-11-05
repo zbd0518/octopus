@@ -3488,6 +3488,7 @@
       "requestRewriteEnabled": "啟用重寫",
       "requestRewriteProfile": "重寫設定",
       "requestRewriteProfileOpenAIChatCompat": "OpenAI Chat 相容",
+      "requestRewriteHeaderProfileClaudeCode": "Claude Code",
       "requestRewriteToolRoleStrategy": "Tool 角色策略",
       "requestRewriteSystemMessageStrategy": "System 訊息策略",
       "requestRewriteStrategyKeep": "保留",

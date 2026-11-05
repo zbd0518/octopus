@@ -6,24 +6,19 @@ import { formatCount, formatMoney, formatTime } from '@/lib/utils';
 import { StatsChannel, type StatsMetricsFormatted } from './stats';
 import { type GroupTestProgress } from './group';
 import type { ProxyMode } from './proxy-pool';
+import { ChannelType, RequestRewriteHeaderProfile } from '../channel-types';
+
+export {
+    ChannelType,
+    isClaudeCodeHeaderProfileSupportedChannelType,
+    normalizeRequestRewriteHeaderProfile,
+    RequestRewriteHeaderProfile,
+} from '../channel-types';
 
 /**
  * 渠道代理模式（渠道无上级实体，不支持 inherit）
  */
 export type ChannelProxyMode = Exclude<ProxyMode, 'inherit'>;
-/**
- * 渠道类型枚举
- */
-export enum ChannelType {
-    OpenAIChat = 0,
-    OpenAIResponse = 1,
-    Anthropic = 2,
-    Gemini = 3,
-    Volcengine = 4,
-    OpenAIEmbedding = 5,
-    MiMoChat = 6,
-    Cloudflare = 7,
-}
 
 /**
  * 自动分组类型枚举
@@ -40,10 +35,6 @@ export enum RequestRewriteProfile {
     OpenAIChatCompat = 'openai_chat_compat',
 }
 
-export enum RequestRewriteHeaderProfile {
-    None = '',
-    Codex = 'codex',
-}
 
 export enum ToolRoleStrategy {
     Keep = 'keep',

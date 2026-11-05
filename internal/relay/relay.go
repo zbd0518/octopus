@@ -1043,15 +1043,15 @@ func (ra *relayAttempt) copyHeaders(outboundRequest *http.Request, effectiveRewr
 			outboundRequest.Header.Set(key, value)
 		}
 	}
-	if len(ra.channel.CustomHeader) > 0 {
-		for _, header := range ra.channel.CustomHeader {
-			outboundRequest.Header.Set(header.HeaderKey, header.HeaderValue)
-		}
-	}
-
 	if effectiveRewrite != nil && len(effectiveRewrite.ExtraHeaders) > 0 {
 		for key, value := range effectiveRewrite.ExtraHeaders {
 			outboundRequest.Header.Set(key, value)
+		}
+	}
+
+	if len(ra.channel.CustomHeader) > 0 {
+		for _, header := range ra.channel.CustomHeader {
+			outboundRequest.Header.Set(header.HeaderKey, header.HeaderValue)
 		}
 	}
 }
