@@ -24,6 +24,7 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { ENDPOINT_TYPE_OPTIONS } from '@/components/modules/group/utils';
+import { sortGroupsByName } from './filters';
 
 const EMPTY_FILTER: LogFilter = {};
 
@@ -57,6 +58,7 @@ function LogFilterBar({
     );
 
     const selectedModels = useMemo(() => new Set(filter.models ?? []), [filter.models]);
+    const sortedGroups = useMemo(() => sortGroupsByName(groups), [groups]);
     const [modelSearchTerm, setModelSearchTerm] = useState('');
     const modelSearchInputRef = useRef<HTMLInputElement>(null);
 
@@ -183,7 +185,7 @@ function LogFilterBar({
                 </SelectTrigger>
                 <SelectContent>
                     <SelectItem value="__all__">{t('allGroups') ?? 'All groups'}</SelectItem>
-                    {groups.map((g) => (
+                    {sortedGroups.map((g) => (
                         <SelectItem key={g.id} value={g.name}>
                             {g.name}
                         </SelectItem>
