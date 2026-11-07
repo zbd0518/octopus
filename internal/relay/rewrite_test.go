@@ -1,6 +1,9 @@
 package relay
 
 import (
+	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
 
@@ -8,6 +11,7 @@ import (
 	appmodel "github.com/lingyuins/octopus/internal/model"
 	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
+	openaioutbound "github.com/lingyuins/octopus/internal/transformer/outbound/openai"
 	"github.com/lingyuins/octopus/internal/transformer/rewrite"
 )
 
@@ -159,5 +163,52 @@ func TestPrepareInternalRequestForOutbound_AttachesEndpointProviderMetadata(t *t
 	}
 	if request.TransformerMetadata != nil {
 		t.Fatalf("base request metadata = %#v, want nil", request.TransformerMetadata)
+	}
+}
+
+func TestPrepareInternalRequestForOutbound_ExplicitProviderInAutoModePreservesDeepSeekReasoning(t *testing.T) {
+	reasoning := "需要调用天气工具"
+	request := &transmodel.InternalLLMRequest{
+		Model:        "deepseek-flash",
+		RawAPIFormat: transmodel.APIFormatOpenAIChatCompletion,
+		Messages: []transmodel.Message{{
+			Role:             "assistant",
+			ReasoningContent: &reasoning,
+			ToolCalls: []transmodel.ToolCall{{
+				ID: "call_1", Type: "function",
+				Function: transmodel.FunctionCall{Name: "get_weather", Arguments: `{"city":"北京"}`},
+			}},
+		}},
+	}
+	group := &appmodel.Group{EndpointType: appmodel.EndpointTypeChat, EndpointProvider: "deepseek", ThinkingMode: appmodel.ThinkingModeAuto}
+	prepared, _, err := prepareInternalRequestForOutbound(&appmodel.Channel{Type: outbound.OutboundTypeOpenAIChat}, request, group)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := prepared.TransformerMetadata[transmodel.TransformerMetadataGroupEndpointType]; got != appmodel.EndpointTypeChat {
+		t.Fatalf("group endpoint type metadata = %q, want chat", got)
+	}
+	if got := prepared.TransformerMetadata[transmodel.TransformerMetadataGroupEndpointProvider]; got != "deepseek" {
+		t.Fatalf("group endpoint provider metadata = %q, want deepseek", got)
+	}
+
+	httpRequest, err := (&openaioutbound.ChatOutbound{}).TransformRequest(context.Background(), prepared, "https://third-party.example/v1", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(httpRequest.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Messages []struct {
+			ReasoningContent *string `json:"reasoning_content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Messages) != 1 || payload.Messages[0].ReasoningContent == nil || *payload.Messages[0].ReasoningContent != reasoning {
+		t.Fatalf("auto-mode DeepSeek reasoning_content lost: %s", body)
 	}
 }
