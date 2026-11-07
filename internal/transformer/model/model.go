@@ -111,6 +111,10 @@ type InternalLLMRequest struct {
 	// (e.g. new-api / jzgo) reject null with "store 类型错误".
 	Store *bool `json:"store,omitempty"`
 
+	// Truncation controls Responses history truncation. Nil preserves the upstream
+	// default; Chat Completions outbound removes this Responses-only parameter.
+	Truncation *string `json:"truncation,omitempty"`
+
 	// What sampling temperature to use, between 0 and 2. Higher values like 0.8 will
 	// make the output more random, while lower values like 0.2 will make it more
 	// focused and deterministic. We generally recommend altering this or `top_p` but

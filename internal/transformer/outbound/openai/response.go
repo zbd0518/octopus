@@ -40,6 +40,15 @@ func (o *ResponseOutbound) TransformRequest(ctx context.Context, request *model.
 	if cloned == nil {
 		return nil, fmt.Errorf("request is nil")
 	}
+	// OpenAI Responses rejects an over-limit history when truncation is omitted
+	// (its upstream default is disabled). Octopus relays long-lived conversations
+	// by default, so opt into history truncation unless the client or channel has
+	// explicitly selected a policy. The request clone keeps this default scoped to
+	// this Responses attempt and leaves the shared inbound request unchanged.
+	if cloned.Truncation == nil {
+		truncation := "auto"
+		cloned.Truncation = &truncation
+	}
 	ensureToolCallIDs(cloned.Messages)
 
 	// DeepSeek rejects follow-up tool calls whose history lost reasoning_content.
@@ -487,6 +496,7 @@ type ResponsesRequest struct {
 	Stream            *bool                 `json:"stream,omitempty"`
 	Text              *ResponsesTextOptions `json:"text,omitempty"`
 	Store             *bool                 `json:"store,omitempty"`
+	Truncation        *string               `json:"truncation,omitempty"`
 	ServiceTier       *string               `json:"service_tier,omitempty"`
 	User              *string               `json:"user,omitempty"`
 	Metadata          map[string]string     `json:"metadata,omitempty"`
@@ -761,6 +771,7 @@ func ConvertToResponsesRequest(req *model.InternalLLMRequest) *ResponsesRequest 
 		TopP:              req.TopP,
 		Stream:            req.Stream,
 		Store:             req.Store,
+		Truncation:        req.Truncation,
 		ServiceTier:       req.ServiceTier,
 		User:              req.User,
 		Metadata:          req.Metadata,

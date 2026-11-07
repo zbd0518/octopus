@@ -147,6 +147,7 @@ func SanitizeRequestForOpenAICompat(request *model.InternalLLMRequest, baseURL s
 		request.ExtraBody = nil
 	}
 	request.Include = nil
+	request.Truncation = nil
 	// Third-party OpenAI-compatible Chat Completions endpoints (free relays,
 	// Grok proxies, etc.) often reject OpenAI-only optional fields. Claude
 	// Code's Anthropic metadata.user_id is mapped into Metadata and commonly

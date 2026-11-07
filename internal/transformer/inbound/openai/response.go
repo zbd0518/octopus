@@ -1036,6 +1036,7 @@ type ResponsesRequest struct {
 	Stream            *bool                 `json:"stream,omitempty"`
 	Text              *ResponsesTextOptions `json:"text,omitempty"`
 	Store             *bool                 `json:"store,omitempty"`
+	Truncation        *string               `json:"truncation,omitempty"`
 	ServiceTier       *string               `json:"service_tier,omitempty"`
 	User              *string               `json:"user,omitempty"`
 	Metadata          map[string]string     `json:"metadata,omitempty"`
@@ -1306,6 +1307,7 @@ func convertToInternalRequest(req *ResponsesRequest) (*model.InternalLLMRequest,
 		TopP:                req.TopP,
 		Stream:              req.Stream,
 		Store:               req.Store,
+		Truncation:          req.Truncation,
 		ServiceTier:         req.ServiceTier,
 		User:                req.User,
 		Metadata:            req.Metadata,

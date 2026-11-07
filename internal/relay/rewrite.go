@@ -113,6 +113,12 @@ func applyParamOverride(channel *appmodel.Channel, request *transmodel.InternalL
 			request.TopP = &val
 		}
 	}
+	if v, ok := overrides["truncation"]; ok && request.Truncation == nil {
+		var val string
+		if err := jsonAPI.Unmarshal(v, &val); err == nil && (val == "auto" || val == "disabled") {
+			request.Truncation = &val
+		}
+	}
 }
 
 func attachRelayGroupEndpointMetadata(request *transmodel.InternalLLMRequest, groupEndpointType, groupEndpointProvider string) {

@@ -148,7 +148,7 @@ func TestPluginRequestWirePreservesInboundProtocol(t *testing.T) {
 		kind inbound.InboundType
 		body string
 	}{
-		{"responses", inbound.InboundTypeOpenAIResponse, `{"model":"old","input":"hello","instructions":"system prompt","max_output_tokens":42}`},
+		{"responses", inbound.InboundTypeOpenAIResponse, `{"model":"old","input":"hello","instructions":"system prompt","max_output_tokens":42,"truncation":"auto"}`},
 		{"anthropic", inbound.InboundTypeAnthropic, `{"model":"old","system":"system prompt","max_tokens":42,"messages":[{"role":"user","content":"hello"}]}`},
 		{"chat", inbound.InboundTypeOpenAIChat, `{"model":"old","messages":[{"role":"system","content":"system prompt"},{"role":"user","content":"hello"}]}`},
 		{"embedding", inbound.InboundTypeOpenAIEmbedding, `{"model":"old","input":"hello","dimensions":12}`},
@@ -195,6 +195,15 @@ func TestPluginRequestWirePreservesInboundProtocol(t *testing.T) {
 				}
 				if tc.kind == inbound.InboundTypeOpenAIResponse && (parsed.MaxCompletionTokens == nil || *parsed.MaxCompletionTokens != 42) {
 					t.Fatalf("lost Responses token limit: %s", raw)
+				}
+				if tc.kind == inbound.InboundTypeOpenAIResponse {
+					var fields map[string]json.RawMessage
+					if err := json.Unmarshal(raw, &fields); err != nil {
+						t.Fatal(err)
+					}
+					if string(fields["truncation"]) != `"auto"` {
+						t.Fatalf("lost Responses truncation (modelOnly=%v): %s", modelOnly, raw)
+					}
 				}
 				if tc.kind == inbound.InboundTypeOpenAIEmbedding && (parsed.EmbeddingInput == nil || parsed.EmbeddingInput.Single == nil || *parsed.EmbeddingInput.Single != "hello" || parsed.EmbeddingDimensions == nil || *parsed.EmbeddingDimensions != 12) {
 					t.Fatalf("lost embedding input/options: %s", raw)
